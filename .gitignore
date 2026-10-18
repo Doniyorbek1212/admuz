@@ -1,0 +1,39 @@
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/release/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/android/key.properties
+*.jks
+*.keystore
+
+.DS_Store
+.idea/
+
+# TDLib native builds (produced by mobile/tool/build_tdlib_*.sh or CI)
+mobile/.tdlib-build*/
+mobile/.tdlib-linux/
+mobile/android/app/src/main/jniLibs/
+mobile/ios/TDLib/tdjson.xcframework/
+mobile/windows/tdlib/
+mobile/ios/Podfile.lock
+
+# Billing service
+server/.venv/
+server/.env
+server/**/__pycache__/
+server/.pytest_cache/
+server/.ruff_cache/
+server/media/
+dump.rdb
+mobile/test/failures/
+
+# Local agent settings
+.claude/
