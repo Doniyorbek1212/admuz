@@ -15,6 +15,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../../core/formatters.dart';
 import '../../core/live_location.dart';
 import '../../core/tdlib/td_client.dart';
+import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -77,6 +78,14 @@ class ComposerState extends ConsumerState<Composer> {
   StreamSubscription<Amplitude>? _amplitudeSub;
   Timer? _recordTicker;
   double _dragOffset = 0;
+
+  /// Finger still on the mic; a recorder that finishes starting after release is discarded.
+  bool _pressing = false;
+
+  /// Slid up while recording: keeps recording hands-free until send or cancel is tapped.
+  bool _locked = false;
+  static const _cancelDistance = 120.0;
+  static const _lockDistance = 80.0;
 
   @override
   void initState() {
@@ -593,7 +602,10 @@ class ComposerState extends ConsumerState<Composer> {
       _recordStart = DateTime.now();
       _recordPath = path;
       _dragOffset = 0;
+      _locked = false;
     });
+    // Released while the permission check / recorder start was still running: a tap, not a recording.
+    if (!_pressing) await _stopRecording(send: false);
   }
 
   Future<void> _stopRecording({required bool send}) async {
@@ -602,7 +614,12 @@ class ComposerState extends ConsumerState<Composer> {
     _recordTicker?.cancel();
     final path = await _recorder?.stop() ?? _recordPath;
     final duration = DateTime.now().difference(_recordStart!);
-    setState(() => _recording = false);
+    if (!mounted) return;
+    setState(() {
+      _recording = false;
+      _locked = false;
+      _dragOffset = 0;
+    });
     if (!send || path == null || duration < const Duration(milliseconds: 700)) {
       if (path != null) unawaited(File(path).delete().catchError((Object _) => File(path)));
       return;
@@ -739,7 +756,7 @@ class ComposerState extends ConsumerState<Composer> {
               ),
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-              child: _recording ? _recordingRow(s) : _inputRow(s, settings),
+              child: _composerRow(s, settings),
             ),
             if (_showEmoji)
               MediaPanel(
@@ -752,6 +769,33 @@ class ComposerState extends ConsumerState<Composer> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The trailing send/mic button keeps its place in the tree while recording: replacing it mid-press
+  /// would drop the long-press gesture, so release and slide would never reach the recorder.
+  Widget _composerRow(Strings s, AppSettings settings) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(child: _recording ? _recordingInfo(s) : _inputRow(s, settings)),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 160),
+          transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: FadeTransition(opacity: animation, child: child)),
+          child: (_hasText || widget.editing != null) && !_recording
+              ? GestureDetector(
+                  key: const ValueKey('send'),
+                  onLongPress: widget.editing == null ? _sendOptions : null,
+                  onSecondaryTap: widget.editing == null ? _sendOptions : null,
+                  child: IconButton(
+                    icon: Icon(widget.editing != null ? Icons.check_circle_rounded : Icons.send_rounded, color: theme.colorScheme.primary),
+                    onPressed: _send,
+                  ),
+                )
+              : _micButton(theme),
+        ),
+      ],
     );
   }
 
@@ -819,64 +863,119 @@ class ComposerState extends ConsumerState<Composer> {
           ),
         if (!_hasText && widget.editing == null)
           IconButton(icon: Icon(Icons.attach_file_rounded, color: theme.hintColor), onPressed: _attach),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 160),
-          transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: FadeTransition(opacity: animation, child: child)),
-          child: _hasText || widget.editing != null
-              ? GestureDetector(
-                  key: const ValueKey('send'),
-                  onLongPress: widget.editing == null ? _sendOptions : null,
-                  onSecondaryTap: widget.editing == null ? _sendOptions : null,
-                  child: IconButton(
-                    icon: Icon(widget.editing != null ? Icons.check_circle_rounded : Icons.send_rounded, color: theme.colorScheme.primary),
-                    onPressed: _send,
-                  ),
-                )
-              : _micButton(theme),
-        ),
       ],
     );
   }
 
-  Widget _micButton(ThemeData theme) => GestureDetector(
-            key: const ValueKey('mic'),
-            onTap: () => showToast(context, context.t('hold_to_record')),
-            onLongPressStart: (_) => _startRecording(),
-            onLongPressMoveUpdate: (details) {
-              setState(() => _dragOffset = details.offsetFromOrigin.dx);
-              if (_dragOffset < -120) _stopRecording(send: false);
-            },
-            onLongPressEnd: (_) => _stopRecording(send: _dragOffset > -120),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Icon(Icons.mic_rounded, color: theme.hintColor),
-            ),
-          );
+  /// Hold to record, slide left to cancel, slide up to lock; while locked a tap sends.
+  Widget _micButton(ThemeData theme) {
+    final primary = theme.colorScheme.primary;
+    return GestureDetector(
+      key: const ValueKey('mic'),
+      onTap: () {
+        if (_recording && _locked) {
+          unawaited(_stopRecording(send: true));
+        } else if (!_recording) {
+          showToast(context, context.t('hold_to_record'));
+        }
+      },
+      onLongPressStart: (_) {
+        _pressing = true;
+        unawaited(_startRecording());
+      },
+      onLongPressMoveUpdate: (details) {
+        if (!_recording || _locked) return;
+        final offset = details.offsetFromOrigin;
+        if (offset.dy < -_lockDistance) {
+          HapticFeedback.selectionClick();
+          setState(() {
+            _locked = true;
+            _dragOffset = 0;
+          });
+          return;
+        }
+        setState(() => _dragOffset = min(0, offset.dx));
+        if (_dragOffset < -_cancelDistance) unawaited(_stopRecording(send: false));
+      },
+      onLongPressEnd: (_) {
+        _pressing = false;
+        if (_recording && !_locked) unawaited(_stopRecording(send: _dragOffset > -_cancelDistance));
+      },
+      onLongPressCancel: () => _pressing = false,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        width: _recording ? 52 : 48,
+        height: _recording ? 52 : 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: _recording ? brandGradient(primary, vertical: true) : null,
+          boxShadow: _recording ? [BoxShadow(color: primary.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4))] : null,
+        ),
+        child: Icon(
+          _recording && _locked ? Icons.send_rounded : Icons.mic_rounded,
+          color: _recording ? Colors.white : theme.hintColor,
+        ),
+      ),
+    );
+  }
 
-  Widget _recordingRow(Strings s) {
+  /// Recording strip left of the mic: blinking dot, timer, then the slide hint or (locked) cancel.
+  Widget _recordingInfo(Strings s) {
+    final theme = Theme.of(context);
     final elapsed = DateTime.now().difference(_recordStart ?? DateTime.now());
+    final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
     return SizedBox(
-      height: 48,
+      height: 52,
       child: Row(
         children: [
-          const SizedBox(width: 12),
-          const Icon(Icons.fiber_manual_record_rounded, color: Colors.redAccent, size: 14),
+          const SizedBox(width: 14),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 300),
+            opacity: (elapsed.inMilliseconds ~/ 500).isEven ? 1 : 0.2,
+            child: const Icon(Icons.fiber_manual_record_rounded, color: Colors.redAccent, size: 14),
+          ),
           const SizedBox(width: 8),
-          Text(formatDuration(elapsed), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
+          Text(
+            '${formatDuration(elapsed)},$tenths',
+            style: const TextStyle(fontSize: 15.5, fontFeatures: [FontFeature.tabularFigures()]),
+          ),
           Expanded(
-            child: Transform.translate(
-              offset: Offset(max(-80, _dragOffset / 2), 0),
-              child: Center(
-                child: Text('‹  ${s.t('slide_to_cancel')}', style: TextStyle(color: Theme.of(context).hintColor)),
+            child: _locked
+                ? Center(
+                    child: TextButton(
+                      onPressed: () => _stopRecording(send: false),
+                      child: Text(s.t('cancel').toUpperCase(), style: TextStyle(color: theme.colorScheme.error)),
+                    ),
+                  )
+                : Transform.translate(
+                    offset: Offset(max(-80, _dragOffset / 2), 0),
+                    child: Opacity(
+                      opacity: (1 + _dragOffset / _cancelDistance).clamp(0.3, 1.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.chevron_left_rounded, color: theme.hintColor),
+                          Flexible(
+                            child: Text(s.t('slide_to_cancel'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          // Slide-up-to-lock hint, as in Telegram.
+          if (!_locked)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.lock_outline_rounded, size: 16, color: theme.hintColor),
+                  Icon(Icons.keyboard_arrow_up_rounded, size: 16, color: theme.hintColor),
+                ],
               ),
             ),
-          ),
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, shape: BoxShape.circle),
-            child: const Icon(Icons.mic_rounded, color: Colors.white),
-          ),
         ],
       ),
     );

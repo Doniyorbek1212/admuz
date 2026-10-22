@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keepalive_channel">Фоновое подключение</string>
+    <string name="keepalive_title">UZARO подключён</string>
+    <string name="keepalive_text">Сообщения приходят, даже когда приложение закрыто</string>
+</resources>

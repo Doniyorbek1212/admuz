@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="keepalive_channel">Background connection</string>
+    <string name="keepalive_title">UZARO is connected</string>
+    <string name="keepalive_text">Messages arrive even when the app is closed</string>
+</resources>

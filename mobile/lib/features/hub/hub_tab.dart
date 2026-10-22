@@ -30,7 +30,8 @@ class HubTab extends ConsumerWidget {
       body: RefreshIndicator(
         onRefresh: () async => ref.invalidate(activeAdsProvider(region)),
         child: ListView(
-          padding: const EdgeInsets.only(bottom: 12),
+          // Clears the shell's floating bottom bar (reported as bottom padding), or the last section hides under it.
+          padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
           children: [
             const HubBanners(),
             _HubSection(

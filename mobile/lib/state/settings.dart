@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/file_guard.dart';
+import '../core/keep_alive.dart';
 import '../core/theme.dart' show isDesktop;
 
 /// Brand accents users can pick from (Plus Messenger style theming).
@@ -30,6 +31,7 @@ class AppSettings {
     this.translateTo = 'uz',
     this.notificationsEnabled = true,
     this.messagePreview = true,
+    this.keepAlive = true,
     this.bubbleRadius = 18,
     this.showTranslateButton = true,
     this.chatTypeTabs = false,
@@ -56,6 +58,9 @@ class AppSettings {
   final String translateTo;
   final bool notificationsEnabled;
   final bool messagePreview;
+
+  /// Android: keep-alive service that keeps TDLib connected (and notifying) while the app is closed.
+  final bool keepAlive;
   final double bubbleRadius;
   final bool showTranslateButton;
 
@@ -94,6 +99,7 @@ class AppSettings {
     String? translateTo,
     bool? notificationsEnabled,
     bool? messagePreview,
+    bool? keepAlive,
     double? bubbleRadius,
     bool? showTranslateButton,
     bool? chatTypeTabs,
@@ -118,6 +124,7 @@ class AppSettings {
         translateTo: translateTo ?? this.translateTo,
         notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
         messagePreview: messagePreview ?? this.messagePreview,
+        keepAlive: keepAlive ?? this.keepAlive,
         bubbleRadius: bubbleRadius ?? this.bubbleRadius,
         showTranslateButton: showTranslateButton ?? this.showTranslateButton,
         chatTypeTabs: chatTypeTabs ?? this.chatTypeTabs,
@@ -155,6 +162,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       translateTo: _prefs.getString('translateTo') ?? _prefs.getString('locale') ?? _defaultLocale(),
       notificationsEnabled: _prefs.getBool('notifications') ?? true,
       messagePreview: _prefs.getBool('messagePreview') ?? true,
+      keepAlive: _prefs.getBool('keepAlive') ?? true,
       bubbleRadius: _prefs.getDouble('bubbleRadius') ?? 18,
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
       chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,
@@ -228,6 +236,13 @@ class SettingsNotifier extends Notifier<AppSettings> {
   void setMessagePreview(bool value) {
     _prefs.setBool('messagePreview', value);
     state = state.copyWith(messagePreview: value);
+  }
+
+  /// The native side reads the same preference ("flutter.keepAlive") when the process starts.
+  Future<void> setKeepAlive(bool value) async {
+    await _prefs.setBool('keepAlive', value);
+    state = state.copyWith(keepAlive: value);
+    await KeepAliveService.setEnabled(value);
   }
 
   void setBubbleRadius(double value) {

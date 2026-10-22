@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
@@ -38,6 +40,13 @@ class NotificationsScreen extends ConsumerWidget {
             value: settings.messagePreview,
             onChanged: settings.notificationsEnabled ? notifier.setMessagePreview : null,
           ),
+          if (Platform.isAndroid)
+            SwitchListTile(
+              title: Text(s.t('notif_keep_alive')),
+              subtitle: Text(s.t('notif_keep_alive_hint')),
+              value: settings.keepAlive,
+              onChanged: settings.notificationsEnabled ? notifier.setKeepAlive : null,
+            ),
           const Divider(),
           SectionHeader(s.t('notif_telegram')),
           for (final key in _scopes.keys) _ScopeTiles(scopeKey: key),

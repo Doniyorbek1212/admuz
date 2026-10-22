@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep-alive service notification (default: Uzbek). -->
+    <string name="keepalive_channel">Fon rejimidagi ulanish</string>
+    <string name="keepalive_title">UZARO ulangan</string>
+    <string name="keepalive_text">Ilova yopiq bo\'lsa ham xabarlar keladi</string>
+</resources>

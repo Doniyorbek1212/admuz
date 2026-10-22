@@ -140,14 +140,17 @@ class _SessionScope extends ConsumerStatefulWidget {
 class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindingObserver {
   late final TelegramAccount _account = ref.read(accountProvider);
   StreamSubscription<td.Update>? _messages;
-  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
+  late AppLifecycleState _lifecycle;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Android can start the engine without any UI (keep-alive service after a reboot or a kill):
+    // then the user must not show as online, and every message is a background notification.
+    _lifecycle = WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.detached;
     _configureArchive(ref.read(settingsProvider));
-    unawaited(_account.setOnline(!ref.read(settingsProvider).ghostMode));
+    unawaited(_account.setOnline(_lifecycle == AppLifecycleState.resumed && !ref.read(settingsProvider).ghostMode));
     MessageNotifier.instance.onOpenChat = (chatId) {
       final navigator = navigatorKey.currentState;
       if (navigator == null) return;
