@@ -17,6 +17,7 @@ import '../../core/formatters.dart';
 import '../../core/live_location.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
+import '../../core/video_note_crop.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -827,8 +828,6 @@ class ComposerState extends ConsumerState<Composer> {
       });
     }
     if (controller == null) return;
-    // Preview size is reported in sensor (landscape) orientation; the shorter side is the circle.
-    final previewSize = controller.value.previewSize;
     XFile? file;
     try {
       file = await controller.stopVideoRecording();
@@ -842,13 +841,22 @@ class ComposerState extends ConsumerState<Composer> {
       unawaited(File(file.path).delete().catchError((Object _) => File(file!.path)));
       return;
     }
-    final length = previewSize == null ? 480 : min(previewSize.width, previewSize.height).round();
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
     widget.onSent();
+    // Square or Telegram delivers it as an ordinary video; without a crop it is still sent (as a video).
+    final square = await cropVideoNoteSquare(file.path);
+    if (square != null) unawaited(File(file.path).delete().catchError((Object _) => File(file!.path)));
+    if (!mounted) return;
     await guard(
       context,
-      () => ref.read(accountProvider).sendVideoNote(widget.chat.id, file!.path, durationSeconds: max(1, duration.inSeconds), length: length, replyToId: replyId),
+      () => ref.read(accountProvider).sendVideoNote(
+            widget.chat.id,
+            square ?? file!.path,
+            durationSeconds: max(1, duration.inSeconds),
+            length: videoNoteSize,
+            replyToId: replyId,
+          ),
     );
   }
 

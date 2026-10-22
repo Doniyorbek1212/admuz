@@ -75,6 +75,10 @@ kotlin {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // Square crop of round video messages (VideoNoteTranscoder); same media3 line as video_player's ExoPlayer.
+    implementation("androidx.media3:media3-transformer:1.9.2")
+    implementation("androidx.media3:media3-effect:1.9.2")
+    implementation("androidx.media3:media3-common:1.9.2")
 }
 
 flutter {

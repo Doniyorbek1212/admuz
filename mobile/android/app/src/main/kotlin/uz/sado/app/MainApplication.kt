@@ -24,6 +24,21 @@ class MainApplication : Application() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(engine.dartExecutor.binaryMessenger, VideoNoteTranscoder.CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "cropSquare" -> {
+                    val input = call.argument<String>("input")
+                    val output = call.argument<String>("output")
+                    val size = call.argument<Int>("size") ?: 480
+                    if (input == null || output == null) {
+                        result.error("bad_args", "input and output are required", null)
+                    } else {
+                        VideoNoteTranscoder.cropSquare(this, input, output, size, result)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
         engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
         if (KeepAliveService.isEnabled(this)) KeepAliveService.start(this)
