@@ -102,7 +102,8 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     final file = ref.watch(fileProvider(note.video.id)).value ?? note.video;
     if (file.local.isDownloadingCompleted && file.local.path.isNotEmpty) unawaited(_open(file.local.path));
     final width = MediaQuery.sizeOf(context).width;
-    final diameter = min(width * 0.6, 300.0);
+    // Grows while playing with sound, as in Telegram/aka, and shrinks back to the preview size after.
+    final diameter = _withSound ? min(width * 0.86, 420.0) : min(width * 0.6, 300.0);
     final controller = _controller;
     final value = controller?.value;
     final total = Duration(seconds: note.duration);
@@ -115,8 +116,11 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
 
     return GestureDetector(
       onTap: _tap,
-      child: SizedBox.square(
-        dimension: diameter,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        width: diameter,
+        height: diameter,
         child: Stack(
           children: [
             ClipOval(
