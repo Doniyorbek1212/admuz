@@ -9,8 +9,10 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
 import '../../core/tdlib/td_client.dart';
+import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 
 /// Shared scaffold for the login steps.
@@ -46,64 +48,90 @@ class _AuthScaffold extends ConsumerWidget {
     return ColoredBox(
       color: theme.scaffoldBackgroundColor,
       child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: _scaffold(context, ref, theme, slots, canCancelAdding),
-        ),
+        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480), child: _scaffold(context, ref, theme, slots, canCancelAdding)),
       ),
     );
   }
 
   Widget _scaffold(BuildContext context, WidgetRef ref, ThemeData theme, AccountSlots slots, bool canCancelAdding) {
+    final dark = theme.brightness == Brightness.dark;
+    final accent = theme.colorScheme.primary;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         foregroundColor: theme.colorScheme.onSurface,
         iconTheme: IconThemeData(color: theme.colorScheme.onSurface),
+        systemOverlayStyle: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        flexibleSpace: const BrandCornerWave(),
         automaticallyImplyLeading: false,
-        leading: showBack
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => guard(context, () => ref.read(accountProvider).logOut()),
-              )
-            : null,
+        leading: showBack ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => guard(context, () => ref.read(accountProvider).logOut())) : null,
         actions: [
-          if (canCancelAdding)
-            TextButton(
-              onPressed: () => ref.read(accountSlotsProvider.notifier).removeSlot(slots.active),
-              child: Text(context.t('cancel')),
-            ),
+          if (canCancelAdding) TextButton(onPressed: () => ref.read(accountSlotsProvider.notifier).removeSlot(slots.active), child: Text(context.t('cancel'))),
         ],
       ),
-      floatingActionButton: onSubmit == null
-          ? null
-          : FloatingActionButton(
-              onPressed: busy ? null : onSubmit,
-              child: busy
-                  ? const SizedBox.square(
-                      dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                  : const Icon(Icons.arrow_forward_rounded),
-            ),
+      floatingActionButton: onSubmit == null ? null : BrandFab(icon: Icons.arrow_forward_rounded, tooltip: context.t('next'), onPressed: onSubmit, busy: busy),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 104),
           children: [
             Center(
               child: logo
-                  ? Image.asset('assets/logo.png', width: 120, height: 120)
-                  : Container(
-                      width: 96,
-                      height: 96,
-                      decoration: BoxDecoration(color: theme.colorScheme.primary, shape: BoxShape.circle),
-                      child: Icon(icon, color: Colors.white, size: 44),
+                  ? const BrandLogoBadge()
+                  : GoldRing(
+                      width: 2.5,
+                      child: Container(
+                        width: 88,
+                        height: 88,
+                        decoration: BoxDecoration(gradient: brandGradient(accent, vertical: true), shape: BoxShape.circle),
+                        child: Icon(icon, color: Colors.white, size: 40),
+                      ),
                     ),
             ),
+            if (logo) ...[
+              const SizedBox(height: 14),
+              Center(child: BrandWordmark(size: 34, onDark: dark)),
+              const SizedBox(height: 4),
+              Text(
+                context.t('app_tagline'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+              ),
+            ],
             const SizedBox(height: 24),
-            Text(title, textAlign: TextAlign.center, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 10),
-            Text(subtitle, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor)),
-            const SizedBox(height: 28),
-            ...children,
+            // Form card lifted off the tinted page, gold hairline like the rest of the brand.
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: brandGold.withValues(alpha: dark ? 0.25 : 0.35)),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withValues(alpha: dark ? 0.15 : 0.1),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    subtitle,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor),
+                  ),
+                  const SizedBox(height: 24),
+                  ...children,
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -222,7 +250,10 @@ class PhoneNumberFormatter extends TextInputFormatter {
       final typed = digits.length - info.countryCallingCode.length;
       if (rest.replaceAll(' ', '').length != typed) text = '+$digits';
     }
-    return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 }
 
@@ -270,20 +301,24 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> with _Submitting {
   }
 
   Future<void> _send() => submit(() async {
-        final digits = _phone.text.replaceAll(RegExp(r'[^\d+]'), '');
-        await ref.read(accountProvider).send<td.Ok>(td.SetAuthenticationPhoneNumber(
-              phoneNumber: digits,
-              settings: const td.PhoneNumberAuthenticationSettings(
-                allowFlashCall: false,
-                allowMissedCall: false,
-                isCurrentPhoneNumber: false,
-                hasUnknownPhoneNumber: false,
-                allowSmsRetrieverApi: false,
-                firebaseAuthenticationSettings: null,
-                authenticationTokens: [],
-              ),
-            ));
-      });
+    final digits = _phone.text.replaceAll(RegExp(r'[^\d+]'), '');
+    await ref
+        .read(accountProvider)
+        .send<td.Ok>(
+          td.SetAuthenticationPhoneNumber(
+            phoneNumber: digits,
+            settings: const td.PhoneNumberAuthenticationSettings(
+              allowFlashCall: false,
+              allowMissedCall: false,
+              isCurrentPhoneNumber: false,
+              hasUnknownPhoneNumber: false,
+              allowSmsRetrieverApi: false,
+              firebaseAuthenticationSettings: null,
+              authenticationTokens: [],
+            ),
+          ),
+        );
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -323,11 +358,7 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> with _Submitting {
         ),
         const SizedBox(height: 24),
         TextButton.icon(
-          onPressed: busy
-              ? null
-              : () => submit(() => ref
-                  .read(accountProvider)
-                  .send<td.Ok>(const td.RequestQrCodeAuthentication(otherUserIds: []))),
+          onPressed: busy ? null : () => submit(() => ref.read(accountProvider).send<td.Ok>(const td.RequestQrCodeAuthentication(otherUserIds: []))),
           icon: const Icon(Icons.qr_code_2_rounded),
           label: Text(context.t('login_qr')),
         ),
@@ -396,13 +427,13 @@ class _CodeScreenState extends ConsumerState<CodeScreen> with _Submitting {
   }
 
   int get _length => switch (widget.info.type) {
-        td.AuthenticationCodeTypeSms(:final length) => length,
-        td.AuthenticationCodeTypeTelegramMessage(:final length) => length,
-        td.AuthenticationCodeTypeCall(:final length) => length,
-        td.AuthenticationCodeTypeFragment(:final length) => length,
-        td.AuthenticationCodeTypeMissedCall(:final length) => length,
-        _ => 5,
-      };
+    td.AuthenticationCodeTypeSms(:final length) => length,
+    td.AuthenticationCodeTypeTelegramMessage(:final length) => length,
+    td.AuthenticationCodeTypeCall(:final length) => length,
+    td.AuthenticationCodeTypeFragment(:final length) => length,
+    td.AuthenticationCodeTypeMissedCall(:final length) => length,
+    _ => 5,
+  };
 
   String _subtitle(Strings s) {
     final phone = widget.info.phoneNumber;
@@ -411,8 +442,7 @@ class _CodeScreenState extends ConsumerState<CodeScreen> with _Submitting {
       td.AuthenticationCodeTypeSms() => s.t('code_sent_sms', {'phone': phone}),
       td.AuthenticationCodeTypeCall() => s.t('code_sent_call', {'phone': phone}),
       td.AuthenticationCodeTypeFragment() => s.t('code_sent_fragment'),
-      td.AuthenticationCodeTypeMissedCall(:final phoneNumberPrefix) =>
-        s.t('code_missed_call', {'prefix': phoneNumberPrefix}),
+      td.AuthenticationCodeTypeMissedCall(:final phoneNumberPrefix) => s.t('code_missed_call', {'prefix': phoneNumberPrefix}),
       _ => s.t('code_sent_sms', {'phone': phone}),
     };
   }
@@ -479,8 +509,7 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> with _Submittin
     super.dispose();
   }
 
-  Future<void> _check() =>
-      submit(() => ref.read(accountProvider).send<td.Ok>(td.CheckAuthenticationPassword(password: _password.text)));
+  Future<void> _check() => submit(() => ref.read(accountProvider).send<td.Ok>(td.CheckAuthenticationPassword(password: _password.text)));
 
   Future<void> _recover() async {
     final s = context.s;
@@ -497,10 +526,13 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> with _Submittin
     return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(message),
-          TextField(controller: controller, autofocus: true, keyboardType: TextInputType.number),
-        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message),
+            TextField(controller: controller, autofocus: true, keyboardType: TextInputType.number),
+          ],
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text(context.t('cancel'))),
           TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),
@@ -586,11 +618,9 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> with _S
       );
       if (accepted != true) return;
     }
-    await submit(() => ref.read(accountProvider).send<td.Ok>(td.RegisterUser(
-          firstName: _first.text.trim(),
-          lastName: _last.text.trim(),
-          disableNotification: false,
-        )));
+    await submit(
+      () => ref.read(accountProvider).send<td.Ok>(td.RegisterUser(firstName: _first.text.trim(), lastName: _last.text.trim(), disableNotification: false)),
+    );
   }
 
   @override
@@ -648,9 +678,7 @@ class _EmailScreenState extends ConsumerState<EmailScreen> with _Submitting {
     if (widget.codeInfo == null) {
       return submit(() => account.send<td.Ok>(td.SetAuthenticationEmailAddress(emailAddress: value)));
     }
-    return submit(() => account.send<td.Ok>(
-          td.CheckAuthenticationEmailCode(code: td.EmailAddressAuthenticationCode(code: value)),
-        ));
+    return submit(() => account.send<td.Ok>(td.CheckAuthenticationEmailCode(code: td.EmailAddressAuthenticationCode(code: value))));
   }
 
   @override
@@ -658,9 +686,7 @@ class _EmailScreenState extends ConsumerState<EmailScreen> with _Submitting {
     final waitingCode = widget.codeInfo != null;
     return _AuthScaffold(
       title: context.t(waitingCode ? 'email_code' : 'email_address'),
-      subtitle: waitingCode
-          ? context.t('email_code_hint', {'email': widget.codeInfo!.emailAddressPattern})
-          : context.t('email_address_hint'),
+      subtitle: waitingCode ? context.t('email_code_hint', {'email': widget.codeInfo!.emailAddressPattern}) : context.t('email_address_hint'),
       icon: Icons.alternate_email_rounded,
       onSubmit: _submit,
       busy: busy,
@@ -683,10 +709,10 @@ class UnsupportedAuthScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => _AuthScaffold(
-        title: context.t('login_unavailable'),
-        subtitle: context.t('login_unavailable_hint'),
-        icon: Icons.info_outline_rounded,
-        showBack: true,
-        children: const [],
-      );
+    title: context.t('login_unavailable'),
+    subtitle: context.t('login_unavailable_hint'),
+    icon: Icons.info_outline_rounded,
+    showBack: true,
+    children: const [],
+  );
 }

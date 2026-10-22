@@ -13,11 +13,11 @@ import 'message_archive.dart';
 
 /// Stable key for a chat list (main, archive or a folder).
 String chatListKey(td.ChatList list) => switch (list) {
-      td.ChatListMain() => 'main',
-      td.ChatListArchive() => 'archive',
-      td.ChatListFolder(:final chatFolderId) => 'folder:$chatFolderId',
-      _ => list.getConstructor(),
-    };
+  td.ChatListMain() => 'main',
+  td.ChatListArchive() => 'archive',
+  td.ChatListFolder(:final chatFolderId) => 'folder:$chatFolderId',
+  _ => list.getConstructor(),
+};
 
 td.ChatList chatListFromKey(String key) {
   if (key == 'archive') return const td.ChatListArchive();
@@ -38,8 +38,7 @@ class ActiveChatAction {
 /// TDLib guarantees that every object referenced by an update has been sent before (updateNewChat,
 /// updateUser, updateFile...), so these maps are the single source of truth for the UI.
 class TelegramAccount {
-  TelegramAccount._(this.slot, this.client, this.databaseDirectory)
-      : archive = MessageArchive('$databaseDirectory${Platform.pathSeparator}sado_archive.json');
+  TelegramAccount._(this.slot, this.client, this.databaseDirectory) : archive = MessageArchive('$databaseDirectory${Platform.pathSeparator}sado_archive.json');
 
   final int slot;
   final TdClient client;
@@ -73,8 +72,7 @@ class TelegramAccount {
 
   final Map<int, td.SecretChat> secretChats = {};
 
-  td.SecretChat? secretChatOf(td.Chat chat) =>
-      chat.type is td.ChatTypeSecret ? secretChats[(chat.type as td.ChatTypeSecret).secretChatId] : null;
+  td.SecretChat? secretChatOf(td.Chat chat) => chat.type is td.ChatTypeSecret ? secretChats[(chat.type as td.ChatTypeSecret).secretChatId] : null;
 
   /// Forum topic currently open per chat; messages sent to that chat go into the topic.
   final Map<int, int> activeTopics = {};
@@ -143,7 +141,10 @@ class TelegramAccount {
 
   // ------------------------------------------------------------------ getters
 
-  int get myId => switch (options['my_id']) { td.OptionValueInteger(:final value) => value, _ => 0 };
+  int get myId => switch (options['my_id']) {
+    td.OptionValueInteger(:final value) => value,
+    _ => 0,
+  };
 
   bool get isReady => authState.value is td.AuthorizationStateReady;
 
@@ -183,25 +184,37 @@ class TelegramAccount {
   bool isSavedMessages(td.Chat chat) => chat.type is td.ChatTypePrivate && (chat.type as td.ChatTypePrivate).userId == myId;
 
   td.User? privateUser(td.Chat chat) => switch (chat.type) {
-        td.ChatTypePrivate(:final userId) => users[userId],
-        td.ChatTypeSecret(:final userId) => users[userId],
-        _ => null,
-      };
+    td.ChatTypePrivate(:final userId) => users[userId],
+    td.ChatTypeSecret(:final userId) => users[userId],
+    _ => null,
+  };
 
-  td.Supergroup? supergroupOf(td.Chat chat) =>
-      chat.type is td.ChatTypeSupergroup ? supergroups[(chat.type as td.ChatTypeSupergroup).supergroupId] : null;
+  td.Supergroup? supergroupOf(td.Chat chat) => chat.type is td.ChatTypeSupergroup ? supergroups[(chat.type as td.ChatTypeSupergroup).supergroupId] : null;
 
-  td.BasicGroup? basicGroupOf(td.Chat chat) =>
-      chat.type is td.ChatTypeBasicGroup ? basicGroups[(chat.type as td.ChatTypeBasicGroup).basicGroupId] : null;
+  td.BasicGroup? basicGroupOf(td.Chat chat) => chat.type is td.ChatTypeBasicGroup ? basicGroups[(chat.type as td.ChatTypeBasicGroup).basicGroupId] : null;
 
   bool isChannel(td.Chat chat) => chat.type is td.ChatTypeSupergroup && (chat.type as td.ChatTypeSupergroup).isChannel;
 
-  bool isGroup(td.Chat chat) =>
-      chat.type is td.ChatTypeBasicGroup || (chat.type is td.ChatTypeSupergroup && !isChannel(chat));
+  bool isGroup(td.Chat chat) => chat.type is td.ChatTypeBasicGroup || (chat.type is td.ChatTypeSupergroup && !isChannel(chat));
 
   bool isBot(td.User? user) => user?.type is td.UserTypeBot;
 
-  bool isMuted(td.Chat chat) => chat.notificationSettings.muteFor > 0;
+  /// Default notification settings per scope (updateScopeNotificationSettings), keyed by scope type.
+  final Map<Type, td.ScopeNotificationSettings> scopeNotificationSettings = {};
+
+  td.NotificationSettingsScope notificationScopeOf(td.Chat chat) => switch (chat.type) {
+    td.ChatTypePrivate() || td.ChatTypeSecret() => const td.NotificationSettingsScopePrivateChats(),
+    _ when isChannel(chat) => const td.NotificationSettingsScopeChannelChats(),
+    _ => const td.NotificationSettingsScopeGroupChats(),
+  };
+
+  /// A chat following its scope default ("use_default_mute_for") is muted when the scope is,
+  /// as Telegram apps do; its own mute_for is ignored then.
+  bool isMuted(td.Chat chat) {
+    final settings = chat.notificationSettings;
+    if (!settings.useDefaultMuteFor) return settings.muteFor > 0;
+    return (scopeNotificationSettings[notificationScopeOf(chat).runtimeType]?.muteFor ?? 0) > 0;
+  }
 
   td.ChatMemberStatus? myStatus(td.Chat chat) => supergroupOf(chat)?.status ?? basicGroupOf(chat)?.status;
 
@@ -228,8 +241,7 @@ class TelegramAccount {
     if (user != null) return user.type is! td.UserTypeDeleted;
     if (isChannel(chat)) {
       final status = myStatus(chat);
-      return status is td.ChatMemberStatusCreator ||
-          (status is td.ChatMemberStatusAdministrator && status.rights.canPostMessages);
+      return status is td.ChatMemberStatusCreator || (status is td.ChatMemberStatusAdministrator && status.rights.canPostMessages);
     }
     final status = myStatus(chat);
     if (status is td.ChatMemberStatusCreator || status is td.ChatMemberStatusAdministrator) return true;
@@ -254,16 +266,16 @@ class TelegramAccount {
   }
 
   String senderName(td.MessageSender sender) => switch (sender) {
-        td.MessageSenderUser(:final userId) => userName(userId),
-        td.MessageSenderChat(:final chatId) => chats[chatId]?.title ?? '',
-        _ => '',
-      };
+    td.MessageSenderUser(:final userId) => userName(userId),
+    td.MessageSenderChat(:final chatId) => chats[chatId]?.title ?? '',
+    _ => '',
+  };
 
   int senderKey(td.MessageSender sender) => switch (sender) {
-        td.MessageSenderUser(:final userId) => userId,
-        td.MessageSenderChat(:final chatId) => chatId,
-        _ => 0,
-      };
+    td.MessageSenderUser(:final userId) => userId,
+    td.MessageSenderChat(:final chatId) => chatId,
+    _ => 0,
+  };
 
   // ------------------------------------------------------------------ update handling
 
@@ -369,6 +381,10 @@ class TelegramAccount {
         _updateChat(chatId, (c) => c.copyWith(unreadReactionCount: unreadReactionCount));
       case td.UpdateChatNotificationSettings(:final chatId, :final notificationSettings):
         _updateChat(chatId, (c) => c.copyWith(notificationSettings: notificationSettings));
+      case td.UpdateScopeNotificationSettings(:final scope, :final notificationSettings):
+        scopeNotificationSettings[scope.runtimeType] = notificationSettings;
+        // Chat tiles read mute state on rebuild; the folder revision refreshes the lists.
+        foldersRevision.value++;
       case td.UpdateChatDraftMessage(:final chatId, :final draftMessage, :final positions):
         _updateChat(chatId, (c) => _patch(c, {'draft_message': draftMessage?.toJson()}));
         _setPositions(chatId, positions);
@@ -442,10 +458,7 @@ class TelegramAccount {
       case td.UpdateDeleteMessages(:final chatId, :final messageIds, :final isPermanent, :final fromCache):
         if (isPermanent && !fromCache) archive.onDeleted(chatId, messageIds);
         _messageEvents.add(object);
-      case td.UpdateMessageSendFailed() ||
-            td.UpdateMessageInteractionInfo() ||
-            td.UpdateMessageIsPinned() ||
-            td.UpdateMessageSendAcknowledged():
+      case td.UpdateMessageSendFailed() || td.UpdateMessageInteractionInfo() || td.UpdateMessageIsPinned() || td.UpdateMessageSendAcknowledged():
         _messageEvents.add(object as td.Update);
       default:
         break;
@@ -480,22 +493,24 @@ class TelegramAccount {
         final databaseKey = await _databaseKey();
         // The account may have been disposed (log out, account removed, test teardown) while the key loaded.
         if (_disposed) return;
-        await client.send<td.Ok>(td.SetTdlibParameters(
-          useTestDc: AppConfig.useTestDc,
-          databaseDirectory: databaseDirectory,
-          filesDirectory: '$databaseDirectory${Platform.pathSeparator}files',
-          databaseEncryptionKey: databaseKey,
-          useFileDatabase: true,
-          useChatInfoDatabase: true,
-          useMessageDatabase: true,
-          useSecretChats: true,
-          apiId: credentials.apiId,
-          apiHash: credentials.apiHash,
-          systemLanguageCode: _languageCode,
-          deviceModel: _deviceModel(),
-          systemVersion: Platform.operatingSystemVersion,
-          applicationVersion: AppConfig.appVersion,
-        ));
+        await client.send<td.Ok>(
+          td.SetTdlibParameters(
+            useTestDc: AppConfig.useTestDc,
+            databaseDirectory: databaseDirectory,
+            filesDirectory: '$databaseDirectory${Platform.pathSeparator}files',
+            databaseEncryptionKey: databaseKey,
+            useFileDatabase: true,
+            useChatInfoDatabase: true,
+            useMessageDatabase: true,
+            useSecretChats: true,
+            apiId: credentials.apiId,
+            apiHash: credentials.apiHash,
+            systemLanguageCode: _languageCode,
+            deviceModel: _deviceModel(),
+            systemVersion: Platform.operatingSystemVersion,
+            applicationVersion: AppConfig.appVersion,
+          ),
+        );
       } on TdException catch (error) {
         debugPrint('setTdlibParameters failed: $error');
       } on FileSystemException catch (error) {
@@ -574,9 +589,7 @@ class TelegramAccount {
     final cached = files[fileId];
     if (cached != null && cached.local.isDownloadingCompleted) return cached.local.path;
     try {
-      final file = await client.send<td.File>(
-        td.DownloadFile(fileId: fileId, priority: priority, offset: 0, limit: 0, synchronous: true),
-      );
+      final file = await client.send<td.File>(td.DownloadFile(fileId: fileId, priority: priority, offset: 0, limit: 0, synchronous: true));
       files[file.id] = file;
       return file.local.isDownloadingCompleted ? file.local.path : null;
     } on TdException catch (error) {
@@ -608,7 +621,12 @@ class TelegramAccount {
   /// Ghost mode: stop broadcasting online status.
   Future<void> setOnline(bool online) async {
     try {
-      await client.send<td.Ok>(td.SetOption(name: 'online', value: td.OptionValueBoolean(value: online)));
+      await client.send<td.Ok>(
+        td.SetOption(
+          name: 'online',
+          value: td.OptionValueBoolean(value: online),
+        ),
+      );
     } on TdException catch (error) {
       debugPrint('set online failed: $error');
     }

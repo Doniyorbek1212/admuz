@@ -53,11 +53,11 @@ class BrandCornerWave extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IgnorePointer(
-        child: CustomPaint(
-          painter: _CornerPainter(brandGradient(Theme.of(context).colorScheme.primary), MediaQuery.paddingOf(context).top),
-          child: const SizedBox.expand(),
-        ),
-      );
+    child: CustomPaint(
+      painter: _CornerPainter(brandGradient(Theme.of(context).colorScheme.primary), MediaQuery.paddingOf(context).top),
+      child: const SizedBox.expand(),
+    ),
+  );
 }
 
 class _CornerPainter extends CustomPainter {
@@ -103,23 +103,75 @@ class GoldRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: EdgeInsets.all(width),
-        decoration: const BoxDecoration(shape: BoxShape.circle, gradient: brandGoldGradient),
-        child: Container(
-          padding: const EdgeInsets.all(1.5),
-          decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).colorScheme.surface),
-          child: child,
-        ),
-      );
+    padding: EdgeInsets.all(width),
+    decoration: const BoxDecoration(shape: BoxShape.circle, gradient: brandGoldGradient),
+    child: Container(
+      padding: const EdgeInsets.all(1.5),
+      decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).colorScheme.surface),
+      child: child,
+    ),
+  );
+}
+
+/// "UZARO" wordmark: a deep-to-accent sweep on light backgrounds, plain white on dark ones.
+class BrandWordmark extends StatelessWidget {
+  const BrandWordmark({super.key, this.size = 30, this.onDark = false});
+
+  final double size;
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    final text = Text(
+      'UZARO',
+      style: TextStyle(fontSize: size, height: 1.05, fontWeight: FontWeight.w800, letterSpacing: size * 0.04, color: Colors.white),
+    );
+    if (onDark) return text;
+    return ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: (bounds) =>
+          LinearGradient(colors: [Color.lerp(accent, Colors.black, 0.55)!, Color.lerp(accent, Colors.black, 0.2)!]).createShader(bounds),
+      child: text,
+    );
+  }
+}
+
+/// App logo on a white disc with a gold rim and a soft accent glow.
+class BrandLogoBadge extends StatelessWidget {
+  const BrandLogoBadge({super.key, this.size = 132});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    padding: const EdgeInsets.all(3),
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: brandGoldGradient,
+      boxShadow: [BoxShadow(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25), blurRadius: 28, offset: const Offset(0, 10))],
+    ),
+    child: ClipOval(
+      child: ColoredBox(
+        color: Colors.white,
+        child: Padding(padding: EdgeInsets.all(size * 0.08), child: Image.asset('assets/logo.png')),
+      ),
+    ),
+  );
 }
 
 /// Round accent-gradient action button with a gold rim (the "new message" button).
 class BrandFab extends StatelessWidget {
-  const BrandFab({super.key, required this.icon, required this.tooltip, required this.onPressed});
+  const BrandFab({super.key, required this.icon, required this.tooltip, required this.onPressed, this.busy = false});
 
   final IconData icon;
   final String tooltip;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
+
+  /// Shows a spinner instead of the icon and ignores taps.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +192,14 @@ class BrandFab extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: Ink(
             decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(accent, vertical: true)),
-            child: InkWell(onTap: onPressed, child: Icon(icon, color: Colors.white, size: 26)),
+            child: InkWell(
+              onTap: busy ? null : onPressed,
+              child: busy
+                  ? const Center(
+                      child: SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)),
+                    )
+                  : Icon(icon, color: Colors.white, size: 26),
+            ),
           ),
         ),
       ),
