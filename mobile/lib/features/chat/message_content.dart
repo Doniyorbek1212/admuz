@@ -24,6 +24,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import 'bot_keyboard.dart';
 import 'media_viewers.dart';
+import 'video_note_view.dart';
 
 /// Picks the photo size best suited for a bubble (around 800px wide).
 td.PhotoSize? bestPhotoSize(td.Photo photo, {int target = 800}) {
@@ -178,16 +179,7 @@ class MessageMedia extends ConsumerWidget {
           maxWidth: maxWidth,
           isGif: true,
         ),
-      td.MessageVideoNote(:final videoNote) => _VideoThumb(
-          file: videoNote.video,
-          thumbnail: videoNote.thumbnail,
-          minithumbnail: videoNote.minithumbnail,
-          width: videoNote.length,
-          height: videoNote.length,
-          duration: videoNote.duration,
-          maxWidth: min(maxWidth, 220),
-          round: true,
-        ),
+      td.MessageVideoNote(:final videoNote, :final isViewed) => VideoNoteView(message: message, videoNote: videoNote, isViewed: isViewed),
       td.MessageVoiceNote(:final voiceNote) => VoiceNoteView(message: message, voiceNote: voiceNote),
       td.MessageAudio(:final audio) => _FileView(
           message: message,
@@ -342,7 +334,6 @@ class _VideoThumb extends ConsumerWidget {
     required this.duration,
     required this.maxWidth,
     this.isGif = false,
-    this.round = false,
   });
 
   final td.File file;
@@ -353,7 +344,6 @@ class _VideoThumb extends ConsumerWidget {
   final int duration;
   final double maxWidth;
   final bool isGif;
-  final bool round;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -376,7 +366,6 @@ class _VideoThumb extends ConsumerWidget {
         );
       }
     }
-    if (round) preview = ClipOval(child: preview);
     return GestureDetector(
       onTap: () => openVideoPlayer(context, file, loop: isGif),
       child: Stack(

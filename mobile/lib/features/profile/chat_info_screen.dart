@@ -311,11 +311,14 @@ class _ActionTile extends StatelessWidget {
                 children: [
                   Icon(icon, color: tint, size: 26),
                   const SizedBox(height: 6),
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color ?? theme.colorScheme.onSurface),
+                  // Shrinks long labels ("Sukut qilish") instead of cutting them.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color ?? theme.colorScheme.onSurface),
+                    ),
                   ),
                 ],
               ),

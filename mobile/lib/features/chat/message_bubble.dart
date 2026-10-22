@@ -198,8 +198,22 @@ class MessageBubble extends ConsumerWidget {
             children: [
               if (message.replyTo case final td.MessageReplyToMessage reply)
                 _ReplyHeader(reply: reply, outgoing: outgoing, onTap: () => onReplyTap(reply.messageId)),
-              MessageMedia(message: message, maxWidth: maxWidth),
-              _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived, onMedia: true),
+              // Round videos carry the time on their bottom-right edge, as in Telegram.
+              if (content is td.MessageVideoNote)
+                Stack(
+                  children: [
+                    MessageMedia(message: message, maxWidth: maxWidth),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived, onMedia: true),
+                    ),
+                  ],
+                )
+              else ...[
+                MessageMedia(message: message, maxWidth: maxWidth),
+                _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived, onMedia: true),
+              ],
             ],
           )
         : Container(

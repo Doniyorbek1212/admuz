@@ -92,7 +92,14 @@ class ComposerState extends ConsumerState<Composer> {
   bool _videoMode = false;
   bool _recordingVideo = false;
   CameraController? _camera;
+
+  /// Recording overlay (round camera preview, camera/flash buttons, lock pill) and the mic tooltip.
   OverlayEntry? _cameraOverlay;
+  OverlayEntry? _tip;
+  Timer? _tipTimer;
+
+  /// Front camera: the overlay turns white to light the face; back camera: torch.
+  bool _flash = false;
   static const _videoNoteLimit = Duration(seconds: 60);
 
   @override
@@ -143,6 +150,8 @@ class ComposerState extends ConsumerState<Composer> {
     _recordTicker?.cancel();
     unawaited(_recorder?.dispose());
     _cameraOverlay?.remove();
+    _tipTimer?.cancel();
+    _tip?.remove();
     unawaited(_camera?.dispose());
     _controller.dispose();
     _focus.dispose();
@@ -608,20 +617,111 @@ class ComposerState extends ConsumerState<Composer> {
     if (!ref.read(settingsProvider).ghostMode) {
       unawaited(ref.read(accountProvider).sendTyping(widget.chat.id, const td.ChatActionRecordingVoiceNote()));
     }
+    final startedAt = DateTime.now();
     setState(() {
       _recording = true;
-      _recordStart = DateTime.now();
+      _recordStart = startedAt;
       _recordPath = path;
       _dragOffset = 0;
       _locked = false;
     });
+    _showRecordingOverlay(null, startedAt);
     // Released while the permission check / recorder start was still running: a tap, not a recording.
     if (!_pressing) await _stopRecording(send: false);
+  }
+
+  /// Voice: just the slide-up lock pill; video: also the dimmed round preview with camera/flash buttons.
+  void _showRecordingOverlay(CameraController? camera, DateTime startedAt) {
+    _cameraOverlay?.remove();
+    _cameraOverlay = OverlayEntry(
+      builder: (_) => _RecordingOverlay(
+        controller: camera,
+        startedAt: startedAt,
+        limit: _videoNoteLimit,
+        isLocked: () => _locked,
+        flashOn: () => _flash,
+        onSwitchCamera: camera == null ? null : _switchCamera,
+        onFlash: camera == null ? null : _toggleFlash,
+      ),
+    );
+    Overlay.of(context).insert(_cameraOverlay!);
+  }
+
+  void _hideRecordingOverlay() {
+    _cameraOverlay?.remove();
+    _cameraOverlay = null;
+  }
+
+  Future<void> _switchCamera() async {
+    final camera = _camera;
+    if (camera == null) return;
+    try {
+      final current = camera.description.lensDirection;
+      final next = (await availableCameras()).where((c) => c.lensDirection != current).firstOrNull;
+      if (next == null) return;
+      // Continues the same recording with the other camera.
+      await camera.setDescription(next);
+      if (_flash) await _applyTorch(camera);
+    } on CameraException catch (error) {
+      debugPrint('camera switch failed: $error');
+    }
+    _cameraOverlay?.markNeedsBuild();
+  }
+
+  Future<void> _toggleFlash() async {
+    final camera = _camera;
+    if (camera == null) return;
+    setState(() => _flash = !_flash);
+    await _applyTorch(camera);
+    _cameraOverlay?.markNeedsBuild();
+  }
+
+  Future<void> _applyTorch(CameraController camera) async {
+    if (camera.description.lensDirection != CameraLensDirection.back) return;
+    try {
+      await camera.setFlashMode(_flash ? FlashMode.torch : FlashMode.off);
+    } on CameraException catch (error) {
+      debugPrint('torch failed: $error');
+    }
+  }
+
+  /// Short hint bubble above the mic button (aka/Telegram style) instead of a bottom toast.
+  void _showMicTip(String text) {
+    _tipTimer?.cancel();
+    _tip?.remove();
+    final media = MediaQuery.of(context);
+    final bottom = media.padding.bottom + media.viewInsets.bottom + 72;
+    _tip = OverlayEntry(
+      builder: (context) => Positioned(
+        left: 48,
+        right: 10,
+        bottom: bottom,
+        child: IgnorePointer(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Material(
+              color: const Color(0xEE262D36),
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.3)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_tip!);
+    _tipTimer = Timer(const Duration(seconds: 3), () {
+      _tip?.remove();
+      _tip = null;
+    });
   }
 
   Future<void> _stopRecording({required bool send}) async {
     if (!_recording) return;
     if (_recordingVideo) return _stopVideoNote(send: send);
+    _hideRecordingOverlay();
     await _amplitudeSub?.cancel();
     _recordTicker?.cancel();
     final path = await _recorder?.stop() ?? _recordPath;
@@ -690,8 +790,8 @@ class ComposerState extends ConsumerState<Composer> {
     _camera = controller;
     HapticFeedback.mediumImpact();
     final startedAt = DateTime.now();
-    _cameraOverlay = OverlayEntry(builder: (_) => _VideoNoteOverlay(controller: controller, startedAt: startedAt, limit: _videoNoteLimit));
-    Overlay.of(context).insert(_cameraOverlay!);
+    _flash = false;
+    _showRecordingOverlay(controller, startedAt);
     _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (!mounted) return;
       setState(() {});
@@ -713,8 +813,8 @@ class ComposerState extends ConsumerState<Composer> {
 
   Future<void> _stopVideoNote({required bool send}) async {
     _recordTicker?.cancel();
-    _cameraOverlay?.remove();
-    _cameraOverlay = null;
+    _hideRecordingOverlay();
+    _flash = false;
     final controller = _camera;
     _camera = null;
     final duration = DateTime.now().difference(_recordStart ?? DateTime.now());
@@ -1002,6 +1102,10 @@ class ComposerState extends ConsumerState<Composer> {
   /// Hold to record, slide left to cancel, slide up to lock; while locked a tap sends.
   Widget _micButton(ThemeData theme) {
     final primary = theme.colorScheme.primary;
+    // Halo while recording: follows the voice level, or breathes slowly for video.
+    final pulse = !_recording
+        ? 0.0
+        : (_recordingVideo || _waveform.isEmpty ? (sin(DateTime.now().millisecondsSinceEpoch / 320) + 1) / 2 : _waveform.last / 31);
     return GestureDetector(
       key: const ValueKey('mic'),
       onTap: () {
@@ -1010,7 +1114,7 @@ class ComposerState extends ConsumerState<Composer> {
         } else if (!_recording) {
           HapticFeedback.selectionClick();
           setState(() => _videoMode = !_videoMode);
-          showToast(context, context.t(_videoMode ? 'hold_to_record_video' : 'hold_to_record'));
+          _showMicTip(context.t(_videoMode ? 'hold_to_record_video' : 'hold_to_record'));
         }
       },
       onLongPressStart: (_) {
@@ -1038,17 +1142,19 @@ class ComposerState extends ConsumerState<Composer> {
       onLongPressCancel: () => _pressing = false,
       // Phones: always a round accent button beside the floating field (aka style); desktop: a plain icon until recording.
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
-        width: _recording ? 56 : (isDesktop ? 48 : 52),
-        height: _recording ? 56 : (isDesktop ? 48 : 52),
+        width: _recording ? 60 : (isDesktop ? 48 : 52),
+        height: _recording ? 60 : (isDesktop ? 48 : 52),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           gradient: _recording || !isDesktop ? brandGradient(primary, vertical: true) : null,
           border: isDesktop ? null : Border.all(color: brandGold.withValues(alpha: 0.7)),
-          boxShadow: _recording || !isDesktop
-              ? [BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4))]
-              : null,
+          boxShadow: [
+            if (_recording) BoxShadow(color: primary.withValues(alpha: 0.28), spreadRadius: 6 + 14 * pulse),
+            if (_recording || !isDesktop)
+              BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4)),
+          ],
         ),
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 160),
@@ -1056,7 +1162,7 @@ class ComposerState extends ConsumerState<Composer> {
           child: Icon(
             _recording && _locked
                 ? Icons.send_rounded
-                : (_videoMode ? Icons.videocam_rounded : Icons.mic_rounded),
+                : (_videoMode ? Icons.photo_camera_outlined : Icons.mic_rounded),
             key: ValueKey('$_videoMode$_locked$_recording'),
             color: _recording || !isDesktop ? Colors.white : theme.hintColor,
           ),
@@ -1109,18 +1215,8 @@ class ComposerState extends ConsumerState<Composer> {
                     ),
                   ),
           ),
-          // Slide-up-to-lock hint, as in Telegram.
-          if (!_locked)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.lock_outline_rounded, size: 16, color: theme.hintColor),
-                  Icon(Icons.keyboard_arrow_up_rounded, size: 16, color: theme.hintColor),
-                ],
-              ),
-            ),
+          // The slide-up lock pill floats above the mic (recording overlay).
+          const SizedBox(width: 8),
         ],
       ),
     );
@@ -1156,26 +1252,41 @@ class _RoundButton extends StatelessWidget {
   }
 }
 
-/// Round camera preview over the chat while a video message records. Touches pass through,
-/// so the composer underneath keeps handling slide-to-cancel, lock and send.
-class _VideoNoteOverlay extends StatefulWidget {
-  const _VideoNoteOverlay({required this.controller, required this.startedAt, required this.limit});
+/// Overlay while recording, as in aka/Telegram. Voice: a "slide up to lock" pill above the mic.
+/// Video: also the dimmed screen with a large round camera preview and a thin progress ring, plus
+/// camera-switch and flash buttons. Only those buttons take touches; the rest passes through so the
+/// mic underneath keeps handling slide-to-cancel, lock and send.
+class _RecordingOverlay extends StatefulWidget {
+  const _RecordingOverlay({
+    required this.controller,
+    required this.startedAt,
+    required this.limit,
+    required this.isLocked,
+    required this.flashOn,
+    this.onSwitchCamera,
+    this.onFlash,
+  });
 
-  final CameraController controller;
+  /// Null for voice recordings.
+  final CameraController? controller;
   final DateTime startedAt;
   final Duration limit;
+  final bool Function() isLocked;
+  final bool Function() flashOn;
+  final VoidCallback? onSwitchCamera;
+  final VoidCallback? onFlash;
 
   @override
-  State<_VideoNoteOverlay> createState() => _VideoNoteOverlayState();
+  State<_RecordingOverlay> createState() => _RecordingOverlayState();
 }
 
-class _VideoNoteOverlayState extends State<_VideoNoteOverlay> {
+class _RecordingOverlayState extends State<_RecordingOverlay> {
   late final Timer _ticker;
 
   @override
   void initState() {
     super.initState();
-    // Drives the one-minute progress ring around the preview.
+    // Drives the progress ring and picks up lock/flash changes from the composer.
     _ticker = Timer.periodic(const Duration(milliseconds: 100), (_) => setState(() {}));
   }
 
@@ -1187,44 +1298,101 @@ class _VideoNoteOverlayState extends State<_VideoNoteOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final controller = widget.controller;
+    // Top of the floating composer (52 px field + 8 px margin above the system inset / keyboard).
+    final composerTop = media.padding.bottom + media.viewInsets.bottom + 64;
+    final flash = widget.flashOn();
+    final front = controller?.description.lensDirection == CameraLensDirection.front;
+    return Stack(
+      children: [
+        if (controller != null) ...[
+          Positioned.fill(
+            child: IgnorePointer(
+              // Front-camera "flash" lights the face with a white screen.
+              child: ColoredBox(color: flash && front ? Colors.white : Colors.black.withValues(alpha: 0.6)),
+            ),
+          ),
+          Positioned.fill(child: IgnorePointer(child: _preview(context, controller))),
+          Positioned(
+            left: 12,
+            bottom: composerTop + 14,
+            child: Container(
+              decoration: BoxDecoration(color: const Color(0xCC1E2630), borderRadius: BorderRadius.circular(28)),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.flip_camera_android_rounded, color: Colors.white),
+                    onPressed: widget.onSwitchCamera,
+                  ),
+                  IconButton(
+                    icon: Icon(flash ? Icons.flash_on_rounded : Icons.flash_off_rounded, color: flash ? const Color(0xFFFFC94D) : Colors.white),
+                    onPressed: widget.onFlash,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (!widget.isLocked())
+          Positioned(
+            right: 14,
+            bottom: composerTop + 26,
+            child: IgnorePointer(
+              child: Container(
+                width: 44,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: brandGold.withValues(alpha: 0.5)),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 3))],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.lock_outline_rounded, size: 20, color: Theme.of(context).colorScheme.primary),
+                    Icon(Icons.keyboard_arrow_up_rounded, size: 18, color: Theme.of(context).hintColor),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _preview(BuildContext context, CameraController controller) {
     final screen = MediaQuery.sizeOf(context);
-    final diameter = min(screen.width * 0.78, 320.0);
+    final diameter = min(screen.width * 0.9, 420.0);
     final elapsed = DateTime.now().difference(widget.startedAt);
     final progress = (elapsed.inMilliseconds / widget.limit.inMilliseconds).clamp(0.0, 1.0);
     // Reported in sensor (landscape) orientation; swapped for the portrait preview.
-    final preview = widget.controller.value.previewSize;
-    return IgnorePointer(
-      child: ColoredBox(
-        color: Colors.black.withValues(alpha: 0.5),
-        child: Align(
-          alignment: const Alignment(0, -0.3),
-          child: SizedBox.square(
-            dimension: diameter + 14,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CircularProgressIndicator(
-                  value: progress,
-                  strokeWidth: 4,
-                  color: Theme.of(context).colorScheme.primary,
-                  backgroundColor: brandGold.withValues(alpha: 0.55),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(7),
-                  child: ClipOval(
-                    child: FittedBox(
-                      fit: BoxFit.cover,
-                      child: SizedBox(
-                        width: preview?.height ?? diameter,
-                        height: preview?.width ?? diameter,
-                        child: CameraPreview(widget.controller),
-                      ),
-                    ),
+    final preview = controller.value.previewSize;
+    return Align(
+      alignment: const Alignment(0, -0.25),
+      child: SizedBox.square(
+        dimension: diameter + 12,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CircularProgressIndicator(value: progress, strokeWidth: 3, color: Colors.white, strokeCap: StrokeCap.round),
+            Padding(
+              padding: const EdgeInsets.all(6),
+              child: ClipOval(
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: preview?.height ?? diameter,
+                    height: preview?.width ?? diameter,
+                    child: CameraPreview(controller),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
