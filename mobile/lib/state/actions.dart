@@ -198,6 +198,22 @@ extension ChatActions on TelegramAccount {
         replyToId: replyToId,
       );
 
+  /// Round video message; [length] is the diameter in pixels (Telegram allows up to 640).
+  Future<td.Message> sendVideoNote(int chatId, String path, {required int durationSeconds, required int length, int? replyToId}) =>
+      sendContent(
+        chatId,
+        td.InputMessageVideoNote(
+          videoNote: td.InputVideoNote(
+            videoNote: td.InputFileLocal(path: path),
+            thumbnail: null,
+            duration: durationSeconds,
+            length: length.clamp(1, 640),
+          ),
+          selfDestructType: null,
+        ),
+        replyToId: replyToId,
+      );
+
   Future<td.Message> sendVoice(int chatId, String path, {required int durationSeconds, required List<int> waveform, int? replyToId}) =>
       sendContent(
         chatId,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -87,6 +88,13 @@ class ComposerState extends ConsumerState<Composer> {
   static const _cancelDistance = 120.0;
   static const _lockDistance = 80.0;
 
+  /// Tapping the mic switches it to round video messages (and back), as in Telegram.
+  bool _videoMode = false;
+  bool _recordingVideo = false;
+  CameraController? _camera;
+  OverlayEntry? _cameraOverlay;
+  static const _videoNoteLimit = Duration(seconds: 60);
+
   @override
   void initState() {
     super.initState();
@@ -134,6 +142,8 @@ class ComposerState extends ConsumerState<Composer> {
     _amplitudeSub?.cancel();
     _recordTicker?.cancel();
     unawaited(_recorder?.dispose());
+    _cameraOverlay?.remove();
+    unawaited(_camera?.dispose());
     _controller.dispose();
     _focus.dispose();
     super.dispose();
@@ -575,6 +585,7 @@ class ComposerState extends ConsumerState<Composer> {
 
   Future<void> _startRecording() async {
     if (_recording) return;
+    if (_videoMode) return _startVideoNote();
     final recorder = _recorder ??= AudioRecorder();
     if (!await recorder.hasPermission()) {
       if (mounted) showToast(context, context.t('mic_permission'));
@@ -610,6 +621,7 @@ class ComposerState extends ConsumerState<Composer> {
 
   Future<void> _stopRecording({required bool send}) async {
     if (!_recording) return;
+    if (_recordingVideo) return _stopVideoNote(send: send);
     await _amplitudeSub?.cancel();
     _recordTicker?.cancel();
     final path = await _recorder?.stop() ?? _recordPath;
@@ -635,6 +647,108 @@ class ComposerState extends ConsumerState<Composer> {
     await guard(
       context,
       () => ref.read(accountProvider).sendVoice(widget.chat.id, path, durationSeconds: max(1, duration.inSeconds), waveform: samples, replyToId: replyId),
+    );
+  }
+
+  // ------------------------------------------------------------------ round video messages
+
+  Future<void> _startVideoNote() async {
+    final s = context.s;
+    final CameraController controller;
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        if (mounted) showToast(context, s.t('camera_unavailable'));
+        return;
+      }
+      final camera = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front, orElse: () => cameras.first);
+      controller = CameraController(camera, ResolutionPreset.medium);
+      // Asks for camera and microphone access on first use.
+      await controller.initialize();
+    } on CameraException catch (error) {
+      debugPrint('video note camera failed: $error');
+      if (mounted) showToast(context, s.t(error.code.contains('Denied') ? 'camera_permission' : 'camera_unavailable'));
+      return;
+    }
+    if (!mounted || !_pressing) {
+      // Released (or left the chat) while the camera was starting: nothing to record.
+      await controller.dispose();
+      return;
+    }
+    try {
+      await controller.startVideoRecording();
+    } on CameraException catch (error) {
+      debugPrint('video note recording failed: $error');
+      await controller.dispose();
+      if (mounted) showToast(context, s.t('camera_unavailable'));
+      return;
+    }
+    if (!mounted) {
+      unawaited(controller.dispose());
+      return;
+    }
+    _camera = controller;
+    HapticFeedback.mediumImpact();
+    final startedAt = DateTime.now();
+    _cameraOverlay = OverlayEntry(builder: (_) => _VideoNoteOverlay(controller: controller, startedAt: startedAt, limit: _videoNoteLimit));
+    Overlay.of(context).insert(_cameraOverlay!);
+    _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (!mounted) return;
+      setState(() {});
+      // Telegram caps round videos at one minute: send what was recorded.
+      if (DateTime.now().difference(startedAt) >= _videoNoteLimit) unawaited(_stopRecording(send: true));
+    });
+    if (!ref.read(settingsProvider).ghostMode) {
+      unawaited(ref.read(accountProvider).sendTyping(widget.chat.id, const td.ChatActionRecordingVideoNote()));
+    }
+    setState(() {
+      _recording = true;
+      _recordingVideo = true;
+      _recordStart = startedAt;
+      _dragOffset = 0;
+      _locked = false;
+    });
+    if (!_pressing) await _stopRecording(send: false);
+  }
+
+  Future<void> _stopVideoNote({required bool send}) async {
+    _recordTicker?.cancel();
+    _cameraOverlay?.remove();
+    _cameraOverlay = null;
+    final controller = _camera;
+    _camera = null;
+    final duration = DateTime.now().difference(_recordStart ?? DateTime.now());
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordingVideo = false;
+        _locked = false;
+        _dragOffset = 0;
+      });
+    }
+    if (controller == null) return;
+    // Preview size is reported in sensor (landscape) orientation; the shorter side is the circle.
+    final previewSize = controller.value.previewSize;
+    XFile? file;
+    try {
+      file = await controller.stopVideoRecording();
+    } on CameraException catch (error) {
+      debugPrint('video note stop failed: $error');
+    } finally {
+      await controller.dispose();
+    }
+    if (file == null) return;
+    if (!send || duration < const Duration(seconds: 1) || !mounted) {
+      unawaited(File(file.path).delete().catchError((Object _) => File(file!.path)));
+      return;
+    }
+    final length = previewSize == null ? 480 : min(previewSize.width, previewSize.height).round();
+    final replyId = widget.replyTo?.id;
+    widget.onCancelReply();
+    widget.onSent();
+    await guard(
+      context,
+      () => ref.read(accountProvider).sendVideoNote(widget.chat.id, file!.path, durationSeconds: max(1, duration.inSeconds), length: length, replyToId: replyId),
     );
   }
 
@@ -876,7 +990,9 @@ class ComposerState extends ConsumerState<Composer> {
         if (_recording && _locked) {
           unawaited(_stopRecording(send: true));
         } else if (!_recording) {
-          showToast(context, context.t('hold_to_record'));
+          HapticFeedback.selectionClick();
+          setState(() => _videoMode = !_videoMode);
+          showToast(context, context.t(_videoMode ? 'hold_to_record_video' : 'hold_to_record'));
         }
       },
       onLongPressStart: (_) {
@@ -912,9 +1028,16 @@ class ComposerState extends ConsumerState<Composer> {
           gradient: _recording ? brandGradient(primary, vertical: true) : null,
           boxShadow: _recording ? [BoxShadow(color: primary.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4))] : null,
         ),
-        child: Icon(
-          _recording && _locked ? Icons.send_rounded : Icons.mic_rounded,
-          color: _recording ? Colors.white : theme.hintColor,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 160),
+          transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+          child: Icon(
+            _recording && _locked
+                ? Icons.send_rounded
+                : (_videoMode ? Icons.videocam_rounded : Icons.mic_rounded),
+            key: ValueKey('$_videoMode$_locked$_recording'),
+            color: _recording ? Colors.white : theme.hintColor,
+          ),
         ),
       ),
     );
@@ -977,6 +1100,81 @@ class ComposerState extends ConsumerState<Composer> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Round camera preview over the chat while a video message records. Touches pass through,
+/// so the composer underneath keeps handling slide-to-cancel, lock and send.
+class _VideoNoteOverlay extends StatefulWidget {
+  const _VideoNoteOverlay({required this.controller, required this.startedAt, required this.limit});
+
+  final CameraController controller;
+  final DateTime startedAt;
+  final Duration limit;
+
+  @override
+  State<_VideoNoteOverlay> createState() => _VideoNoteOverlayState();
+}
+
+class _VideoNoteOverlayState extends State<_VideoNoteOverlay> {
+  late final Timer _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Drives the one-minute progress ring around the preview.
+    _ticker = Timer.periodic(const Duration(milliseconds: 100), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ticker.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context);
+    final diameter = min(screen.width * 0.78, 320.0);
+    final elapsed = DateTime.now().difference(widget.startedAt);
+    final progress = (elapsed.inMilliseconds / widget.limit.inMilliseconds).clamp(0.0, 1.0);
+    // Reported in sensor (landscape) orientation; swapped for the portrait preview.
+    final preview = widget.controller.value.previewSize;
+    return IgnorePointer(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.5),
+        child: Align(
+          alignment: const Alignment(0, -0.3),
+          child: SizedBox.square(
+            dimension: diameter + 14,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 4,
+                  color: Theme.of(context).colorScheme.primary,
+                  backgroundColor: brandGold.withValues(alpha: 0.55),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(7),
+                  child: ClipOval(
+                    child: FittedBox(
+                      fit: BoxFit.cover,
+                      child: SizedBox(
+                        width: preview?.height ?? diameter,
+                        height: preview?.width ?? diameter,
+                        child: CameraPreview(widget.controller),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

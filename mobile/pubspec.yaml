@@ -66,6 +66,7 @@ dependencies:
   firebase_messaging: ^16.7.0
   gal: ^2.3.3
   sentry_flutter: ^9.30.1
+  camera: ^0.12.1
 
 dev_dependencies:
   flutter_test:
