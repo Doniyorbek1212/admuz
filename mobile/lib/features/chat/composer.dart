@@ -844,9 +844,10 @@ class ComposerState extends ConsumerState<Composer> {
     }
 
     final reference = widget.editing ?? widget.replyTo;
+    // Phones: the field floats as a pill over the chat (aka style); desktop keeps the docked bar.
     return Material(
-      color: theme.colorScheme.surface,
-      shape: Border(top: BorderSide(color: theme.dividerColor, width: 0.5)),
+      color: isDesktop ? theme.colorScheme.surface : Colors.transparent,
+      shape: isDesktop ? Border(top: BorderSide(color: theme.dividerColor, width: 0.5)) : null,
       child: SafeArea(
         top: false,
         child: Column(
@@ -869,7 +870,7 @@ class ComposerState extends ConsumerState<Composer> {
                 onClose: widget.editing != null ? widget.onCancelEdit : widget.onCancelReply,
               ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+              padding: isDesktop ? const EdgeInsets.all(4) : const EdgeInsets.fromLTRB(8, 4, 8, 8),
               child: _composerRow(s, settings),
             ),
             if (_showEmoji)
@@ -890,10 +891,25 @@ class ComposerState extends ConsumerState<Composer> {
   /// would drop the long-press gesture, so release and slide would never reach the recorder.
   Widget _composerRow(Strings s, AppSettings settings) {
     final theme = Theme.of(context);
+    final fields = _recording ? _recordingInfo(s) : _inputRow(s, settings);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Expanded(child: _recording ? _recordingInfo(s) : _inputRow(s, settings)),
+        Expanded(
+          child: isDesktop
+              ? fields
+              : Container(
+                  constraints: const BoxConstraints(minHeight: 52),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(color: brandGold.withValues(alpha: 0.35)),
+                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
+                  ),
+                  child: fields,
+                ),
+        ),
+        if (!isDesktop) const SizedBox(width: 6),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 160),
           transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: FadeTransition(opacity: animation, child: child)),
@@ -902,10 +918,12 @@ class ComposerState extends ConsumerState<Composer> {
                   key: const ValueKey('send'),
                   onLongPress: widget.editing == null ? _sendOptions : null,
                   onSecondaryTap: widget.editing == null ? _sendOptions : null,
-                  child: IconButton(
-                    icon: Icon(widget.editing != null ? Icons.check_circle_rounded : Icons.send_rounded, color: theme.colorScheme.primary),
-                    onPressed: _send,
-                  ),
+                  child: isDesktop
+                      ? IconButton(
+                          icon: Icon(widget.editing != null ? Icons.check_circle_rounded : Icons.send_rounded, color: theme.colorScheme.primary),
+                          onPressed: _send,
+                        )
+                      : _RoundButton(onTap: _send, child: Icon(widget.editing != null ? Icons.check_rounded : Icons.send_rounded, color: Colors.white)),
                 )
               : _micButton(theme),
         ),
@@ -1018,15 +1036,19 @@ class ComposerState extends ConsumerState<Composer> {
         if (_recording && !_locked) unawaited(_stopRecording(send: _dragOffset > -_cancelDistance));
       },
       onLongPressCancel: () => _pressing = false,
+      // Phones: always a round accent button beside the floating field (aka style); desktop: a plain icon until recording.
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
-        width: _recording ? 52 : 48,
-        height: _recording ? 52 : 48,
+        width: _recording ? 56 : (isDesktop ? 48 : 52),
+        height: _recording ? 56 : (isDesktop ? 48 : 52),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: _recording ? brandGradient(primary, vertical: true) : null,
-          boxShadow: _recording ? [BoxShadow(color: primary.withValues(alpha: 0.35), blurRadius: 12, offset: const Offset(0, 4))] : null,
+          gradient: _recording || !isDesktop ? brandGradient(primary, vertical: true) : null,
+          border: isDesktop ? null : Border.all(color: brandGold.withValues(alpha: 0.7)),
+          boxShadow: _recording || !isDesktop
+              ? [BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4))]
+              : null,
         ),
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 160),
@@ -1036,7 +1058,7 @@ class ComposerState extends ConsumerState<Composer> {
                 ? Icons.send_rounded
                 : (_videoMode ? Icons.videocam_rounded : Icons.mic_rounded),
             key: ValueKey('$_videoMode$_locked$_recording'),
-            color: _recording ? Colors.white : theme.hintColor,
+            color: _recording || !isDesktop ? Colors.white : theme.hintColor,
           ),
         ),
       ),
@@ -1100,6 +1122,35 @@ class ComposerState extends ConsumerState<Composer> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Round accent send button beside the floating field, matching the mic button.
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      width: 52,
+      height: 52,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: brandGradient(primary, vertical: true),
+        border: Border.all(color: brandGold.withValues(alpha: 0.7)),
+        boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(onTap: onTap, child: Center(child: child)),
       ),
     );
   }

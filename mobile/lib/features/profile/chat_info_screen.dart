@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -11,7 +12,10 @@ import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
+import '../../core/theme.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
+import '../chat/call_options.dart';
 import '../chat/media_viewers.dart';
 import '../chat/message_content.dart';
 import '../contacts/contacts_screen.dart';
@@ -44,12 +48,9 @@ final _detailsProvider = FutureProvider.autoDispose.family<_ProfileDetails, int>
     var members = <td.ChatMember>[];
     if (info.canGetMembers && !supergroup.isChannel) {
       try {
-        final result = await account.send<td.ChatMembers>(td.GetSupergroupMembers(
-          supergroupId: supergroup.id,
-          filter: const td.SupergroupMembersFilterRecent(),
-          offset: 0,
-          limit: 200,
-        ));
+        final result = await account.send<td.ChatMembers>(
+          td.GetSupergroupMembers(supergroupId: supergroup.id, filter: const td.SupergroupMembersFilterRecent(), offset: 0, limit: 200),
+        );
         members = result.members;
       } on TdException catch (error) {
         debugPrint('members failed: $error');
@@ -84,168 +85,268 @@ class ChatInfoScreen extends ConsumerWidget {
     final canEdit = account.isAdmin(chat) && user == null;
     final info = details.value;
 
+    final callable = user != null && !account.isBot(user) && !account.isSavedMessages(chat) && user.id != account.myId;
+    final infoTiles = <Widget>[
+      if (user != null && user.phoneNumber.isNotEmpty)
+        _InfoTile(icon: Icons.phone_rounded, title: '+${user.phoneNumber}', subtitle: s.t('mobile'), copy: '+${user.phoneNumber}'),
+      if (info != null && info.about.isNotEmpty)
+        _InfoTile(icon: Icons.info_outline_rounded, title: info.about, subtitle: s.t(user != null ? 'bio' : 'description'), copy: info.about),
+      if (username != null)
+        _InfoTile(icon: Icons.alternate_email_rounded, title: '@$username', subtitle: s.t('username'), copy: 'https://t.me/$username', share: true),
+      if (info?.birthdate case final birthdate?) _InfoTile(icon: Icons.cake_rounded, title: _birthdayText(birthdate, s), subtitle: s.t('birthday')),
+      if (info?.inviteLink case final link?) _InfoTile(icon: Icons.link_rounded, title: link, subtitle: s.t('invite_link'), copy: link, share: true),
+    ];
+
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: theme.colorScheme.onSurface,
+        iconTheme: IconThemeData(color: theme.colorScheme.onSurface),
+        actionsIconTheme: IconThemeData(color: theme.colorScheme.onSurface),
+        actions: [
+          if (canEdit)
+            IconButton(
+              icon: const Icon(Icons.edit_rounded),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => EditChatScreen(chatId: chatId))),
+            ),
+        ],
+      ),
       body: CustomScrollView(
         slivers: [
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 260,
-            // Photo header: white content over the image, also where regular bars are light (desktop).
-            backgroundColor: theme.brightness == Brightness.dark ? null : theme.colorScheme.primary,
-            foregroundColor: Colors.white,
-            iconTheme: const IconThemeData(color: Colors.white),
-            actionsIconTheme: const IconThemeData(color: Colors.white),
-            actions: [
-              if (canEdit)
-                IconButton(
-                  icon: const Icon(Icons.edit_rounded),
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => EditChatScreen(chatId: chatId))),
+          SliverList.list(
+            children: [
+              // aka-style header: centered avatar, name, status, then quick actions.
+              Center(
+                child: GestureDetector(
+                  onTap: chat.photo == null ? null : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
+                  child: Hero(
+                    tag: 'avatar_$chatId',
+                    child: GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
+                  ),
                 ),
-            ],
-            flexibleSpace: FlexibleSpaceBar(
-              titlePadding: const EdgeInsetsDirectional.only(start: 56, bottom: 14, end: 56),
-              title: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(chatTitle(chat, account, s),
-                      maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, color: Colors.white)),
-                  Text(chatSubtitle(chat, account, s), style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w400)),
-                ],
               ),
-              background: GestureDetector(
-                onTap: chat.photo == null ? null : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
-                child: Stack(
-                  fit: StackFit.expand,
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  chatTitle(chat, account, s),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                chatSubtitle(chat, account, s),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, color: theme.hintColor),
+              ),
+              const SizedBox(height: 18),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
                   children: [
-                    if (chat.photo != null)
-                      TdImage(file: chat.photo!.big, minithumbnail: chat.photo!.minithumbnail)
-                    else
-                      Center(child: ChatAvatar(chatId: chatId, size: 110, showOnline: false)),
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black54],
-                          stops: [0.55, 1],
+                    _ActionTile(icon: Icons.chat_bubble_rounded, label: s.t('message'), onTap: () => Navigator.pop(context)),
+                    _ActionTile(
+                      icon: muted ? Icons.notifications_off_rounded : Icons.notifications_rounded,
+                      label: s.t(muted ? 'unmute_short' : 'mute_short'),
+                      onTap: () => guard(context, () => account.setMuted(chat, muted ? 0 : muteForever)),
+                    ),
+                    if (callable) ...[
+                      _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
+                      _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => showToast(context, s.t('calls_soon'))),
+                    ] else if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
+                      _ActionTile(
+                        icon: Icons.logout_rounded,
+                        label: s.t('leave'),
+                        color: theme.colorScheme.error,
+                        onTap: () async {
+                          final ok = await confirm(context, title: s.t('leave'), message: s.t('leave_confirm'), destructive: true);
+                          if (!ok || !context.mounted) return;
+                          await guard(context, () => account.deleteChat(chat));
+                          if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+                        },
+                      ),
+                  ],
+                ),
+              ),
+              if (infoTiles.isNotEmpty) _ProfileCard(children: infoTiles),
+              _ProfileCard(
+                children: [
+                  if (user == null && account.isAdmin(chat))
+                    ListTile(
+                      leading: const Icon(Icons.admin_panel_settings_rounded),
+                      title: Text(s.t('manage')),
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ManageChatScreen(chatId: chatId))),
+                    ),
+                  if (user != null && user.id != account.myId) ...[
+                    if (!user.isContact)
+                      ListTile(
+                        leading: const Icon(Icons.person_add_rounded),
+                        title: Text(s.t('add_contact')),
+                        onTap: () => guard(
+                          context,
+                          () => account.send<td.Ok>(
+                            td.AddContact(
+                              userId: user.id,
+                              contact: td.ImportedContact(phoneNumber: user.phoneNumber, firstName: user.firstName, lastName: user.lastName, note: null),
+                              sharePhoneNumber: false,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (chat.type is td.ChatTypePrivate && !account.isBot(user))
+                      ListTile(
+                        leading: const Icon(Icons.lock_rounded),
+                        title: Text(s.t('start_secret_chat')),
+                        onTap: () async {
+                          final ok = await confirm(context, title: s.t('start_secret_chat'), message: s.t('secret_chat_confirm', {'name': user.firstName}));
+                          if (!ok || !context.mounted) return;
+                          final secret = await guard(context, () => account.createSecretChat(user.id));
+                          if (secret == null || !context.mounted) return;
+                          Navigator.of(context).popUntil((route) => route.isFirst);
+                          openChat(context, secret.id);
+                        },
+                      ),
+                    ListTile(
+                      leading: Icon(Icons.block_rounded, color: theme.colorScheme.error),
+                      title: Text(s.t(chat.blockList != null ? 'unblock' : 'block'), style: TextStyle(color: theme.colorScheme.error)),
+                      onTap: () => guard(
+                        context,
+                        () => account.send<td.Ok>(
+                          td.SetMessageSenderBlockList(
+                            senderId: td.MessageSenderUser(userId: user.id),
+                            blockList: chat.blockList != null ? null : const td.BlockListMain(),
+                          ),
                         ),
                       ),
                     ),
                   ],
-                ),
-              ),
-            ),
-          ),
-          SliverList.list(children: [
-            if (user != null && user.phoneNumber.isNotEmpty)
-              _InfoTile(icon: Icons.phone_rounded, title: '+${user.phoneNumber}', subtitle: s.t('mobile'), copy: '+${user.phoneNumber}'),
-            if (username != null)
-              _InfoTile(icon: Icons.alternate_email_rounded, title: '@$username', subtitle: s.t('username'), copy: 'https://t.me/$username'),
-            if (info != null && info.about.isNotEmpty)
-              _InfoTile(icon: Icons.info_outline_rounded, title: info.about, subtitle: s.t(user != null ? 'bio' : 'description'), copy: info.about),
-            if (info?.birthdate case final birthdate?)
-              _InfoTile(
-                icon: Icons.cake_rounded,
-                title: '${birthdate.day}.${birthdate.month.toString().padLeft(2, '0')}${birthdate.year > 0 ? '.${birthdate.year}' : ''}',
-                subtitle: s.t('birthday'),
-              ),
-            if (info?.inviteLink case final link?)
-              _InfoTile(icon: Icons.link_rounded, title: link, subtitle: s.t('invite_link'), copy: link, share: true),
-            const Divider(),
-            SwitchListTile(
-              secondary: const Icon(Icons.notifications_rounded),
-              title: Text(s.t('notifications')),
-              value: !muted,
-              onChanged: (on) => guard(context, () => account.setMuted(chat, on ? 0 : muteForever)),
-            ),
-            if (user == null && account.isAdmin(chat))
-              ListTile(
-                leading: const Icon(Icons.admin_panel_settings_rounded),
-                title: Text(s.t('manage')),
-                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ManageChatScreen(chatId: chatId))),
-              ),
-            if (user != null && user.id != account.myId) ...[
-              ListTile(
-                leading: const Icon(Icons.chat_rounded),
-                title: Text(s.t('send_message')),
-                onTap: () => Navigator.pop(context),
-              ),
-              if (!user.isContact)
-                ListTile(
-                  leading: const Icon(Icons.person_add_rounded),
-                  title: Text(s.t('add_contact')),
-                  onTap: () => guard(context, () => account.send<td.Ok>(td.AddContact(
-                        userId: user.id,
-                        contact: td.ImportedContact(phoneNumber: user.phoneNumber, firstName: user.firstName, lastName: user.lastName, note: null),
-                        sharePhoneNumber: false,
-                      ))),
-                ),
-              if (chat.type is td.ChatTypePrivate && !account.isBot(user))
-                ListTile(
-                  leading: const Icon(Icons.lock_rounded),
-                  title: Text(s.t('start_secret_chat')),
-                  onTap: () async {
-                    final ok = await confirm(context, title: s.t('start_secret_chat'), message: s.t('secret_chat_confirm', {'name': user.firstName}));
-                    if (!ok || !context.mounted) return;
-                    final secret = await guard(context, () => account.createSecretChat(user.id));
-                    if (secret == null || !context.mounted) return;
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                    openChat(context, secret.id);
-                  },
-                ),
-              ListTile(
-                leading: Icon(Icons.block_rounded, color: theme.colorScheme.error),
-                title: Text(s.t(chat.blockList != null ? 'unblock' : 'block'), style: TextStyle(color: theme.colorScheme.error)),
-                onTap: () => guard(context, () => account.send<td.Ok>(td.SetMessageSenderBlockList(
-                      senderId: td.MessageSenderUser(userId: user.id),
-                      blockList: chat.blockList != null ? null : const td.BlockListMain(),
-                    ))),
-              ),
-            ],
-            if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
-              ListTile(
-                leading: Icon(Icons.logout_rounded, color: theme.colorScheme.error),
-                title: Text(s.t(account.isChannel(chat) ? 'leave_channel' : 'leave_group'), style: TextStyle(color: theme.colorScheme.error)),
-                onTap: () async {
-                  final ok = await confirm(context, title: s.t('leave'), message: s.t('leave_confirm'), destructive: true);
-                  if (!ok || !context.mounted) return;
-                  await guard(context, () => account.deleteChat(chat));
-                  if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
-                },
-              ),
-            const Divider(),
-            _SharedMediaSection(chatId: chatId),
-            if (info != null && info.members.isNotEmpty) ...[
-              const Divider(),
-              Row(
-                children: [
-                  Expanded(child: SectionHeader(s.count('members', account.memberCount(chat)))),
-                  if (account.isAdmin(chat) || chat.permissions.canInviteUsers)
-                    TextButton.icon(
-                      icon: const Icon(Icons.person_add_alt_1_rounded),
-                      label: Text(s.t('add_members')),
-                      onPressed: () async {
-                        final ids = await Navigator.of(context).push<List<int>>(
-                          MaterialPageRoute(builder: (_) => const ContactsScreen(pickMany: true)),
-                        );
-                        if (ids == null || ids.isEmpty || !context.mounted) return;
-                        await guard(context, () => account.send<td.FailedToAddMembers>(td.AddChatMembers(chatId: chatId, userIds: ids)));
-                        ref.invalidate(_detailsProvider(chatId));
+                  if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
+                    ListTile(
+                      leading: Icon(Icons.logout_rounded, color: theme.colorScheme.error),
+                      title: Text(s.t(account.isChannel(chat) ? 'leave_channel' : 'leave_group'), style: TextStyle(color: theme.colorScheme.error)),
+                      onTap: () async {
+                        final ok = await confirm(context, title: s.t('leave'), message: s.t('leave_confirm'), destructive: true);
+                        if (!ok || !context.mounted) return;
+                        await guard(context, () => account.deleteChat(chat));
+                        if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
                       },
                     ),
                 ],
               ),
-              for (final member in info.members)
-                if (member.memberId case td.MessageSenderUser(:final userId))
-                  _MemberTile(userId: userId, status: member.status, chat: chat, account: account, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
+              const SizedBox(height: 8),
+              _SharedMediaSection(chatId: chatId),
+              if (info != null && info.members.isNotEmpty) ...[
+                const Divider(),
+                Row(
+                  children: [
+                    Expanded(child: SectionHeader(s.count('members', account.memberCount(chat)))),
+                    if (account.isAdmin(chat) || chat.permissions.canInviteUsers)
+                      TextButton.icon(
+                        icon: const Icon(Icons.person_add_alt_1_rounded),
+                        label: Text(s.t('add_members')),
+                        onPressed: () async {
+                          final ids = await Navigator.of(context).push<List<int>>(MaterialPageRoute(builder: (_) => const ContactsScreen(pickMany: true)));
+                          if (ids == null || ids.isEmpty || !context.mounted) return;
+                          await guard(context, () => account.send<td.FailedToAddMembers>(td.AddChatMembers(chatId: chatId, userIds: ids)));
+                          ref.invalidate(_detailsProvider(chatId));
+                        },
+                      ),
+                  ],
+                ),
+                for (final member in info.members)
+                  if (member.memberId case td.MessageSenderUser(:final userId))
+                    _MemberTile(userId: userId, status: member.status, chat: chat, account: account, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
+              ],
+              const SizedBox(height: 32),
             ],
-            const SizedBox(height: 32),
-          ]),
+          ),
         ],
       ),
     );
   }
+}
+
+/// "14 fev 1992 (34 yosh)" like aka; without a year just the day and month.
+String _birthdayText(td.Birthdate birthdate, Strings s) {
+  final year = birthdate.year > 0 ? birthdate.year : 2000;
+  final date = DateTime(year, birthdate.month, birthdate.day);
+  if (birthdate.year <= 0) return DateFormat.MMMd(s.locale).format(date);
+  final now = DateTime.now();
+  final hadBirthday = now.month > date.month || (now.month == date.month && now.day >= date.day);
+  final age = now.year - date.year - (hadBirthday ? 0 : 1);
+  return '${DateFormat.yMMMd(s.locale).format(date)} (${s.t('years_old', {'n': '$age'})})';
+}
+
+/// Rounded quick-action tile under the profile name (Message, Mute, Call, Video).
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({required this.icon, required this.label, required this.onTap, this.color});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tint = color ?? theme.colorScheme.primary;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Material(
+          color: tint.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.1),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: brandGold.withValues(alpha: 0.35)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              child: Column(
+                children: [
+                  Icon(icon, color: tint, size: 26),
+                  const SizedBox(height: 6),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color ?? theme.colorScheme.onSurface),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Rounded card grouping profile rows, with the brand's gold hairline.
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => children.isEmpty
+      ? const SizedBox.shrink()
+      : Container(
+          margin: const EdgeInsets.fromLTRB(14, 16, 14, 0),
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: brandGold.withValues(alpha: 0.3)),
+            boxShadow: [BoxShadow(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 4))],
+          ),
+          child: Column(children: children),
+        );
 }
 
 class _InfoTile extends StatelessWidget {
@@ -259,17 +360,22 @@ class _InfoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListTile(
-        leading: Icon(icon),
-        title: SelectableText(title),
-        subtitle: Text(subtitle),
-        trailing: share ? IconButton(icon: const Icon(Icons.share_rounded), onPressed: () => SharePlus.instance.share(ShareParams(text: copy))) : null,
-        onLongPress: copy == null
-            ? null
-            : () {
-                Clipboard.setData(ClipboardData(text: copy!));
-                showToast(context, context.t('copied'));
-              },
-      );
+    leading: Icon(icon),
+    title: SelectableText(title),
+    subtitle: Text(subtitle),
+    trailing: share
+        ? IconButton(
+            icon: const Icon(Icons.share_rounded),
+            onPressed: () => SharePlus.instance.share(ShareParams(text: copy)),
+          )
+        : null,
+    onLongPress: copy == null
+        ? null
+        : () {
+            Clipboard.setData(ClipboardData(text: copy!));
+            showToast(context, context.t('copied'));
+          },
+  );
 }
 
 class _MemberTile extends ConsumerWidget {
@@ -308,12 +414,17 @@ class _MemberTile extends ConsumerWidget {
           : () async {
               final ok = await confirm(context, title: s.t('remove_member'), message: user.firstName, destructive: true);
               if (!ok || !context.mounted) return;
-              await guard(context, () => account.send<td.Ok>(td.BanChatMember(
+              await guard(
+                context,
+                () => account.send<td.Ok>(
+                  td.BanChatMember(
                     chatId: chat.id,
                     memberId: td.MessageSenderUser(userId: userId),
                     bannedUntilDate: 0,
                     revokeMessages: false,
-                  )));
+                  ),
+                ),
+              );
               onChanged();
             },
     );
@@ -329,16 +440,9 @@ final _sharedMediaProvider = FutureProvider.autoDispose.family<List<td.Message>,
     'music' => const td.SearchMessagesFilterAudio(),
     _ => const td.SearchMessagesFilterPhotoAndVideo(),
   };
-  final result = await account.send<td.FoundChatMessages>(td.SearchChatMessages(
-    chatId: key.$1,
-    topicId: null,
-    query: '',
-    senderId: null,
-    fromMessageId: 0,
-    offset: 0,
-    limit: 60,
-    filter: filter,
-  ));
+  final result = await account.send<td.FoundChatMessages>(
+    td.SearchChatMessages(chatId: key.$1, topicId: null, query: '', senderId: null, fromMessageId: 0, offset: 0, limit: 60, filter: filter),
+  );
   return result.messages;
 });
 
@@ -369,22 +473,26 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
               for (final tab in const ['media', 'files', 'links', 'voice', 'music'])
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(s.t('shared_$tab')),
-                    selected: _tab == tab,
-                    onSelected: (_) => setState(() => _tab = tab),
-                  ),
+                  child: ChoiceChip(label: Text(s.t('shared_$tab')), selected: _tab == tab, onSelected: (_) => setState(() => _tab = tab)),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 8),
         messages.when(
-          loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+          loading: () => const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          ),
           error: (error, _) => Padding(padding: const EdgeInsets.all(16), child: Text(errorText(context, error))),
           data: (list) {
             if (list.isEmpty) {
-              return Padding(padding: const EdgeInsets.all(24), child: Center(child: Text(s.t('nothing_here'), style: TextStyle(color: Theme.of(context).hintColor))));
+              return Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Text(s.t('nothing_here'), style: TextStyle(color: Theme.of(context).hintColor)),
+                ),
+              );
             }
             if (_tab == 'media') {
               return GridView.builder(
@@ -402,8 +510,15 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                     child: _tab == 'links'
-                        ? FormattedTextView(text: (message.content is td.MessageText) ? (message.content as td.MessageText).text : (captionOf(message.content) ?? const td.FormattedText(text: '', entities: [])))
-                        : Align(alignment: Alignment.centerLeft, child: MessageMedia(message: message, maxWidth: 300)),
+                        ? FormattedTextView(
+                            text: (message.content is td.MessageText)
+                                ? (message.content as td.MessageText).text
+                                : (captionOf(message.content) ?? const td.FormattedText(text: '', entities: [])),
+                          )
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: MessageMedia(message: message, maxWidth: 300),
+                          ),
                   ),
               ],
             );
@@ -485,9 +600,17 @@ class _EditChatScreenState extends ConsumerState<EditChatScreen> {
   Future<void> _changePhoto() async {
     final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280);
     if (file == null || !mounted) return;
-    await guard(context, () => ref.read(accountProvider).send<td.Ok>(
-          td.SetChatPhoto(chatId: widget.chatId, photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path))),
-        ));
+    await guard(
+      context,
+      () => ref
+          .read(accountProvider)
+          .send<td.Ok>(
+            td.SetChatPhoto(
+              chatId: widget.chatId,
+              photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path)),
+            ),
+          ),
+    );
   }
 
   Future<void> _save() async {
@@ -533,9 +656,17 @@ class _EditChatScreenState extends ConsumerState<EditChatScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          TextField(controller: _title, decoration: InputDecoration(labelText: s.t('title'))),
+          TextField(
+            controller: _title,
+            decoration: InputDecoration(labelText: s.t('title')),
+          ),
           const SizedBox(height: 14),
-          TextField(controller: _description, maxLines: 4, minLines: 2, decoration: InputDecoration(labelText: s.t('description'))),
+          TextField(
+            controller: _description,
+            maxLines: 4,
+            minLines: 2,
+            decoration: InputDecoration(labelText: s.t('description')),
+          ),
         ],
       ),
     );
