@@ -197,7 +197,8 @@ class _BrandHeaderTheme extends StatelessWidget {
           iconTheme: IconThemeData(color: ink),
           actionsIconTheme: IconThemeData(color: ink),
           titleTextStyle: bar.titleTextStyle?.copyWith(color: ink),
-          systemOverlayStyle: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+          // White status icons on BrandCornerWave's accent band, in both themes.
+          systemOverlayStyle: SystemUiOverlayStyle.light,
         ),
       ),
       child: child,

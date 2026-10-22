@@ -26,9 +26,10 @@ class _BarPainter extends CustomPainter {
     canvas.drawRect(rect, Paint()..shader = gradient.createShader(rect));
     final w = size.width;
     final h = size.height;
+    // Hugs the bottom edge with open space above it: rising higher would cut through the action icons.
     final curve = Path()
-      ..moveTo(w * 0.5, h)
-      ..quadraticBezierTo(w * 0.86, h * 0.98, w, h * 0.2);
+      ..moveTo(w * 0.35, h)
+      ..quadraticBezierTo(w * 0.8, h - 2, w, h - 14);
     final glow = Path.from(curve)
       ..lineTo(w, h)
       ..close();
@@ -47,7 +48,9 @@ class _BarPainter extends CustomPainter {
   bool shouldRepaint(_BarPainter old) => old.gradient != gradient;
 }
 
-/// Light header ornament: an accent wave with a gold trim in the top-right corner.
+/// Light header ornament: an accent band behind the status bar (so white status icons stay readable
+/// on every phone) that flows into a wave with a gold trim in the top-right corner.
+/// Pair it with [SystemUiOverlayStyle.light].
 class BrandCornerWave extends StatelessWidget {
   const BrandCornerWave({super.key});
 
@@ -69,25 +72,25 @@ class _CornerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
-    final bottom = top + 22;
-    final wave = Path()
-      ..moveTo(w * 0.68, 0)
-      ..quadraticBezierTo(w * 0.8, bottom * 0.95, w, bottom)
+    final bottom = top + 24;
+    final shape = Path()
+      ..moveTo(0, 0)
+      ..lineTo(0, top)
+      ..lineTo(w * 0.6, top)
+      ..quadraticBezierTo(w * 0.82, top + 2, w, bottom)
       ..lineTo(w, 0)
       ..close();
-    final rect = Rect.fromLTWH(w * 0.68, 0, w * 0.32, bottom);
-    canvas.drawPath(wave, Paint()..shader = gradient.createShader(rect));
+    canvas.drawPath(shape, Paint()..shader = gradient.createShader(Rect.fromLTWH(0, 0, w, bottom)));
+    // Gold hairline under the band, thickening into the corner trim.
+    final gold = Paint()
+      ..shader = brandGoldGradient.createShader(Rect.fromLTWH(0, top, w, bottom - top + 4))
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(0, top + 0.5), Offset(w * 0.6, top + 0.5), gold..strokeWidth = 1.2);
     final trim = Path()
-      ..moveTo(w * 0.66, 0)
-      ..quadraticBezierTo(w * 0.79, bottom * 1.08, w, bottom + 4);
-    canvas.drawPath(
-      trim,
-      Paint()
-        ..shader = brandGoldGradient.createShader(rect)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.4
-        ..strokeCap = StrokeCap.round,
-    );
+      ..moveTo(w * 0.6, top + 0.5)
+      ..quadraticBezierTo(w * 0.83, top + 3, w, bottom + 3);
+    canvas.drawPath(trim, gold..strokeWidth = 2.4);
   }
 
   @override

@@ -61,7 +61,8 @@ class _AuthScaffold extends ConsumerWidget {
         backgroundColor: Colors.transparent,
         foregroundColor: theme.colorScheme.onSurface,
         iconTheme: IconThemeData(color: theme.colorScheme.onSurface),
-        systemOverlayStyle: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        // White status icons on BrandCornerWave's accent band, in both themes.
+        systemOverlayStyle: SystemUiOverlayStyle.light,
         flexibleSpace: const BrandCornerWave(),
         automaticallyImplyLeading: false,
         leading: showBack ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => guard(context, () => ref.read(accountProvider).logOut())) : null,
