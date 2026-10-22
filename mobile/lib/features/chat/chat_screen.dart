@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
@@ -702,6 +703,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       ),
       actions: [
+        // Telegram shows a call button for people (not bots or Saved Messages).
+        if (account.privateUser(chat) case final user? when !account.isBot(user) && !account.isSavedMessages(chat))
+          IconButton(
+            icon: const Icon(Icons.call_rounded),
+            tooltip: s.t('call'),
+            onPressed: () => _callOptions(user, s),
+          ),
         PopupMenuButton<String>(
           onSelected: (value) async {
             switch (value) {
@@ -734,6 +742,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       ],
     );
+  }
+
+  /// Voice/video calls over Telegram are not built yet (they need the tgcalls media stack),
+  /// so they say so; a visible phone number can still be dialled over the SIM.
+  Future<void> _callOptions(td.User user, Strings s) async {
+    final phone = user.phoneNumber;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.call_rounded, color: Theme.of(context).colorScheme.primary),
+              title: Text(s.t('call_voice')),
+              subtitle: Text(s.t('calls_soon')),
+              onTap: () => Navigator.pop(context, 'soon'),
+            ),
+            ListTile(
+              leading: Icon(Icons.videocam_rounded, color: Theme.of(context).colorScheme.primary),
+              title: Text(s.t('call_video')),
+              subtitle: Text(s.t('calls_soon')),
+              onTap: () => Navigator.pop(context, 'soon'),
+            ),
+            if (phone.isNotEmpty)
+              ListTile(
+                leading: Icon(Icons.sim_card_rounded, color: Theme.of(context).hintColor),
+                title: Text(s.t('call_phone')),
+                subtitle: Text('+$phone'),
+                onTap: () => Navigator.pop(context, 'phone'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'soon') return showToast(context, s.t('calls_soon'));
+    final launched = await launchUrl(Uri(scheme: 'tel', path: '+$phone'));
+    if (!launched && mounted) showToast(context, s.t('call_phone_failed'));
   }
 
   PreferredSizeWidget _selectionBar(Strings s) {
