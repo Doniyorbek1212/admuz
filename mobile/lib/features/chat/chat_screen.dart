@@ -22,8 +22,10 @@ import '../home/home_screen.dart';
 import '../profile/chat_info_screen.dart';
 import '../settings/wallpaper.dart';
 import 'bot_keyboard.dart';
+import 'chat_search_screen.dart';
 import 'composer.dart';
 import 'forward_picker.dart';
+import 'marked_messages_screen.dart';
 import 'media_viewers.dart';
 import 'message_bubble.dart';
 import 'message_content.dart';
@@ -564,6 +566,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         behavior: HitTestBehavior.translucent,
         onPointerDown: (event) => _lastPointer = event.position,
         child: Scaffold(
+        // Behind the floating header pills: the wallpaper's base color, so they read as floating over the chat.
+        backgroundColor: context.chatColors.chatBackground,
         appBar: selecting ? _selectionBar(s) : _chatBar(chat, s),
         body: Column(
           children: [
@@ -661,21 +665,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final account = _account;
     final action = chatActionText(chat, account, s);
     final subtitle = widget.topicName != null ? chatTitle(chat, account, s) : (action ?? chatSubtitle(chat, account, s));
-    final muted = account.isMuted(chat);
-    // Accent bars (phones, dark mode) get the branded gradient; desktop's light bars stay plain.
-    final brandedBar = context.onAppBar == Colors.white;
+    // Accent bars (phones, dark mode) get floating branded pills; desktop's light bars stay classic.
+    if (context.onAppBar == Colors.white) return _pillBar(chat, s, action, subtitle);
     return AppBar(
-      flexibleSpace: brandedBar ? const BrandBarBackground() : null,
       // No back button when the chat is the split-view pane's root page.
       titleSpacing: Navigator.canPop(context) ? 0 : 12,
       title: InkWell(
         onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
         child: Row(
           children: [
-            if (brandedBar)
-              GoldRing(width: 1.5, child: ChatAvatar(chatId: chat.id, size: 38, showOnline: false))
-            else
-              ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
+            ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -703,45 +702,199 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       ),
       actions: [
-        // Telegram shows a call button for people (not bots or Saved Messages).
-        if (account.privateUser(chat) case final user? when !account.isBot(user) && !account.isSavedMessages(chat))
-          IconButton(
-            icon: const Icon(Icons.call_rounded),
-            tooltip: s.t('call'),
-            onPressed: () => _callOptions(user, s),
-          ),
-        PopupMenuButton<String>(
-          onSelected: (value) async {
-            switch (value) {
-              case 'mute':
-                await guard(context, () => account.setMuted(chat, muted ? 0 : muteForever));
-              case 'scheduled':
-                await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ScheduledMessagesScreen(chatId: chat.id)));
-              case 'clear':
-                final ok = await confirm(context, title: s.t('clear_history'), message: s.t('clear_history_confirm'), destructive: true);
-                if (ok && mounted) await guard(context, () => account.clearHistory(chat));
-              case 'delete':
-                final ok = await confirm(
-                  context,
-                  title: s.t('delete_chat_confirm_title'),
-                  message: s.t('delete_chat_confirm', {'name': chatTitle(chat, account, s)}),
-                  destructive: true,
-                );
-                if (ok && mounted) {
-                  await guard(context, () => account.deleteChat(chat));
-                  if (mounted) closeChat(context);
-                }
-            }
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem(value: 'mute', child: Text(s.t(muted ? 'unmute' : 'mute'))),
-            if (chat.hasScheduledMessages) PopupMenuItem(value: 'scheduled', child: Text(s.t('scheduled_messages'))),
-            PopupMenuItem(value: 'clear', child: Text(s.t('clear_history'))),
-            PopupMenuItem(value: 'delete', child: Text(s.t(account.privateUser(chat) != null ? 'delete_chat' : 'leave'))),
-          ],
-        ),
+        if (_callableUser(chat) case final user?)
+          IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
+        _chatMenu(chat, s),
       ],
     );
+  }
+
+  /// Telegram shows call buttons for people (not bots or Saved Messages).
+  td.User? _callableUser(td.Chat chat) {
+    final user = _account.privateUser(chat);
+    if (user == null || _account.isBot(user) || _account.isSavedMessages(chat)) return null;
+    return user;
+  }
+
+  /// Phone header: an accent band behind the status bar and three floating pills with open space
+  /// between them (back · avatar and name · call and menu), over the chat wallpaper.
+  PreferredSizeWidget _pillBar(td.Chat chat, Strings s, String? action, String subtitle) {
+    final account = _account;
+    final canPop = Navigator.canPop(context);
+    final user = _callableUser(chat);
+    return AppBar(
+      automaticallyImplyLeading: false,
+      backgroundColor: Colors.transparent,
+      toolbarHeight: 66,
+      titleSpacing: 8,
+      systemOverlayStyle: SystemUiOverlayStyle.light,
+      flexibleSpace: const BrandStatusBand(),
+      title: Row(
+        children: [
+          if (canPop) ...[
+            BrandPill(
+              circle: true,
+              onTap: () => Navigator.maybePop(context),
+              child: Icon(Icons.arrow_back_rounded, color: Colors.white, semanticLabel: MaterialLocalizations.of(context).backButtonTooltip),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: BrandPill(
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
+              padding: const EdgeInsets.fromLTRB(4, 4, 14, 4),
+              child: Row(
+                children: [
+                  GoldRing(width: 1.5, child: ChatAvatar(chatId: chat.id, size: 38, showOnline: false)),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.topicName ?? chatTitle(chat, account, s),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600, color: Colors.white),
+                        ),
+                        if (subtitle.isNotEmpty)
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            // Typing/recording status stands out in bright green.
+                            style: TextStyle(fontSize: 12.5, color: action == null ? Colors.white70 : Colors.lightGreenAccent),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          BrandPill(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: IconTheme.merge(
+              data: const IconThemeData(color: Colors.white),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (user != null)
+                    IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
+                  _chatMenu(chat, s),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Chat ⋮ menu with icons, following aka: mute, video call, search, marks, first message, wallpaper, clear, delete.
+  Widget _chatMenu(td.Chat chat, Strings s) {
+    final account = _account;
+    final muted = account.isMuted(chat);
+    final user = _callableUser(chat);
+    final error = Theme.of(context).colorScheme.error;
+    PopupMenuItem<String> item(String value, IconData icon, String label, {Color? color, bool chevron = false}) => PopupMenuItem(
+          value: value,
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: color ?? Theme.of(context).hintColor),
+              const SizedBox(width: 16),
+              Expanded(child: Text(label, style: TextStyle(color: color))),
+              if (chevron) Icon(Icons.chevron_right_rounded, size: 20, color: Theme.of(context).hintColor),
+            ],
+          ),
+        );
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert_rounded),
+      onSelected: (value) => _onMenu(value, chat, s),
+      itemBuilder: (context) => [
+        item('mute', muted ? Icons.volume_up_rounded : Icons.volume_off_rounded, s.t(muted ? 'unmute' : 'mute'), chevron: !muted),
+        const PopupMenuDivider(),
+        if (user != null) item('video', Icons.videocam_outlined, s.t('video_call')),
+        item('search', Icons.search_rounded, s.t('search')),
+        item('marked', Icons.star_outline_rounded, s.t('find_marked')),
+        item('first', Icons.vertical_align_top_rounded, s.t('go_to_first')),
+        if (chat.hasScheduledMessages) item('scheduled', Icons.schedule_rounded, s.t('scheduled_messages')),
+        item('wallpaper', Icons.wallpaper_rounded, s.t('chat_background')),
+        item('clear', Icons.cleaning_services_rounded, s.t('clear_history')),
+        item('delete', Icons.delete_outline_rounded, s.t(account.privateUser(chat) != null ? 'delete_chat' : 'leave'), color: error),
+      ],
+    );
+  }
+
+  Future<void> _onMenu(String value, td.Chat chat, Strings s) async {
+    final account = _account;
+    switch (value) {
+      case 'mute':
+        if (account.isMuted(chat)) {
+          await guard(context, () => account.setMuted(chat, 0));
+        } else {
+          final seconds = await _pickMuteDuration(s);
+          if (seconds != null && mounted) await guard(context, () => account.setMuted(chat, seconds));
+        }
+      case 'video':
+        showToast(context, s.t('calls_soon'));
+      case 'search':
+        final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => ChatSearchScreen(chatId: chat.id)));
+        if (id != null && mounted) await _jumpTo(id);
+      case 'marked':
+        final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => MarkedMessagesScreen(chatId: chat.id)));
+        if (id != null && mounted) await _jumpTo(id);
+      case 'first':
+        await _jumpToFirst(chat);
+      case 'scheduled':
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ScheduledMessagesScreen(chatId: chat.id)));
+      case 'wallpaper':
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WallpaperScreen()));
+      case 'clear':
+        final ok = await confirm(context, title: s.t('clear_history'), message: s.t('clear_history_confirm'), destructive: true);
+        if (ok && mounted) await guard(context, () => account.clearHistory(chat));
+      case 'delete':
+        final ok = await confirm(
+          context,
+          title: s.t('delete_chat_confirm_title'),
+          message: s.t('delete_chat_confirm', {'name': chatTitle(chat, account, s)}),
+          destructive: true,
+        );
+        if (ok && mounted) {
+          await guard(context, () => account.deleteChat(chat));
+          if (mounted) closeChat(context);
+        }
+    }
+  }
+
+  /// Mute durations as in Telegram; null when dismissed.
+  Future<int?> _pickMuteDuration(Strings s) => showModalBottomSheet<int>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (seconds, key) in const [(3600, 'mute_1h'), (8 * 3600, 'mute_8h'), (2 * 86400, 'mute_2d'), (muteForever, 'mute_forever')])
+                ListTile(
+                  leading: Icon(seconds == muteForever ? Icons.notifications_off_rounded : Icons.timer_outlined),
+                  title: Text(s.t(key)),
+                  onTap: () => Navigator.pop(context, seconds),
+                ),
+            ],
+          ),
+        ),
+      );
+
+  /// Oldest message: history from message id 1 with one newer message included.
+  Future<void> _jumpToFirst(td.Chat chat) async {
+    final page = await guard(
+      context,
+      () => _account.send<td.Messages>(td.GetChatHistory(chatId: chat.id, fromMessageId: 1, offset: -1, limit: 1, onlyLocal: false)),
+    );
+    final first = page?.messages?.firstOrNull;
+    if (first != null && mounted) await _jumpTo(first.id);
   }
 
   /// Voice/video calls over Telegram are not built yet (they need the tgcalls media stack),

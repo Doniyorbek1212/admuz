@@ -97,6 +97,64 @@ class _CornerPainter extends CustomPainter {
   bool shouldRepaint(_CornerPainter old) => old.gradient != gradient || old.top != top;
 }
 
+/// Accent band behind the status bar with a gold hairline under it (white status icons stay readable).
+class BrandStatusBand extends StatelessWidget {
+  const BrandStatusBand({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.paddingOf(context).top;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Container(
+        height: top + 1.2,
+        decoration: BoxDecoration(
+          gradient: brandGradient(Theme.of(context).colorScheme.primary),
+          border: const Border(bottom: BorderSide(color: brandGold, width: 1.2)),
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating header capsule (aka-style chat header): accent gradient, gold hairline, soft shadow.
+/// [circle] makes a round button the height of the other pills.
+class BrandPill extends StatelessWidget {
+  const BrandPill({super.key, required this.child, this.onTap, this.circle = false, this.padding = EdgeInsets.zero});
+
+  static const height = 52.0;
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final bool circle;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.brightness == Brightness.dark ? Color.lerp(theme.colorScheme.primary, Colors.black, 0.35)! : theme.colorScheme.primary;
+    final shape = circle ? const CircleBorder() : const StadiumBorder();
+    return Container(
+      width: circle ? height : null,
+      height: height,
+      decoration: ShapeDecoration(
+        shape: circle ? const CircleBorder(side: BorderSide(color: brandGold, width: 1)) : const StadiumBorder(side: BorderSide(color: brandGold, width: 1)),
+        gradient: brandGradient(accent),
+        shadows: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 12, offset: const Offset(0, 4))],
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        shape: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(padding: padding, child: Center(widthFactor: circle ? null : 1, child: child)),
+        ),
+      ),
+    );
+  }
+}
+
 /// Thin gold ring around an avatar; the ring adds [width] + 1.5 on every side.
 class GoldRing extends StatelessWidget {
   const GoldRing({super.key, required this.child, this.width = 1.8});

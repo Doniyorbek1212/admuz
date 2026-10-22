@@ -10,11 +10,14 @@ import 'message_bubble.dart';
 
 /// Messages the user marked as important, from every chat (aka "Belgilangan xabarlar").
 class MarkedMessagesScreen extends ConsumerWidget {
-  const MarkedMessagesScreen({super.key});
+  const MarkedMessagesScreen({super.key, this.chatId});
+
+  /// Only this chat's marks; tapping one pops with its message id instead of opening the chat.
+  final int? chatId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final marks = ref.watch(markedMessagesProvider);
+    final marks = [for (final mark in ref.watch(markedMessagesProvider)) if (chatId == null || mark.$1 == chatId) mark];
     final account = ref.watch(accountProvider);
     final s = context.s;
     return Scaffold(
@@ -44,7 +47,7 @@ class MarkedMessagesScreen extends ConsumerWidget {
                     icon: Icon(Icons.star_rounded, color: Theme.of(context).colorScheme.primary),
                     onPressed: () => ref.read(markedMessagesProvider.notifier).toggle(chatId, messageId),
                   ),
-                  onTap: () => openChat(context, chatId, messageId: messageId),
+                  onTap: () => this.chatId != null ? Navigator.pop(context, messageId) : openChat(context, chatId, messageId: messageId),
                 );
               },
             ),
