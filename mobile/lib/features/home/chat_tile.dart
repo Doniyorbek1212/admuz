@@ -110,7 +110,7 @@ class ChatTile extends ConsumerWidget {
           child: Row(
             children: [
               // Denser rows on desktop, close to Telegram Desktop's list.
-              _StoryRing(chatId: chat.id, child: ChatAvatar(chatId: chat.id, size: isDesktop ? 48 : 56)),
+              _StoryRing(chatId: chat.id, size: isDesktop ? 48 : 56, child: ChatAvatar(chatId: chat.id, size: isDesktop ? 48 : 56)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -329,31 +329,35 @@ class _DividerPainter extends BoxPainter {
   }
 }
 
-/// Telegram's story ring around chat avatars while the chat has unseen stories.
+/// Ring around chat avatars: Telegram's story ring while the chat has stories, the UZARO gold trim otherwise.
 class _StoryRing extends ConsumerWidget {
-  const _StoryRing({required this.chatId, required this.child});
+  const _StoryRing({required this.chatId, required this.size, required this.child});
 
   final int chatId;
+
+  /// Outer diameter; the avatar shrinks to fit inside the ring.
+  final double size;
   final Widget child;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final feed = ref.watch(storyFeedProvider);
     final stories = feed.where((e) => e.chatId == chatId).firstOrNull;
-    if (stories == null) return child;
-    final unread = stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
+    final unread = stories != null && stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: unread ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary]) : null,
-        color: unread ? null : Theme.of(context).dividerColor,
+        gradient: unread
+            ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary])
+            : (stories == null ? brandGoldGradient : null),
+        color: stories != null && !unread ? Theme.of(context).dividerColor : null,
       ),
       child: Container(
         padding: const EdgeInsets.all(1.6),
         decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).colorScheme.surface),
-        child: SizedBox.square(dimension: 48.8, child: FittedBox(child: child)),
+        child: SizedBox.square(dimension: size - 7.2, child: FittedBox(child: child)),
       ),
     );
   }

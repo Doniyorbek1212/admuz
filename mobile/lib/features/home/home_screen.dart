@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -11,6 +12,7 @@ import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../chat/chat_screen.dart';
 import '../chat/topics_screen.dart';
@@ -73,10 +75,10 @@ class HomeScreen extends ConsumerWidget {
     final pages = TabBarView(
       children: [for (final tab in tabs) ChatListView(listKey: tab.$1, showArchive: tab.$1 == 'main')],
     );
-    final newMessage = FloatingActionButton(
+    final newMessage = BrandFab(
+      icon: Icons.edit_rounded,
       tooltip: s.t('new_message'),
       onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ContactsScreen(pickToChat: true))),
-      child: const Icon(Icons.edit_rounded),
     );
     final list = DefaultTabController(
       key: ValueKey(tabs.map((t) => t.$1).join(',')),
@@ -99,42 +101,42 @@ class HomeScreen extends ConsumerWidget {
                 ],
               ),
             )
-          : Scaffold(
-              drawer: inShell ? null : const HomeDrawer(),
-              appBar: AppBar(
-                leading: inShell
-                    ? IconButton(
-                        icon: const Icon(Icons.menu_rounded),
-                        tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
-                        onPressed: () => homeShellScaffoldKey.currentState?.openDrawer(),
-                      )
-                    : null,
-                title: const _ConnectionTitle(),
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.search_rounded),
-                    tooltip: s.t('search'),
-                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
+          : _BrandHeaderTheme(
+              child: Builder(
+                builder: (context) => Scaffold(
+                  drawer: inShell ? null : const HomeDrawer(),
+                  appBar: AppBar(
+                    toolbarHeight: 64,
+                    flexibleSpace: const BrandCornerWave(),
+                    leading: inShell
+                        ? IconButton(
+                            icon: const Icon(Icons.menu_rounded, size: 28),
+                            tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
+                            onPressed: () => homeShellScaffoldKey.currentState?.openDrawer(),
+                          )
+                        : null,
+                    title: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [StoriesStack(), Flexible(child: _ConnectionTitle())],
+                    ),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.search_rounded, size: 27),
+                        tooltip: s.t('search'),
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
+                      ),
+                      const _RoundAction(child: GhostModeButton()),
+                      const SizedBox(width: 8),
+                    ],
+                    bottom: tabs.length > 1 ? _PillTabBar(tabs: tabs) : null,
                   ),
-                  const GhostModeButton(),
-                ],
-                bottom: tabs.length > 1
-                    ? TabBar(
-                        isScrollable: true,
-                        tabAlignment: TabAlignment.start,
-                        indicatorColor: context.onAppBar,
-                        labelColor: context.onAppBar,
-                        unselectedLabelColor: context.onAppBarMuted,
-                        dividerColor: Colors.transparent,
-                        tabs: [for (final tab in tabs) Tab(child: _FolderTabLabel(listKey: tab.$1, title: tab.$2))],
-                      )
-                    : null,
-              ),
-              body: pages,
-              // Lifts the button above the shell's floating bottom bar (reported as bottom padding).
-              floatingActionButton: Padding(
-                padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
-                child: newMessage,
+                  body: _ListCard(child: pages),
+                  // Lifts the button above the shell's floating bottom bar (reported as bottom padding).
+                  floatingActionButton: Padding(
+                    padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
+                    child: newMessage,
+                  ),
+                ),
               ),
             ),
     );
@@ -172,6 +174,111 @@ class _EmptyChatPane extends StatelessWidget {
       );
 }
 
+/// Phone chat list header: a light bar on the tinted page with accent ink, instead of the accent-filled bar.
+class _BrandHeaderTheme extends StatelessWidget {
+  const _BrandHeaderTheme({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final ink = dark ? Colors.white : Color.lerp(theme.colorScheme.primary, Colors.black, 0.5)!;
+    final bar = theme.appBarTheme;
+    return Theme(
+      data: theme.copyWith(
+        appBarTheme: bar.copyWith(
+          backgroundColor: theme.scaffoldBackgroundColor,
+          foregroundColor: ink,
+          iconTheme: IconThemeData(color: ink),
+          actionsIconTheme: IconThemeData(color: ink),
+          titleTextStyle: bar.titleTextStyle?.copyWith(color: ink),
+          systemOverlayStyle: dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// White disc with a gold hairline behind a header action.
+class _RoundAction extends StatelessWidget {
+  const _RoundAction({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 46,
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: brandGold.withValues(alpha: 0.5)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
+        ),
+        child: child,
+      );
+}
+
+/// Folder tabs as pills: the selected one is an accent gradient with a gold rim.
+class _PillTabBar extends StatelessWidget implements PreferredSizeWidget {
+  const _PillTabBar({required this.tabs});
+
+  final List<(String, String)> tabs;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(56);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    final radius = BorderRadius.circular(22);
+    return TabBar(
+      isScrollable: true,
+      tabAlignment: TabAlignment.start,
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 18),
+      indicatorSize: TabBarIndicatorSize.tab,
+      indicator: BoxDecoration(
+        gradient: brandGradient(accent),
+        borderRadius: radius,
+        border: Border.all(color: brandGold, width: 1.2),
+        boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      splashBorderRadius: radius,
+      labelColor: Colors.white,
+      unselectedLabelColor: theme.brightness == Brightness.dark ? Colors.white60 : Color.lerp(accent, const Color(0xFF6B7C85), 0.4),
+      dividerColor: Colors.transparent,
+      tabs: [for (final tab in tabs) Tab(height: 44, child: _FolderTabLabel(listKey: tab.$1, title: tab.$2))],
+    );
+  }
+}
+
+/// Rounded white sheet the chat list scrolls in, lifted off the tinted page.
+class _ListCard extends StatelessWidget {
+  const _ListCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [BoxShadow(color: theme.colorScheme.primary.withValues(alpha: 0.08), blurRadius: 16, offset: const Offset(0, -2))],
+      ),
+      child: child,
+    );
+  }
+}
+
 class _FolderTabLabel extends ConsumerWidget {
   const _FolderTabLabel({required this.listKey, required this.title});
 
@@ -181,20 +288,18 @@ class _FolderTabLabel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final unread = ref.watch(unreadCountProvider(listKey));
+    // Follows the tab's animated label color: white on the selected pill, muted ink elsewhere.
+    final color = DefaultTextStyle.of(context).style.color ?? context.onAppBar;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(title),
         if (unread > 0) ...[
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-            // Translucent white on accent bars, the accent on light (desktop) bars.
-            decoration: BoxDecoration(
-              color: context.onAppBar == Colors.white ? Colors.white24 : Theme.of(context).colorScheme.primary,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(formatCount(unread), style: const TextStyle(fontSize: 12, color: Colors.white)),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
+            child: Text(formatCount(unread), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
           ),
         ],
       ],
@@ -218,14 +323,41 @@ class _ConnectionTitle extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final text = _connectionText(context, ref);
-    if (text == null) return const Text('Sado');
+    final status = _connectionText(context, ref);
+    final ink = context.onAppBar;
+    final muted = context.onAppBarMuted;
+    // Logo and wordmark; the tagline line doubles as the connection status.
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2, color: context.onAppBar)),
-        const SizedBox(width: 10),
-        Text(text),
+        Image.asset('assets/logo.png', width: 46, height: 46),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('UZARO', style: TextStyle(fontSize: 25, height: 1.1, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: ink)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (status != null) ...[
+                    SizedBox.square(dimension: 11, child: CircularProgressIndicator(strokeWidth: 1.6, color: muted)),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(
+                    child: Text(
+                      status ?? context.t('app_tagline'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: muted),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -468,6 +600,7 @@ class _ChatListViewState extends ConsumerState<ChatListView> with AutomaticKeepA
     final list = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification.metrics.extentAfter < 800) _loadMore();
+        if (widget.listKey == 'main') _toggleStories(notification);
         return false;
       },
       child: ListView.builder(
@@ -487,7 +620,30 @@ class _ChatListViewState extends ConsumerState<ChatListView> with AutomaticKeepA
       ),
     );
     if (widget.listKey != 'main') return list;
-    return Column(children: [const StoriesBar(), Expanded(child: list)]);
+    final storiesOpen = ref.watch(storiesExpandedProvider);
+    return Column(
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: storiesOpen ? const StoriesBar() : const SizedBox(width: double.infinity),
+        ),
+        Expanded(child: list),
+      ],
+    );
+  }
+
+  /// Pulling down at the top opens the stories row; scrolling into the list folds it back into the app bar.
+  void _toggleStories(ScrollNotification notification) {
+    final stories = ref.read(storiesExpandedProvider.notifier);
+    if (notification is OverscrollNotification && notification.dragDetails != null && notification.overscroll < 0) {
+      stories.set(true); // Android (clamping physics) reports the pull as overscroll.
+    } else if (notification is ScrollUpdateNotification && notification.dragDetails != null) {
+      final pixels = notification.metrics.pixels;
+      if (pixels < -20) stories.set(true); // iOS bounce
+      if (pixels > 24) stories.set(false);
+    }
   }
 }
 
@@ -502,16 +658,21 @@ class _ArchiveTile extends ConsumerWidget {
     final s = context.s;
     final unread = chats.where((c) => c.unreadCount > 0).length;
     final names = chats.take(4).map((c) => chatTitle(c, account, s)).join(', ');
+    final accent = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ArchiveScreen())),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 7, 14, 7),
+        padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: Theme.of(context).hintColor.withValues(alpha: 0.35),
-              child: const Icon(Icons.archive_rounded, color: Colors.white),
+            GoldRing(
+              width: 1.6,
+              child: Container(
+                width: 49.8,
+                height: 49.8,
+                decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(accent, vertical: true)),
+                child: const Icon(Icons.archive_rounded, color: Colors.white),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -527,10 +688,14 @@ class _ArchiveTile extends ConsumerWidget {
             ),
             if (unread > 0)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(color: Theme.of(context).hintColor, borderRadius: BorderRadius.circular(11)),
-                child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                constraints: const BoxConstraints(minWidth: 22),
+                height: 22,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(11)),
+                child: Text('$unread', style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
               ),
+            Icon(Icons.chevron_right_rounded, color: Theme.of(context).hintColor),
           ],
         ),
       ),

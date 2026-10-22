@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
@@ -136,26 +137,35 @@ class MessageArchive {
 
   Future<void> load() async {
     try {
-      final file = File(_path);
-      if (!await file.exists()) return;
-      final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      for (final raw in json['deleted'] as List<dynamic>? ?? const []) {
-        if ((raw as Map<String, dynamic>).toTdObject() case final td.Message message) {
-          _deleted[_key(message.chatId, message.id)] = message;
-        }
-      }
-      for (final MapEntry(:key, :value) in (json['edits'] as Map<String, dynamic>? ?? const {}).entries) {
-        _edits[key] = [
-          for (final version in (value as List<dynamic>).cast<Map<String, dynamic>>())
-            if ((version['c'] as Map<String, dynamic>).toTdObject() case final td.MessageContent content)
-              (content: content, date: version['d'] as int),
-        ];
-      }
+      if (!await File(_path).exists()) return;
+      final (deleted, edits) = await _read(_path);
+      _deleted.addAll(deleted);
+      _edits.addAll(edits);
       revision.value++;
     } on Object catch (error) {
       debugPrint('message archive unreadable: $error');
     }
   }
+
+  /// Parses the file on a background isolate: thousands of messages would stall app start on the UI thread.
+  static Future<(Map<String, td.Message>, Map<String, List<MessageVersion>>)> _read(String path) => Isolate.run(() {
+        final json = jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+        final deleted = <String, td.Message>{};
+        for (final raw in json['deleted'] as List<dynamic>? ?? const []) {
+          if ((raw as Map<String, dynamic>).toTdObject() case final td.Message message) {
+            deleted[_key(message.chatId, message.id)] = message;
+          }
+        }
+        final edits = <String, List<MessageVersion>>{
+          for (final MapEntry(:key, :value) in (json['edits'] as Map<String, dynamic>? ?? const {}).entries)
+            key: [
+              for (final version in (value as List<dynamic>).cast<Map<String, dynamic>>())
+                if ((version['c'] as Map<String, dynamic>).toTdObject() case final td.MessageContent content)
+                  (content: content, date: version['d'] as int),
+            ],
+        };
+        return (deleted, edits);
+      });
 
   Future<void> save() async {
     _saveTimer?.cancel();

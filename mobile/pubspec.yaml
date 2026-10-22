@@ -1,5 +1,5 @@
 name: sado
-description: "Sado — tezkor va xavfsiz messenjer"
+description: "UZARO — tezkor va xavfsiz messenjer"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

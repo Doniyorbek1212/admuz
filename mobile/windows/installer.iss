@@ -1,9 +1,9 @@
-; Windows installer for Sado (Inno Setup 6). Per-user install, no admin rights needed.
+; Windows installer for UZARO (Inno Setup 6). Per-user install, no admin rights needed.
 ; Build: flutter build windows --release --dart-define=TG_API_ID=... --dart-define=TG_API_HASH=...
 ;        ISCC.exe windows\installer.iss   (run from mobile/)
-; Output: build\windows\installer\Sado-Setup-<version>.exe
+; Output: build\windows\installer\UZARO-Setup-<version>.exe
 
-#define AppName "Sado"
+#define AppName "UZARO"
 #define AppVersion "1.0.0"
 #define AppExe "sado.exe"
 #define BuildDir "..\build\windows\x64\runner\Release"
@@ -20,7 +20,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\build\windows\installer
-OutputBaseFilename=Sado-Setup-{#AppVersion}
+OutputBaseFilename=UZARO-Setup-{#AppVersion}
 SetupIconFile=runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../l10n/strings.dart';
@@ -88,6 +89,13 @@ class HubTab extends ConsumerWidget {
             children: [
               Text(context.t('hub_region_pick'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.my_location_rounded, color: Theme.of(context).colorScheme.primary),
+                title: Text(context.t('hub_region_auto')),
+                subtitle: Text(context.t('hub_region_auto_hint')),
+                onTap: () => Navigator.pop(context, _autoRegion),
+              ),
+              const Divider(height: 1),
               Flexible(
                 child: RadioGroup<String>(
                   groupValue: current,
@@ -103,7 +111,37 @@ class HubTab extends ConsumerWidget {
         ),
       ),
     );
+    if (picked == _autoRegion && context.mounted) return _detectRegion(context, ref);
     if (picked != null) ref.read(hubRegionProvider.notifier).select(picked);
+  }
+
+  /// Sheet result for the "Detect automatically" row.
+  static const _autoRegion = '';
+
+  Future<void> _detectRegion(BuildContext context, WidgetRef ref) async {
+    final s = context.s;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      if (context.mounted) showToast(context, s.t('location_permission'));
+      return;
+    }
+    final Position position;
+    try {
+      position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.low, timeLimit: Duration(seconds: 15)),
+      );
+    } on Exception catch (error) {
+      // Location services off, timeout or no fix.
+      debugPrint('region detection failed: $error');
+      if (context.mounted) showToast(context, s.t('hub_region_failed'));
+      return;
+    }
+    final region = regionForPosition(position.latitude, position.longitude);
+    if (!context.mounted) return;
+    if (region == null) return showToast(context, s.t('hub_region_outside'));
+    ref.read(hubRegionProvider.notifier).select(region);
+    showToast(context, s.t('hub_region_detected', {'region': region}));
   }
 }
 

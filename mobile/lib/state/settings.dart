@@ -9,8 +9,8 @@ import '../core/theme.dart' show isDesktop;
 
 /// Brand accents users can pick from (Plus Messenger style theming).
 const accentPalette = <Color>[
-  Color(0xFF0A6CFF), // Sado blue (logo)
-  Color(0xFF0FA3B1), // teal
+  Color(0xFF0B7A75), // UZARO teal (default)
+  Color(0xFF0A6CFF), // blue (logo)
   Color(0xFF7C4DFF), // violet
   Color(0xFFE5486A), // rose
   Color(0xFFFF8A1F), // orange

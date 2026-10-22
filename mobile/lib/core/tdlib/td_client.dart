@@ -80,7 +80,9 @@ class TdClient {
   TdClient._(this.id);
 
   final int id;
-  final _updates = StreamController<td.TdObject>.broadcast(sync: true);
+  // Single-subscription so updates are buffered until the account listens: TDLib can send the first
+  // authorizationStateWaitTdlibParameters before that, and losing it left the app on the splash forever.
+  final _updates = StreamController<td.TdObject>(sync: true);
   final Map<int, Completer<td.TdObject>> _pending = {};
   final Map<int, String> _pendingNames = {};
   int _nextExtra = 0;

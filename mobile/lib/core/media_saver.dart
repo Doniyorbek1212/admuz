@@ -6,16 +6,16 @@ import '../state/telegram.dart';
 
 enum SaveResult { saved, denied, failed }
 
-/// Saves a downloaded photo or video into the system gallery (album "Sado").
+/// Saves a downloaded photo or video into the system gallery (album "UZARO").
 Future<SaveResult> saveToGallery(TelegramAccount account, td.File file, {required bool isVideo}) async {
   try {
     if (!await Gal.hasAccess(toAlbum: true) && !await Gal.requestAccess(toAlbum: true)) return SaveResult.denied;
     final path = file.local.isDownloadingCompleted ? file.local.path : await account.downloadFile(file.id, priority: 32);
     if (path == null || path.isEmpty) return SaveResult.failed;
     if (isVideo) {
-      await Gal.putVideo(path, album: 'Sado');
+      await Gal.putVideo(path, album: 'UZARO');
     } else {
-      await Gal.putImage(path, album: 'Sado');
+      await Gal.putImage(path, album: 'UZARO');
     }
     return SaveResult.saved;
   } on GalException catch (error) {

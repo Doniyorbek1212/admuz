@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -85,7 +87,44 @@ const uzRegions = [
   "Qoraqalpog'iston",
 ];
 
-final hubRegionProvider = NotifierProvider<HubRegionNotifier, String>(HubRegionNotifier.new);
+/// Regional centres (lat, lon), in [uzRegions] order.
+const _regionCentres = [
+  (41.311, 69.279), // Toshkent
+  (41.000, 69.700), // Toshkent viloyati (geographic centre: the city is Tashkent itself)
+  (40.783, 72.344),
+  (40.386, 71.787),
+  (40.998, 71.673),
+  (39.655, 66.976),
+  (39.775, 64.428),
+  (40.103, 65.374),
+  (38.861, 65.790),
+  (37.224, 67.278),
+  (40.116, 67.842),
+  (40.489, 68.785),
+  (41.550, 60.631),
+  (42.460, 59.603),
+];
+
+/// Region of Uzbekistan for a position, or null when it is too far from every regional centre.
+/// shortcut: nearest regional centre, not real borders; can misplace points near a boundary. Upgrade to polygons if users complain.
+String? regionForPosition(double lat, double lon) {
+  double km(double lat2, double lon2) {
+    final dLat = (lat2 - lat) * 111.0;
+    final dLon = (lon2 - lon) * 111.0 * math.cos(lat * math.pi / 180);
+    return math.sqrt(dLat * dLat + dLon * dLon);
+  }
+
+  // Tashkent city is small and enclosed by its region.
+  if (km(_regionCentres[0].$1, _regionCentres[0].$2) < 18) return uzRegions[0];
+  var best = 1;
+  for (var i = 2; i < _regionCentres.length; i++) {
+    if (km(_regionCentres[i].$1, _regionCentres[i].$2) < km(_regionCentres[best].$1, _regionCentres[best].$2)) best = i;
+  }
+  // Qoraqalpog'iston spans ~500 km, so the cutoff is generous; beyond it the user is abroad.
+  return km(_regionCentres[best].$1, _regionCentres[best].$2) < 450 ? uzRegions[best] : null;
+}
+
+final hubRegionProvider =NotifierProvider<HubRegionNotifier, String>(HubRegionNotifier.new);
 
 /// Region used by the "Region" tiles, remembered across launches.
 class HubRegionNotifier extends Notifier<String> {

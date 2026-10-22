@@ -11,10 +11,10 @@ class TelegramCredentials {
 }
 
 class AppConfig {
-  static const String appName = 'Sado';
+  static const String appName = 'UZARO';
   static const String appVersion = '1.0.0';
 
-  /// Sado server (shops, hub ads, admin review): --dart-define=SADO_API_URL=https://api.example.uz
+  /// UZARO server (shops, hub ads, admin review): --dart-define=SADO_API_URL=https://api.example.uz
   /// Empty disables those features. Plain http is allowed only for the emulator host (network_security_config).
   static const String apiUrl = String.fromEnvironment('SADO_API_URL');
 

@@ -38,7 +38,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(static_cast<int>(work.left / scale) + (work_width - width) / 2,
                             static_cast<int>(work.top / scale) + (work_height - height) / 2);
   Win32Window::Size size(width, height);
-  if (!window.Create(L"Sado", origin, size)) {
+  if (!window.Create(L"UZARO", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

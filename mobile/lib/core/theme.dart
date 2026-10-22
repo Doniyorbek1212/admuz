@@ -8,6 +8,22 @@ bool get isDesktop => switch (defaultTargetPlatform) {
       _ => false,
     };
 
+/// Gold trim of the UZARO look (rings, rims, header swooshes).
+const brandGold = Color(0xFFD4A94E);
+
+const brandGoldGradient = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFFF3DC98), brandGold, Color(0xFFB3842F)],
+);
+
+/// Deep-to-light sweep of [accent] used for branded bars, pills and buttons.
+LinearGradient brandGradient(Color accent, {bool vertical = false}) => LinearGradient(
+      begin: vertical ? Alignment.topCenter : Alignment.centerLeft,
+      end: vertical ? Alignment.bottomCenter : Alignment.centerRight,
+      colors: [Color.lerp(accent, Colors.black, 0.32)!, accent, Color.lerp(accent, Colors.white, 0.12)!],
+    );
+
 /// Chat-specific colors that Material's ColorScheme does not cover.
 @immutable
 class ChatColors extends ThemeExtension<ChatColors> {
@@ -70,19 +86,21 @@ ThemeData buildTheme(Brightness brightness, Color accent) {
   final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness);
   final isDark = brightness == Brightness.dark;
   final surface = isDark ? const Color(0xFF151A21) : Colors.white;
+  // Phone pages sit on a faint accent wash (mint for the default teal); cards and lists stay white.
+  final page = isDark || isDesktop ? surface : Color.lerp(accent, Colors.white, 0.95)!;
   // Dialogs, sheets and menus sit one step above the page.
   final elevated = isDark ? const Color(0xFF1C232D) : Colors.white;
   final chatColors = ChatColors(
-    outgoingBubble: isDark ? Color.lerp(accent, Colors.black, 0.35)! : Color.lerp(accent, Colors.white, 0.82)!,
+    outgoingBubble: isDark ? Color.lerp(accent, Colors.black, 0.35)! : Color.lerp(accent, Colors.white, 0.86)!,
     incomingBubble: isDark ? const Color(0xFF222A35) : Colors.white,
     outgoingText: isDark ? Colors.white : const Color(0xFF0E1621),
     incomingText: isDark ? Colors.white : const Color(0xFF0E1621),
     outgoingMeta: isDark ? Colors.white70 : Color.lerp(accent, Colors.black, 0.25)!,
     incomingMeta: isDark ? Colors.white54 : const Color(0xFF8A96A3),
-    chatBackground: isDark ? const Color(0xFF0E1218) : Color.lerp(accent, const Color(0xFFDDE6EE), 0.88)!,
+    chatBackground: isDark ? const Color(0xFF0E1218) : Color.lerp(accent, const Color(0xFFE6EFEF), 0.9)!,
     online: const Color(0xFF2EBD59),
     unreadBadge: accent,
-    mutedBadge: isDark ? const Color(0xFF4A5563) : const Color(0xFFB0BAC5),
+    mutedBadge: isDark ? const Color(0xFF4A5563) : Color.lerp(accent, const Color(0xFFB0BAC5), 0.7)!,
   );
   // Base typography so custom text styles below keep the platform font family.
   final typography = Typography.material2021(platform: defaultTargetPlatform, colorScheme: scheme);
@@ -96,7 +114,7 @@ ThemeData buildTheme(Brightness brightness, Color accent) {
     // Neutral outline: text fields declaring InputBorder.none (composer, search) must stay borderless,
     // so field borders are styled through the scheme rather than a theme-level enabledBorder.
     colorScheme: scheme.copyWith(surface: surface, primary: accent, outline: isDark ? Colors.white24 : const Color(0xFFCBD3DB)),
-    scaffoldBackgroundColor: surface,
+    scaffoldBackgroundColor: page,
     extensions: [chatColors],
     appBarTheme: AppBarTheme(
       backgroundColor: isDark ? const Color(0xFF1B222C) : (lightBars ? surface : accent),

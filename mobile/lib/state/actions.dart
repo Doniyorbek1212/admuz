@@ -434,7 +434,7 @@ extension BotActions on TelegramAccount {
 }
 
 td.WebAppOpenParameters webAppParameters(td.ThemeParameters theme) =>
-    td.WebAppOpenParameters(theme: theme, applicationName: 'Sado', mode: const td.WebAppOpenModeFullSize());
+    td.WebAppOpenParameters(theme: theme, applicationName: 'UZARO', mode: const td.WebAppOpenModeFullSize());
 
 extension ForumActions on TelegramAccount {
   Future<td.ForumTopics> forumTopics(int chatId, {int offsetDate = 0, int offsetMessageId = 0, int offsetTopicId = 0, String query = ''}) =>

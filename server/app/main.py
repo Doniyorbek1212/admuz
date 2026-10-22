@@ -24,12 +24,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    production = settings.environment == "production"
     app = FastAPI(
         title="Sado Billing",
         version="0.1.0",
         lifespan=lifespan,
-        # No interactive docs in production; the schema is still generated for internal use.
-        docs_url=None if settings.environment == "production" else "/docs",
+        # No docs or public schema in production: don't publish the admin API map.
+        docs_url=None if production else "/docs",
+        openapi_url=None if production else "/openapi.json",
         redoc_url=None,
     )
     for module in (customers, profile, billing, admin, market, ads, media, admin_market):

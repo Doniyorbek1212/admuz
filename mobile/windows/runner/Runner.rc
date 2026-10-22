@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "Sado" "\0"
-            VALUE "FileDescription", "Sado" "\0"
+            VALUE "CompanyName", "UZARO" "\0"
+            VALUE "FileDescription", "UZARO" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "sado" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 Sado. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 UZARO. All rights reserved." "\0"
             VALUE "OriginalFilename", "sado.exe" "\0"
-            VALUE "ProductName", "Sado" "\0"
+            VALUE "ProductName", "UZARO" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

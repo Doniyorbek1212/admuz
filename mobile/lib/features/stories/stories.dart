@@ -19,6 +19,75 @@ import '../chat/message_content.dart';
 
 bool _hasUnread(td.ChatActiveStories stories) => stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
 
+/// Telegram's story ring: a gradient while there are unseen stories, a hairline after.
+BoxDecoration _ringDecoration(BuildContext context, bool unread) {
+  final primary = Theme.of(context).colorScheme.primary;
+  return BoxDecoration(
+    shape: BoxShape.circle,
+    gradient: unread ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary]) : null,
+    color: unread ? null : Theme.of(context).dividerColor,
+  );
+}
+
+/// Whether the full stories row is open above the chat list; otherwise the app bar shows [StoriesStack].
+class StoriesExpandedNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool expanded) {
+    if (state != expanded) state = expanded;
+  }
+}
+
+final storiesExpandedProvider = NotifierProvider<StoriesExpandedNotifier, bool>(StoriesExpandedNotifier.new);
+
+/// Collapsed stories as in Telegram/aka: up to three overlapping avatars beside the title; tap opens the row.
+class StoriesStack extends ConsumerWidget {
+  const StoriesStack({super.key});
+
+  static const _size = 34.0;
+  static const _step = 20.0;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final feed = ref.watch(storyFeedProvider);
+    if (feed.isEmpty || ref.watch(storiesExpandedProvider)) return const SizedBox.shrink();
+    final shown = feed.take(3).toList();
+    final theme = Theme.of(context);
+    final gap = theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface;
+    return GestureDetector(
+      onTap: () => ref.read(storiesExpandedProvider.notifier).set(true),
+      child: Padding(
+        padding: const EdgeInsets.only(right: 10),
+        child: SizedBox(
+          width: _size + _step * (shown.length - 1),
+          height: _size,
+          child: Stack(
+            children: [
+              // Painted last to first so the first chat ends up on top, as in Telegram.
+              for (var i = shown.length - 1; i >= 0; i--)
+                Positioned(
+                  left: _step * i,
+                  child: Container(
+                    width: _size,
+                    height: _size,
+                    padding: const EdgeInsets.all(1.6),
+                    decoration: _ringDecoration(context, _hasUnread(shown[i])),
+                    child: Container(
+                      padding: const EdgeInsets.all(1.4),
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: gap),
+                      child: ChatAvatar(chatId: shown[i].chatId, size: _size - 6, showOnline: false),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Horizontal row of chats with active stories (shown above the main chat list).
 class StoriesBar extends ConsumerWidget {
   const StoriesBar({super.key});
@@ -74,7 +143,6 @@ class _StoryAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
     final surface = Theme.of(context).colorScheme.surface;
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -93,13 +161,7 @@ class _StoryAvatar extends StatelessWidget {
                   width: 62,
                   height: 62,
                   padding: EdgeInsets.all(unread ? 2.4 : 1.2),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: unread
-                        ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary])
-                        : null,
-                    color: unread ? null : Theme.of(context).dividerColor,
-                  ),
+                  decoration: _ringDecoration(context, unread),
                   child: Container(
                     padding: const EdgeInsets.all(2.2),
                     decoration: BoxDecoration(shape: BoxShape.circle, color: surface),

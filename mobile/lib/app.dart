@@ -32,7 +32,7 @@ class SadoApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     return MaterialApp(
-      title: 'Sado',
+      title: 'UZARO',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
       theme: buildTheme(Brightness.light, settings.accent),
@@ -117,7 +117,7 @@ class _Splash extends StatelessWidget {
           children: [
             Image.asset('assets/logo.png', width: 112, height: 112),
             const SizedBox(height: 20),
-            const Text('Sado', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+            const Text('UZARO', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
             const SizedBox(height: 24),
             const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
           ],

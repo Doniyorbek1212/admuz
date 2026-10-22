@@ -15,6 +15,7 @@ import '../../state/chat_history.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
 import '../profile/chat_info_screen.dart';
@@ -660,14 +661,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final action = chatActionText(chat, account, s);
     final subtitle = widget.topicName != null ? chatTitle(chat, account, s) : (action ?? chatSubtitle(chat, account, s));
     final muted = account.isMuted(chat);
+    // Accent bars (phones, dark mode) get the branded gradient; desktop's light bars stay plain.
+    final brandedBar = context.onAppBar == Colors.white;
     return AppBar(
+      flexibleSpace: brandedBar ? const BrandBarBackground() : null,
       // No back button when the chat is the split-view pane's root page.
       titleSpacing: Navigator.canPop(context) ? 0 : 12,
       title: InkWell(
         onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
         child: Row(
           children: [
-            ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
+            if (brandedBar)
+              GoldRing(width: 1.5, child: ChatAvatar(chatId: chat.id, size: 38, showOnline: false))
+            else
+              ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
             const SizedBox(width: 10),
             Expanded(
               child: Column(

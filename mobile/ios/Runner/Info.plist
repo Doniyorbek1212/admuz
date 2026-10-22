@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Sado needs the camera to take photos and videos for your chats.</string>
+	<string>UZARO needs the camera to take photos and videos for your chats.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sado needs the microphone to record voice messages.</string>
+	<string>UZARO needs the microphone to record voice messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Sado needs access to your photos to send them in chats.</string>
+	<string>UZARO needs access to your photos to send them in chats.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Sado saves photos and videos you choose to your library.</string>
+	<string>UZARO saves photos and videos you choose to your library.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Sado syncs your contacts to find friends who use Telegram.</string>
+	<string>UZARO syncs your contacts to find friends who use Telegram.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Sado uses your location only when you choose to share it in a chat.</string>
+	<string>UZARO uses your location only when you choose to share it in a chat.</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>https</string>
@@ -30,7 +30,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Sado</string>
+	<string>UZARO</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -38,7 +38,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Sado</string>
+	<string>UZARO</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
