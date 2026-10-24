@@ -15,6 +15,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import 'story_actions.dart';
 import '../chat/message_content.dart';
 
 bool _hasUnread(td.ChatActiveStories stories) => stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
@@ -456,9 +457,28 @@ class _StoryViewerState extends ConsumerState<StoryViewer> with SingleTickerProv
                     subtitle: story == null
                         ? null
                         : Text(formatChatTime(story.date, s.locale), style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white),
-                      onPressed: () => Navigator.of(context).maybePop(),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (story != null)
+                          IconButton(
+                            icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                            onPressed: () async {
+                              _pause();
+                              final deleted = await showStoryMenu(context, _account, story);
+                              if (!mounted) return;
+                              if (deleted) {
+                                _next();
+                              } else {
+                                _resume();
+                              }
+                            },
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, color: Colors.white),
+                          onPressed: () => Navigator.of(context).maybePop(),
+                        ),
+                      ],
                     ),
                   ),
                   const Spacer(),

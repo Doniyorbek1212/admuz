@@ -44,6 +44,21 @@ class AppSettings {
     this.fileGuard = const FileGuardSettings(),
     this.keepDeleted = true,
     this.keepEditHistory = true,
+    this.confirmSticker = false,
+    this.confirmVoice = false,
+    this.confirmGif = false,
+    this.showGhostButton = true,
+    this.avatarOpensProfile = false,
+    this.powerSaveLevel = 10,
+    this.animatedStickers = true,
+    this.autoplayVideos = true,
+    this.smoothTransitions = true,
+    this.fontFamily = '',
+    this.maxCacheGb = 0,
+    this.saveToGallery = const {},
+    this.chatSounds = true,
+    this.sendSound = 'swoosh',
+    this.receiveSound = 'pop',
   });
 
   final ThemeMode themeMode;
@@ -86,6 +101,39 @@ class AppSettings {
   final bool keepDeleted;
   final bool keepEditHistory;
 
+  /// Ask before sending a sticker / voice message / GIF (stops accidental sends, as in aka).
+  final bool confirmSticker;
+  final bool confirmVoice;
+  final bool confirmGif;
+
+  /// Ghost-mode toggle in the chat list header.
+  final bool showGhostButton;
+
+  /// Tapping a chat's avatar in the chat list opens its profile instead of the chat.
+  final bool avatarOpensProfile;
+
+  /// Power saving turns on at or below this battery percent (0 = never, 100 = always), as in Telegram.
+  final int powerSaveLevel;
+
+  /// Animations allowed outside power saving (GIF autoplay is [autoplayGifs]).
+  final bool animatedStickers;
+  final bool autoplayVideos;
+  final bool smoothTransitions;
+
+  /// System font family for the whole app ('' = default).
+  final String fontFamily;
+
+  /// Cache size limit in GB; the oldest media goes first above it (0 = unlimited).
+  final int maxCacheGb;
+
+  /// Chat kinds ('private', 'groups', 'channels') whose incoming photos and videos go to the gallery.
+  final Set<String> saveToGallery;
+
+  /// Telegram's in-chat sounds when a message is sent / arrives in the open chat (ids from ChatSounds.ids).
+  final bool chatSounds;
+  final String sendSound;
+  final String receiveSound;
+
   Color get accent => accentPalette[accentIndex.clamp(0, accentPalette.length - 1)];
 
   AppSettings copyWith({
@@ -112,6 +160,21 @@ class AppSettings {
     FileGuardSettings? fileGuard,
     bool? keepDeleted,
     bool? keepEditHistory,
+    bool? confirmSticker,
+    bool? confirmVoice,
+    bool? confirmGif,
+    bool? showGhostButton,
+    bool? avatarOpensProfile,
+    int? powerSaveLevel,
+    bool? animatedStickers,
+    bool? autoplayVideos,
+    bool? smoothTransitions,
+    String? fontFamily,
+    int? maxCacheGb,
+    Set<String>? saveToGallery,
+    bool? chatSounds,
+    String? sendSound,
+    String? receiveSound,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -137,6 +200,21 @@ class AppSettings {
         fileGuard: fileGuard ?? this.fileGuard,
         keepDeleted: keepDeleted ?? this.keepDeleted,
         keepEditHistory: keepEditHistory ?? this.keepEditHistory,
+        confirmSticker: confirmSticker ?? this.confirmSticker,
+        confirmVoice: confirmVoice ?? this.confirmVoice,
+        confirmGif: confirmGif ?? this.confirmGif,
+        showGhostButton: showGhostButton ?? this.showGhostButton,
+        avatarOpensProfile: avatarOpensProfile ?? this.avatarOpensProfile,
+        powerSaveLevel: powerSaveLevel ?? this.powerSaveLevel,
+        animatedStickers: animatedStickers ?? this.animatedStickers,
+        autoplayVideos: autoplayVideos ?? this.autoplayVideos,
+        smoothTransitions: smoothTransitions ?? this.smoothTransitions,
+        fontFamily: fontFamily ?? this.fontFamily,
+        maxCacheGb: maxCacheGb ?? this.maxCacheGb,
+        saveToGallery: saveToGallery ?? this.saveToGallery,
+        chatSounds: chatSounds ?? this.chatSounds,
+        sendSound: sendSound ?? this.sendSound,
+        receiveSound: receiveSound ?? this.receiveSound,
       );
 }
 
@@ -180,7 +258,122 @@ class SettingsNotifier extends Notifier<AppSettings> {
       ),
       keepDeleted: _prefs.getBool('keepDeleted') ?? true,
       keepEditHistory: _prefs.getBool('keepEditHistory') ?? true,
+      confirmSticker: _prefs.getBool('confirmSticker') ?? false,
+      confirmVoice: _prefs.getBool('confirmVoice') ?? false,
+      confirmGif: _prefs.getBool('confirmGif') ?? false,
+      showGhostButton: _prefs.getBool('showGhostButton') ?? true,
+      avatarOpensProfile: _prefs.getBool('avatarOpensProfile') ?? false,
+      powerSaveLevel: _prefs.getInt('powerSaveLevel') ?? 10,
+      animatedStickers: _prefs.getBool('animatedStickers') ?? true,
+      autoplayVideos: _prefs.getBool('autoplayVideos') ?? true,
+      smoothTransitions: _prefs.getBool('smoothTransitions') ?? true,
+      fontFamily: _prefs.getString('fontFamily') ?? '',
+      maxCacheGb: _prefs.getInt('maxCacheGb') ?? 0,
+      saveToGallery: (_prefs.getStringList('saveToGallery') ?? const <String>[]).toSet(),
+      chatSounds: _prefs.getBool('chatSounds') ?? true,
+      sendSound: _prefs.getString('sendSound') ?? 'swoosh',
+      receiveSound: _prefs.getString('receiveSound') ?? 'pop',
     );
+  }
+
+  void setChatSounds(bool value) {
+    _prefs.setBool('chatSounds', value);
+    state = state.copyWith(chatSounds: value);
+  }
+
+  void setSendSound(String id) {
+    _prefs.setString('sendSound', id);
+    state = state.copyWith(sendSound: id);
+  }
+
+  void setReceiveSound(String id) {
+    _prefs.setString('receiveSound', id);
+    state = state.copyWith(receiveSound: id);
+  }
+
+  void setPowerSaveLevel(int value) {
+    _prefs.setInt('powerSaveLevel', value);
+    state = state.copyWith(powerSaveLevel: value);
+  }
+
+  void setAnimatedStickers(bool value) {
+    _prefs.setBool('animatedStickers', value);
+    state = state.copyWith(animatedStickers: value);
+  }
+
+  void setAutoplayVideos(bool value) {
+    _prefs.setBool('autoplayVideos', value);
+    state = state.copyWith(autoplayVideos: value);
+  }
+
+  void setSmoothTransitions(bool value) {
+    _prefs.setBool('smoothTransitions', value);
+    state = state.copyWith(smoothTransitions: value);
+  }
+
+  void setFontFamily(String value) {
+    _prefs.setString('fontFamily', value);
+    state = state.copyWith(fontFamily: value);
+  }
+
+  void setMaxCacheGb(int value) {
+    _prefs.setInt('maxCacheGb', value);
+    state = state.copyWith(maxCacheGb: value);
+  }
+
+  void setSaveToGallery(String kind, bool enabled) {
+    final next = {...state.saveToGallery};
+    enabled ? next.add(kind) : next.remove(kind);
+    _prefs.setStringList('saveToGallery', next.toList());
+    state = state.copyWith(saveToGallery: next);
+  }
+
+  /// Preferences owned by the UZARO settings screen; "reset" restores their defaults.
+  static const uzaroKeys = [
+    'confirmSticker',
+    'confirmVoice',
+    'confirmGif',
+    'showGhostButton',
+    'avatarOpensProfile',
+    'keepDeleted',
+    'keepEditHistory',
+    'ghostMode',
+    'quickReaction',
+    'chatTypeTabs',
+    'sendByEnter',
+    'fontFamily',
+  ];
+
+  Future<void> resetUzaroSettings() async {
+    for (final key in uzaroKeys) {
+      await _prefs.remove(key);
+    }
+    ref.invalidateSelf();
+  }
+
+  void setConfirmSticker(bool value) {
+    _prefs.setBool('confirmSticker', value);
+    state = state.copyWith(confirmSticker: value);
+  }
+
+  void setConfirmVoice(bool value) {
+    _prefs.setBool('confirmVoice', value);
+    state = state.copyWith(confirmVoice: value);
+  }
+
+  void setConfirmGif(bool value) {
+    _prefs.setBool('confirmGif', value);
+    state = state.copyWith(confirmGif: value);
+  }
+
+  void setShowGhostButton(bool value) {
+    _prefs.setBool('showGhostButton', value);
+    state = state.copyWith(showGhostButton: value);
+  }
+
+  void setAvatarOpensProfile(bool value) {
+    _prefs.setBool('avatarOpensProfile', value);
+    state = state.copyWith(avatarOpensProfile: value);
   }
 
   static String _defaultLocale() {
@@ -312,6 +505,37 @@ class SettingsNotifier extends Notifier<AppSettings> {
 }
 
 final settingsProvider = NotifierProvider<SettingsNotifier, AppSettings>(SettingsNotifier.new);
+
+/// Battery percent, refreshed every minute (null where unknown).
+final batteryLevelProvider = StreamProvider<int?>((ref) async* {
+  while (true) {
+    yield await KeepAliveService.batteryLevel();
+    await Future<void>.delayed(const Duration(minutes: 1));
+  }
+});
+
+/// Power saving is on: always, or the battery is at/below the chosen level.
+final powerSavingProvider = Provider<bool>((ref) {
+  final level = ref.watch(settingsProvider.select((s) => s.powerSaveLevel));
+  if (level >= 100) return true;
+  if (level <= 0) return false;
+  final battery = ref.watch(batteryLevelProvider).value;
+  return battery != null && battery <= level;
+});
+
+/// What may animate right now: the user's choices, all off while power saving.
+typedef Motion = ({bool stickers, bool videos, bool gifs, bool transitions});
+
+final motionProvider = Provider<Motion>((ref) {
+  final s = ref.watch(settingsProvider);
+  final saving = ref.watch(powerSavingProvider);
+  return (
+    stickers: s.animatedStickers && !saving,
+    videos: s.autoplayVideos && !saving,
+    gifs: s.autoplayGifs && !saving,
+    transitions: s.smoothTransitions && !saving,
+  );
+});
 
 /// One file the guard stopped.
 class BlockedFileEntry {

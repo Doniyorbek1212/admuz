@@ -19,11 +19,16 @@ import '../../core/live_location.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/playback.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
+import '../../widgets/map_thumbnail.dart';
 import 'bot_keyboard.dart';
+import 'media_gallery.dart';
 import 'media_viewers.dart';
+import 'message_extras.dart';
+import 'sticker_sets.dart';
 import 'video_note_view.dart';
 
 /// Picks the photo size best suited for a bubble (around 800px wide).
@@ -159,8 +164,9 @@ class MessageMedia extends ConsumerWidget {
     final verdict = ref.watch(settingsProvider.select((s) => s.fileGuard)).checkMessage(message, ref.read(accountProvider).myId);
     if (verdict != null) return _BlockedFileView(name: attachmentOf(content)!.name, verdict: verdict);
     return switch (content) {
-      td.MessagePhoto(:final photo, :final hasSpoiler) => _PhotoView(photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler),
+      td.MessagePhoto(:final photo, :final hasSpoiler) => _PhotoView(message: message, photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler),
       td.MessageVideo(:final video) => _VideoThumb(
+          message: message,
           file: video.video,
           thumbnail: video.thumbnail,
           minithumbnail: video.minithumbnail,
@@ -181,13 +187,7 @@ class MessageMedia extends ConsumerWidget {
         ),
       td.MessageVideoNote(:final videoNote, :final isViewed) => VideoNoteView(message: message, videoNote: videoNote, isViewed: isViewed),
       td.MessageVoiceNote(:final voiceNote) => VoiceNoteView(message: message, voiceNote: voiceNote),
-      td.MessageAudio(:final audio) => _FileView(
-          message: message,
-          file: audio.audio,
-          name: [audio.performer, audio.title].where((p) => p.isNotEmpty).join(' — ').ifEmpty(audio.fileName),
-          icon: Icons.music_note_rounded,
-          mimeType: audio.mimeType,
-        ),
+      td.MessageAudio(:final audio) => _AudioView(message: message, audio: audio),
       td.MessageDocument(:final document) => _FileView(
           message: message,
           file: document.document,
@@ -202,6 +202,7 @@ class MessageMedia extends ConsumerWidget {
         _LocationView(latitude: venue.location.latitude, longitude: venue.location.longitude, title: venue.title, subtitle: venue.address),
       td.MessageContact(:final contact) => _ContactView(contact: contact),
       td.MessagePoll(:final poll) => PollView(message: message, poll: poll),
+      td.MessageChecklist(:final list) => ChecklistView(message: message, checklist: list),
       td.MessageCall(:final isVideo, :final duration) => _CallView(isVideo: isVideo, duration: duration, outgoing: message.isOutgoing),
       td.MessageInvoice() => InvoiceView(message: message),
       td.MessageAnimatedEmoji(:final emoji) || td.MessageDice(:final emoji) =>
@@ -263,7 +264,9 @@ Size _fit(int width, int height, double maxWidth, {double maxHeight = 380}) {
 }
 
 class _PhotoView extends StatefulWidget {
-  const _PhotoView({required this.photo, required this.maxWidth, required this.spoiler});
+  const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler});
+
+  final td.Message message;
 
   final td.Photo photo;
   final double maxWidth;
@@ -296,8 +299,7 @@ class _PhotoViewState extends State<_PhotoView> {
             setState(() => _hidden = false);
             return;
           }
-        final full = bestPhotoSize(widget.photo, target: 2560)!;
-        openPhotoViewer(context, full.photo, widget.photo.minithumbnail);
+        openMediaGallery(context, widget.message);
       },
         child: SizedBox(
           width: box.width,
@@ -324,8 +326,12 @@ class _PhotoViewState extends State<_PhotoView> {
 
 final _blur = ImageFilter.blur(sigmaX: 18, sigmaY: 18);
 
+/// Videos up to this size download by themselves to play muted in the bubble (Telegram's mobile-data default).
+const _inlineAutoplayMaxBytes = 10 * 1024 * 1024;
+
 class _VideoThumb extends ConsumerWidget {
   const _VideoThumb({
+    this.message,
     required this.file,
     required this.thumbnail,
     required this.minithumbnail,
@@ -336,6 +342,8 @@ class _VideoThumb extends ConsumerWidget {
     this.isGif = false,
   });
 
+  /// Set for videos in chats: opens the swipeable media viewer instead of the single-file player.
+  final td.Message? message;
   final td.File file;
   final td.Thumbnail? thumbnail;
   final td.Minithumbnail? minithumbnail;
@@ -352,7 +360,7 @@ class _VideoThumb extends ConsumerWidget {
     Widget preview = thumb != null && thumb.format is! td.ThumbnailFormatMpeg4
         ? TdImage(file: thumb.file, minithumbnail: minithumbnail, width: box.width, height: box.height)
         : Container(width: box.width, height: box.height, color: Colors.black26);
-    if (isGif && ref.watch(settingsProvider.select((s) => s.autoplayGifs))) {
+    if (isGif && ref.watch(motionProvider.select((m) => m.gifs))) {
       // GIFs are small MP4s: download and loop them inline like Telegram.
       final current = ref.watch(fileProvider(file.id)).value ?? file;
       if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
@@ -366,8 +374,46 @@ class _VideoThumb extends ConsumerWidget {
         );
       }
     }
+    final chatMessage = message;
+    void open() => chatMessage != null && !isGif ? openMediaGallery(context, chatMessage) : openVideoPlayer(context, file, loop: isGif);
+    if (!isGif && ref.watch(motionProvider.select((m) => m.videos))) {
+      // Like Telegram/aka: videos play muted in the bubble; small ones download for it on their own.
+      final small = (file.size == 0 ? file.expectedSize : file.size) <= _inlineAutoplayMaxBytes;
+      final current = (small ? ref.watch(fileProvider(file.id)).value : ref.watch(_fileStateProvider(file.id)).value) ?? file;
+      if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
+        return GestureDetector(
+          onTap: open,
+          child: SizedBox(
+            width: box.width,
+            height: box.height,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRect(child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview)),
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(formatDuration(Duration(seconds: duration)), style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.volume_off_rounded, color: Colors.white, size: 15),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
     return GestureDetector(
-      onTap: () => openVideoPlayer(context, file, loop: isGif),
+      onTap: open,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -383,9 +429,17 @@ class _VideoThumb extends ConsumerWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-              child: Text(
-                isGif ? 'GIF' : '${formatDuration(Duration(seconds: duration))}  ${formatFileSize(file.size == 0 ? file.expectedSize : file.size)}',
-                style: const TextStyle(color: Colors.white, fontSize: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Not on this device yet: the arrow says tapping downloads it (aka/Telegram pill).
+                  if (!isGif && !(ref.watch(fileProvider(file.id)).value ?? file).local.isDownloadingCompleted)
+                    const Padding(padding: EdgeInsets.only(right: 3), child: Icon(Icons.arrow_downward_rounded, size: 14, color: Colors.white)),
+                  Text(
+                    isGif ? 'GIF' : '${formatDuration(Duration(seconds: duration))}  ${formatFileSize(file.size == 0 ? file.expectedSize : file.size)}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ],
               ),
             ),
           ),
@@ -484,6 +538,12 @@ class _StickerView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final content = _content(ref);
+    if (sticker.setId == 0) return content;
+    return GestureDetector(onTap: () => showStickerSetSheet(context, sticker.setId), child: content);
+  }
+
+  Widget _content(WidgetRef ref) {
     final format = sticker.format;
     if (format is td.StickerFormatWebp) {
       return TdImage(file: sticker.sticker, width: size, height: size, fit: BoxFit.contain);
@@ -493,6 +553,8 @@ class _StickerView extends ConsumerWidget {
     final file = ref.watch(fileProvider(sticker.sticker.id)).value ?? sticker.sticker;
     if (!file.local.isDownloadingCompleted || file.local.path.isEmpty) return _fallback();
     final path = file.local.path;
+    // Power saving / animated stickers off: the first frame stands still.
+    final animate = ref.watch(motionProvider.select((m) => m.stickers));
     return RepaintBoundary(
       child: SizedBox.square(
         dimension: size,
@@ -504,9 +566,10 @@ class _StickerView extends ConsumerWidget {
                 height: size,
                 fit: BoxFit.contain,
                 repeat: true,
+                animate: animate,
                 errorBuilder: (_, _, _) => _fallback(),
               )
-            : LoopingVideo(path: path, fallback: _fallback()),
+            : LoopingVideo(key: ValueKey(animate), path: path, fallback: _fallback(), autoplay: animate),
       ),
     );
   }
@@ -514,10 +577,13 @@ class _StickerView extends ConsumerWidget {
 
 /// Silent looping video (WebM stickers, GIF previews).
 class LoopingVideo extends StatefulWidget {
-  const LoopingVideo({super.key, required this.path, required this.fallback});
+  const LoopingVideo({super.key, required this.path, required this.fallback, this.autoplay = true});
 
   final String path;
   final Widget fallback;
+
+  /// false: shows the first frame without playing.
+  final bool autoplay;
 
   @override
   State<LoopingVideo> createState() => _LoopingVideoState();
@@ -538,7 +604,7 @@ class _LoopingVideoState extends State<LoopingVideo> {
       await _controller.initialize();
       await _controller.setVolume(0);
       await _controller.setLooping(true);
-      await _controller.play();
+      if (widget.autoplay) await _controller.play();
       if (mounted) setState(() => _ready = true);
     } on Object catch (error) {
       debugPrint('webm sticker failed: $error');
@@ -577,22 +643,30 @@ class _LocationView extends StatelessWidget {
         Uri.parse('https://maps.google.com/?q=$latitude,$longitude'),
         mode: LaunchMode.externalApplication,
       ),
-      child: Container(
+      child: SizedBox(
         width: 240,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(12)),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.location_on_rounded, color: primary, size: 36),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ClipRRect(borderRadius: BorderRadius.circular(12), child: MapThumbnail(latitude: latitude, longitude: longitude)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+              child: Row(
                 children: [
-                  Text(title ?? context.t('location'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                  Text(
-                    subtitle ?? '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}',
-                    style: TextStyle(fontSize: 12.5, color: Theme.of(context).hintColor),
+                  Icon(Icons.location_on_rounded, color: primary, size: 20),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title ?? context.t('location'), style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Text(
+                          subtitle ?? '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}',
+                          style: TextStyle(fontSize: 12.5, color: Theme.of(context).hintColor),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -726,36 +800,6 @@ class _CallView extends StatelessWidget {
 
 // ------------------------------------------------------------------ voice notes
 
-/// Single shared player so starting one voice note stops the previous one.
-class VoicePlayback {
-  VoicePlayback._();
-
-  static final VoicePlayback instance = VoicePlayback._();
-  final AudioPlayer player = AudioPlayer();
-  final ValueNotifier<int?> currentFileId = ValueNotifier(null);
-  final ValueNotifier<double> speed = ValueNotifier(1.0);
-
-  Future<void> cycleSpeed() async {
-    const speeds = [1.0, 1.5, 2.0];
-    speed.value = speeds[(speeds.indexOf(speed.value) + 1) % speeds.length];
-    await player.setSpeed(speed.value);
-  }
-
-  Future<void> toggle(int fileId, String path) async {
-    if (currentFileId.value == fileId) {
-      if (player.playing) {
-        await player.pause();
-      } else {
-        await player.play();
-      }
-      return;
-    }
-    currentFileId.value = fileId;
-    await player.setFilePath(path);
-    unawaited(player.play());
-  }
-}
-
 class VoiceNoteView extends ConsumerWidget {
   const VoiceNoteView({super.key, required this.message, required this.voiceNote});
 
@@ -768,16 +812,16 @@ class VoiceNoteView extends ConsumerWidget {
     final file = ref.watch(fileProvider(voiceNote.voice.id)).value ?? voiceNote.voice;
     final primary = Theme.of(context).colorScheme.primary;
     final samples = decodeWaveform(voiceNote.waveform);
-    final playback = VoicePlayback.instance;
+    final playback = Playback.instance;
     final recognition = voiceNote.speechRecognitionResult;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        ValueListenableBuilder<int?>(
-          valueListenable: playback.currentFileId,
-          builder: (context, currentId, _) {
-            final isCurrent = currentId == voiceNote.voice.id;
+        ValueListenableBuilder<NowPlaying?>(
+          valueListenable: playback.nowPlaying,
+          builder: (context, now, _) {
+            final isCurrent = now?.fileId == voiceNote.voice.id;
             return StreamBuilder<PlayerState>(
               stream: playback.player.playerStateStream,
               builder: (context, snapshot) {
@@ -788,13 +832,12 @@ class VoiceNoteView extends ConsumerWidget {
                   children: [
                     GestureDetector(
                       onTap: () async {
-                        final path = file.local.isDownloadingCompleted ? file.local.path : await account.downloadFile(file.id, priority: 32);
-                        if (path == null || !context.mounted) return;
                         // just_audio has no Windows/Linux implementation: play in the system player there.
                         if (isDesktop && !Platform.isMacOS) {
-                          await openLocalFile(context, path, mimeType: voiceNote.mimeType);
+                          final path = file.local.isDownloadingCompleted ? file.local.path : await account.downloadFile(file.id, priority: 32);
+                          if (path != null && context.mounted) await openLocalFile(context, path, mimeType: voiceNote.mimeType);
                         } else {
-                          await playback.toggle(voiceNote.voice.id, path);
+                          await playback.playMessage(account, message, title: context.t('voice_message'));
                         }
                       },
                       child: CircleAvatar(
@@ -870,6 +913,120 @@ class VoiceNoteView extends ConsumerWidget {
             child: Text(errorTextFromCode(context, recognition.error.message), style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
           ),
       ],
+    );
+  }
+}
+
+/// Music plays in-app through the shared [Playback] player, like Telegram, instead of opening an external app.
+class _AudioView extends ConsumerWidget {
+  const _AudioView({required this.message, required this.audio});
+
+  final td.Message message;
+  final td.Audio audio;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final account = ref.watch(accountProvider);
+    final fileId = audio.audio.id;
+    final file = ref.watch(_fileStateProvider(fileId)).value ?? account.files[fileId] ?? audio.audio;
+    final downloading = file.local.isDownloadingActive;
+    final total = file.size == 0 ? file.expectedSize : file.size;
+    final primary = Theme.of(context).colorScheme.primary;
+    final hintStyle = TextStyle(fontSize: 13, color: Theme.of(context).hintColor);
+    final playback = Playback.instance;
+
+    Future<void> onTap() async {
+      if (downloading) {
+        account.cancelDownload(fileId);
+        return;
+      }
+      // just_audio has no Windows/Linux implementation: play in the system player there.
+      if (isDesktop && !Platform.isMacOS) {
+        final path = await account.downloadFile(fileId, priority: 32);
+        if (path != null && context.mounted) await openLocalFile(context, path, mimeType: audio.mimeType);
+      } else {
+        await playback.playMessage(account, message);
+      }
+    }
+
+    return ValueListenableBuilder<NowPlaying?>(
+      valueListenable: playback.nowPlaying,
+      builder: (context, now, _) {
+        final isCurrent = now?.fileId == fileId;
+        return StreamBuilder<PlayerState>(
+          stream: playback.player.playerStateStream,
+          builder: (context, state) {
+            final playing = isCurrent && (state.data?.playing ?? false) && state.data?.processingState != ProcessingState.completed;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: onTap,
+                  child: SizedBox.square(
+                    dimension: 48,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 24,
+                          backgroundColor: primary,
+                          child: Icon(downloading ? Icons.close_rounded : (playing ? Icons.pause_rounded : Icons.play_arrow_rounded), color: Colors.white, size: 28),
+                        ),
+                        if (downloading)
+                          CircularProgressIndicator(value: total > 0 ? file.local.downloadedSize / total : null, strokeWidth: 2.5, color: Colors.white),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: StreamBuilder<Duration>(
+                    stream: isCurrent ? playback.player.positionStream : const Stream.empty(),
+                    builder: (context, position) {
+                      final elapsed = isCurrent ? position.data ?? Duration.zero : Duration.zero;
+                      // Files sent by bots often carry no duration; fall back to what the player read from the file.
+                      final duration = audio.duration > 0 ? Duration(seconds: audio.duration) : (isCurrent ? playback.player.duration : null) ?? Duration.zero;
+                      final totalMs = duration.inMilliseconds;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(audio.title.ifEmpty(audio.fileName), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          if (audio.performer.isNotEmpty) Text(audio.performer, maxLines: 1, overflow: TextOverflow.ellipsis, style: hintStyle),
+                          if (isCurrent && totalMs > 0)
+                            SizedBox(
+                              height: 22,
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 2.5,
+                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                                ),
+                                child: Slider(
+                                  value: elapsed.inMilliseconds.clamp(0, totalMs).toDouble(),
+                                  max: totalMs.toDouble(),
+                                  onChanged: (v) => playback.player.seek(Duration(milliseconds: v.round())),
+                                ),
+                              ),
+                            ),
+                          Text(
+                            downloading
+                                ? '${formatFileSize(file.local.downloadedSize)} / ${formatFileSize(total)}'
+                                : isCurrent
+                                    ? [formatDuration(elapsed), if (totalMs > 0) formatDuration(duration)].join(' / ')
+                                    : [if (totalMs > 0) formatDuration(duration), formatFileSize(total)].join(' · '),
+                            style: hintStyle,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -1147,13 +1304,13 @@ class _AlbumTile extends StatelessWidget {
         final size = bestPhotoSize(photo, target: 600);
         if (size == null) return const ColoredBox(color: Colors.black12);
         return GestureDetector(
-          onTap: () => openPhotoViewer(context, bestPhotoSize(photo, target: 2560)!.photo, photo.minithumbnail),
+          onTap: () => openMediaGallery(context, message),
           child: TdImage(file: size.photo, minithumbnail: photo.minithumbnail, fit: BoxFit.cover),
         );
       case td.MessageVideo(:final video):
         final thumb = video.thumbnail;
         return GestureDetector(
-          onTap: () => openVideoPlayer(context, video.video),
+          onTap: () => openMediaGallery(context, message),
           child: Stack(
             fit: StackFit.expand,
             children: [

@@ -4,4 +4,10 @@
     <string name="keepalive_channel">Fon rejimidagi ulanish</string>
     <string name="keepalive_title">UZARO ulangan</string>
     <string name="keepalive_text">Ilova yopiq bo\'lsa ham xabarlar keladi</string>
+    <!-- Music player notification. -->
+    <string name="music_channel">Musiqa</string>
+    <string name="music_play">Ijro etish</string>
+    <string name="music_pause">Pauza</string>
+    <string name="music_next">Keyingisi</string>
+    <string name="music_previous">Oldingisi</string>
 </resources>

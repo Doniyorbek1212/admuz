@@ -3,4 +3,9 @@
     <string name="keepalive_channel">Background connection</string>
     <string name="keepalive_title">UZARO is connected</string>
     <string name="keepalive_text">Messages arrive even when the app is closed</string>
+    <string name="music_channel">Music</string>
+    <string name="music_play">Play</string>
+    <string name="music_pause">Pause</string>
+    <string name="music_next">Next</string>
+    <string name="music_previous">Previous</string>
 </resources>

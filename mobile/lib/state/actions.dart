@@ -185,7 +185,16 @@ extension ChatActions on TelegramAccount {
   Future<td.Message> sendVideo(int chatId, String path, {String caption = '', int? replyToId}) =>
       sendContent(chatId, videoContent(path, caption: caption), replyToId: replyToId);
 
-  Future<td.Message> sendDocument(int chatId, String path, {String caption = '', int? replyToId}) => sendContent(
+  Future<td.Message> sendAudio(int chatId, String path, {String caption = '', int? replyToId}) => sendContent(
+        chatId,
+        td.InputMessageAudio(
+          audio: td.InputAudio(audio: td.InputFileLocal(path: path), albumCoverThumbnail: null, duration: 0, title: '', performer: ''),
+          caption: formattedText(caption),
+        ),
+        replyToId: replyToId,
+      );
+
+  Future<td.Message> sendDocument(int chatId, String path, {String caption = '', int? replyToId, bool silent = false}) => sendContent(
         chatId,
         td.InputMessageDocument(
           document: td.InputDocument(
@@ -196,6 +205,7 @@ extension ChatActions on TelegramAccount {
           caption: formattedText(caption),
         ),
         replyToId: replyToId,
+        silent: silent,
       );
 
   /// Round video message; [length] is the diameter in pixels (Telegram allows up to 640).
@@ -249,7 +259,16 @@ extension ChatActions on TelegramAccount {
         ),
       );
 
-  Future<td.Message> sendPoll(int chatId, String question, List<String> options, {bool anonymous = true, bool multiple = false}) =>
+  /// A quiz when [correctOption] is set (index into [options]), like Telegram's quiz mode.
+  Future<td.Message> sendPoll(
+    int chatId,
+    String question,
+    List<String> options, {
+    bool anonymous = true,
+    bool multiple = false,
+    int? correctOption,
+    String explanation = '',
+  }) =>
       sendContent(
         chatId,
         td.InputMessagePoll(
@@ -258,13 +277,15 @@ extension ChatActions on TelegramAccount {
           description: null,
           media: null,
           isAnonymous: anonymous,
-          allowsMultipleAnswers: multiple,
-          allowsRevoting: true,
+          allowsMultipleAnswers: multiple && correctOption == null,
+          allowsRevoting: correctOption == null,
           membersOnly: false,
           countryCodes: const [],
           shuffleOptions: false,
           hideResultsUntilCloses: false,
-          type: const td.InputPollTypeRegular(allowAddingOptions: false),
+          type: correctOption == null
+              ? const td.InputPollTypeRegular(allowAddingOptions: false)
+              : td.InputPollTypeQuiz(correctOptionIds: [correctOption], explanation: formattedText(explanation), explanationMedia: null),
           openPeriod: 0,
           closeDate: 0,
           isClosed: null,
@@ -332,6 +353,37 @@ extension ChatActions on TelegramAccount {
 
   Future<void> vote(td.Message message, List<int> optionIndexes) =>
       send<td.Ok>(td.SetPollAnswer(chatId: message.chatId, messageId: message.id, optionIds: optionIndexes));
+
+  /// Swaps the photo/video of a sent message, keeping its caption.
+  Future<void> replaceMedia(td.Message message, String path, {required bool isVideo, String caption = ''}) {
+    return send<td.Message>(td.EditMessageMedia(
+      chatId: message.chatId,
+      messageId: message.id,
+      inputMessageContent: isVideo ? videoContent(path, caption: caption) : photoContent(path, caption: caption),
+    ));
+  }
+
+  Future<void> stopPoll(td.Message message) => send<td.Ok>(td.StopPoll(chatId: message.chatId, messageId: message.id));
+
+  Future<void> markChecklistTask(td.Message message, int taskId, {required bool done}) => send<td.Ok>(td.MarkChecklistTasksAsDone(
+        chatId: message.chatId,
+        messageId: message.id,
+        markedAsDoneTaskIds: done ? [taskId] : const [],
+        markedAsNotDoneTaskIds: done ? const [] : [taskId],
+      ));
+
+  Future<void> saveGif(td.Animation animation) =>
+      send<td.Ok>(td.AddSavedAnimation(animation: td.InputFileId(id: animation.animation.id)));
+
+  Future<List<td.MessageViewer>> messageViewers(td.Message message) async =>
+      (await send<td.MessageViewers>(td.GetMessageViewers(chatId: message.chatId, messageId: message.id))).viewers;
+
+  Future<td.MessageReadDate> messageReadDate(td.Message message) =>
+      send<td.MessageReadDate>(td.GetMessageReadDate(chatId: message.chatId, messageId: message.id));
+
+  /// One step of the server-driven report flow; start with empty [optionId] and [text].
+  Future<td.ReportChatResult> reportChat(int chatId, {List<int> messageIds = const [], String optionId = '', String text = ''}) =>
+      send<td.ReportChatResult>(td.ReportChat(chatId: chatId, optionId: optionId, messageIds: messageIds, text: text));
 
   Future<String> messageLink(td.Message message) async {
     final link = await send<td.MessageLink>(td.GetMessageLink(
@@ -462,6 +514,50 @@ extension ForumActions on TelegramAccount {
         offsetForumTopicId: offsetTopicId,
         limit: 50,
       ));
+
+  Future<td.ForumTopicInfo> createTopic(int chatId, String name, {int color = 0x6FB9F0}) => send<td.ForumTopicInfo>(td.CreateForumTopic(
+        chatId: chatId,
+        name: name,
+        isNameImplicit: false,
+        icon: td.ForumTopicIcon(color: color, customEmojiId: 0),
+      ));
+
+  Future<void> renameTopic(td.ForumTopicInfo topic, String name) => send<td.Ok>(td.EditForumTopic(
+        chatId: topic.chatId,
+        forumTopicId: topic.forumTopicId,
+        name: name,
+        editIconCustomEmoji: false,
+        iconCustomEmojiId: 0,
+      ));
+
+  Future<void> setTopicClosed(td.ForumTopicInfo topic, bool closed) =>
+      send<td.Ok>(td.ToggleForumTopicIsClosed(chatId: topic.chatId, forumTopicId: topic.forumTopicId, isClosed: closed));
+
+  Future<void> setTopicPinned(td.ForumTopicInfo topic, bool pinned) =>
+      send<td.Ok>(td.ToggleForumTopicIsPinned(chatId: topic.chatId, forumTopicId: topic.forumTopicId, isPinned: pinned));
+
+  Future<void> setGeneralTopicHidden(int chatId, bool hidden) =>
+      send<td.Ok>(td.ToggleGeneralForumTopicIsHidden(chatId: chatId, isHidden: hidden));
+
+  Future<void> deleteTopic(td.ForumTopicInfo topic) =>
+      send<td.Ok>(td.DeleteForumTopic(chatId: topic.chatId, forumTopicId: topic.forumTopicId));
+
+  Future<void> setTopicMuted(td.ForumTopic topic, int muteForSeconds) => send<td.Ok>(td.SetForumTopicNotificationSettings(
+        chatId: topic.info.chatId,
+        forumTopicId: topic.info.forumTopicId,
+        notificationSettings: topic.notificationSettings.copyWith(useDefaultMuteFor: false, muteFor: muteForSeconds),
+      ));
+
+  Future<void> readTopicMentionsAndReactions(td.ForumTopicInfo topic) async {
+    await send<td.Ok>(td.ReadAllForumTopicMentions(chatId: topic.chatId, forumTopicId: topic.forumTopicId));
+    await send<td.Ok>(td.ReadAllForumTopicReactions(chatId: topic.chatId, forumTopicId: topic.forumTopicId));
+  }
+
+  Future<void> unpinAllTopicMessages(td.ForumTopicInfo topic) =>
+      send<td.Ok>(td.UnpinAllForumTopicMessages(chatId: topic.chatId, forumTopicId: topic.forumTopicId));
+
+  Future<String> topicLink(td.ForumTopicInfo topic) async =>
+      (await send<td.MessageLink>(td.GetForumTopicLink(chatId: topic.chatId, forumTopicId: topic.forumTopicId))).link;
 }
 
 extension ScheduledActions on TelegramAccount {
@@ -533,6 +629,49 @@ extension ComposeActions on TelegramAccount {
   Future<List<td.Sticker>> favoriteStickers() async => (await send<td.Stickers>(const td.GetFavoriteStickers())).stickers;
 
   Future<List<td.Animation>> savedAnimations() async => (await send<td.Animations>(const td.GetSavedAnimations())).animations;
+
+  Future<void> removeSavedGif(td.Animation animation) =>
+      send<td.Ok>(td.RemoveSavedAnimation(animation: td.InputFileId(id: animation.animation.id)));
+
+  /// Installs, uninstalls or archives a sticker set.
+  Future<void> setStickerSetState(int setId, {required bool installed, bool archived = false}) =>
+      send<td.Ok>(td.ChangeStickerSet(setId: setId, isInstalled: installed, isArchived: archived));
+
+  Future<void> reorderStickerSets(List<int> setIds) =>
+      send<td.Ok>(td.ReorderInstalledStickerSets(stickerType: const td.StickerTypeRegular(), stickerSetIds: setIds));
+
+  Future<List<td.StickerSetInfo>> archivedStickerSets() async => (await send<td.StickerSets>(
+        const td.GetArchivedStickerSets(stickerType: td.StickerTypeRegular(), offsetStickerSetId: 0, limit: 100),
+      ))
+          .sets;
+
+  Future<List<td.StickerSetInfo>> trendingStickerSets() async {
+    final sets = (await send<td.TrendingStickerSets>(const td.GetTrendingStickerSets(stickerType: td.StickerTypeRegular(), offset: 0, limit: 50))).sets;
+    final unseen = [for (final set in sets) if (!set.isViewed) set.id];
+    if (unseen.isNotEmpty) await send<td.Ok>(td.ViewTrendingStickerSets(stickerSetIds: unseen));
+    return sets;
+  }
+
+  /// Installed sets matching [query] first, then public ones.
+  Future<List<td.StickerSetInfo>> searchStickerSets(String query) async {
+    final results = await Future.wait([
+      send<td.StickerSets>(td.SearchInstalledStickerSets(stickerType: const td.StickerTypeRegular(), query: query, limit: 20)),
+      send<td.StickerSets>(td.SearchStickerSets(stickerType: const td.StickerTypeRegular(), query: query)),
+    ]);
+    return [...results[0].sets, ...results[1].sets];
+  }
+
+  Future<td.StickerSet> stickerSetByName(String name) => send<td.StickerSet>(td.SearchStickerSet(name: name, ignoreCache: false));
+
+  Future<void> setFavoriteSticker(td.Sticker sticker, bool favorite) {
+    final file = td.InputFileId(id: sticker.sticker.id);
+    return send<td.Ok>(favorite ? td.AddFavoriteSticker(sticker: file) : td.RemoveFavoriteSticker(sticker: file));
+  }
+
+  Future<void> removeRecentSticker(td.Sticker sticker) =>
+      send<td.Ok>(td.RemoveRecentSticker(isAttached: false, sticker: td.InputFileId(id: sticker.sticker.id)));
+
+  Future<void> clearRecentStickers() => send<td.Ok>(const td.ClearRecentStickers(isAttached: false));
 
   Future<td.Message> sendSticker(int chatId, td.Sticker sticker, {int? replyToId}) => sendContent(
         chatId,
@@ -609,16 +748,18 @@ td.InputMessageContent photoContent(String path, {String caption = '', int width
       hasSpoiler: false,
     );
 
-td.InputMessageContent videoContent(String path, {String caption = ''}) => td.InputMessageVideo(
+/// Known size and duration let receivers lay the video out and show its length before it downloads.
+td.InputMessageContent videoContent(String path, {String caption = '', int width = 0, int height = 0, int duration = 0}) =>
+    td.InputMessageVideo(
       video: td.InputVideo(
         video: td.InputFileLocal(path: path),
         thumbnail: null,
         cover: null,
         startTimestamp: 0,
         addedStickerFileIds: const [],
-        duration: 0,
-        width: 0,
-        height: 0,
+        duration: duration,
+        width: width,
+        height: height,
         supportsStreaming: true,
       ),
       caption: formattedText(caption),
@@ -630,16 +771,16 @@ td.InputMessageContent videoContent(String path, {String caption = ''}) => td.In
 /// Albums, the downloads list and saving media.
 extension MediaActions on TelegramAccount {
   /// Sends 2..10 photos/videos as one album (Telegram groups them by media_album_id).
-  Future<void> sendAlbum(int chatId, List<td.InputMessageContent> contents, {int? replyToId}) async {
+  Future<void> sendAlbum(int chatId, List<td.InputMessageContent> contents, {int? replyToId, bool silent = false}) async {
     if (contents.length == 1) {
-      await sendContent(chatId, contents.first, replyToId: replyToId);
+      await sendContent(chatId, contents.first, replyToId: replyToId, silent: silent);
       return;
     }
     await send<td.Messages>(td.SendMessageAlbum(
       chatId: chatId,
       topicId: topicFor(chatId),
       replyTo: replyTo(replyToId),
-      options: sendOptions(),
+      options: sendOptions(silent: silent),
       inputMessageContents: contents,
     ));
   }
@@ -703,18 +844,37 @@ extension SettingsActions on TelegramAccount {
 
   Future<td.StorageStatisticsFast> storageStats() => send<td.StorageStatisticsFast>(const td.GetStorageStatisticsFast());
 
-  /// Deletes cached files; [ttl] keeps files used within that many seconds (0 = delete everything).
-  Future<void> clearCache({int ttl = 0}) => send<td.StorageStatistics>(td.OptimizeStorage(
+  /// Deletes cached files, optionally only of [fileTypes] / in [chatIds] (empty = all).
+  Future<void> clearCache({List<td.FileType> fileTypes = const [], List<int> chatIds = const []}) => send<td.StorageStatistics>(td.OptimizeStorage(
         size: 0,
-        ttl: ttl,
+        ttl: 0,
         count: 0,
         immunityDelay: 0,
-        fileTypes: const [],
-        chatIds: const [],
+        fileTypes: fileTypes,
+        chatIds: chatIds,
         excludeChatIds: const [],
         returnDeletedFileStatistics: false,
         chatLimit: 0,
       ));
+
+  /// Startup cleanup: drops media unused for [keepDays] days and the oldest media above [maxGb] GB
+  /// (0 = no limit for either). Files used in the last hour are never touched.
+  Future<void> applyCacheLimits({required int keepDays, required int maxGb}) {
+    const unlimited = 0x7FFFFFFF;
+    return send<td.StorageStatistics>(td.OptimizeStorage(
+      size: maxGb > 0 ? maxGb * (1 << 30) : unlimited * 1024,
+      ttl: keepDays > 0 ? keepDays * 86400 : unlimited,
+      count: unlimited,
+      immunityDelay: 3600,
+      fileTypes: const [],
+      chatIds: const [],
+      excludeChatIds: const [],
+      returnDeletedFileStatistics: false,
+      chatLimit: 0,
+    ));
+  }
+
+  Future<td.StorageStatistics> storageStatsByChat({int chatLimit = 100}) => send<td.StorageStatistics>(td.GetStorageStatistics(chatLimit: chatLimit));
 
   Future<td.PasswordState> passwordState() => send<td.PasswordState>(const td.GetPasswordState());
 
@@ -797,6 +957,17 @@ extension AdminActions on TelegramAccount {
 
   Future<void> setDefaultPermissions(int chatId, td.ChatPermissions permissions) =>
       send<td.Ok>(td.SetChatPermissions(chatId: chatId, permissions: permissions));
+
+  Future<void> setSignMessages(int supergroupId, {required bool sign, required bool showProfile}) =>
+      send<td.Ok>(td.ToggleSupergroupSignMessages(supergroupId: supergroupId, signMessages: sign, showMessageSender: showProfile));
+
+  Future<List<td.Chat>> similarChats(int chatId) async {
+    final ids = (await send<td.Chats>(td.GetChatSimilarChats(chatId: chatId))).chatIds;
+    return [for (final id in ids) ?chats[id]];
+  }
+
+  Future<void> similarChatOpened(int chatId, int openedChatId) =>
+      send<td.Ok>(td.OpenChatSimilarChat(chatId: chatId, openedChatId: openedChatId));
 
   Future<void> setSlowMode(int chatId, int seconds) => send<td.Ok>(td.SetChatSlowModeDelay(chatId: chatId, slowModeDelay: seconds));
 

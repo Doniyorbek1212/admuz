@@ -9,9 +9,14 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../core/config.dart';
 import '../core/tdlib/td_client.dart';
+import 'contact_changes.dart';
 import 'message_archive.dart';
 
 /// Stable key for a chat list (main, archive or a folder).
+/// Telegram's unread count minus what a ghost-mode local read already covered ([base] = the count at that read).
+@visibleForTesting
+int unreadAfterLocalRead(int unreadCount, int? base) => base == null ? unreadCount : max(0, unreadCount - base);
+
 String chatListKey(td.ChatList list) => switch (list) {
   td.ChatListMain() => 'main',
   td.ChatListArchive() => 'archive',
@@ -38,7 +43,9 @@ class ActiveChatAction {
 /// TDLib guarantees that every object referenced by an update has been sent before (updateNewChat,
 /// updateUser, updateFile...), so these maps are the single source of truth for the UI.
 class TelegramAccount {
-  TelegramAccount._(this.slot, this.client, this.databaseDirectory) : archive = MessageArchive('$databaseDirectory${Platform.pathSeparator}sado_archive.json');
+  TelegramAccount._(this.slot, this.client, this.databaseDirectory)
+      : archive = MessageArchive('$databaseDirectory${Platform.pathSeparator}sado_archive.json'),
+        contactChanges = ContactChangeLog('$databaseDirectory${Platform.pathSeparator}sado_contact_changes.json');
 
   final int slot;
   final TdClient client;
@@ -47,12 +54,68 @@ class TelegramAccount {
   /// Copies of messages others deleted and earlier versions of edited ones.
   final MessageArchive archive;
 
+  /// Profile changes of contacts (photo, phone, name, username).
+  final ContactChangeLog contactChanges;
+
   final Map<int, td.Chat> chats = {};
   final Map<int, td.User> users = {};
   final Map<int, td.BasicGroup> basicGroups = {};
   final Map<int, td.Supergroup> supergroups = {};
   final Map<int, td.File> files = {};
   final Map<String, td.OptionValue> options = {};
+
+  /// Mini Apps added to the attach menu (e.g. @wallet), as TDLib reports them.
+  List<td.AttachmentMenuBot> attachmentMenuBots = const [];
+
+  /// Ghost mode reads chats on this phone only: Telegram keeps them unread, so the sender sees nothing, while the
+  /// badge here counts just what arrived after the local read. chatId -> Telegram's unread count at that moment.
+  late final Map<int, int> _ghostReadBase = _loadGhostRead();
+
+  String get _ghostReadPath => '$databaseDirectory${Platform.pathSeparator}sado_ghost_read.json';
+
+  Map<int, int> _loadGhostRead() {
+    try {
+      final file = File(_ghostReadPath);
+      if (!file.existsSync()) return {};
+      final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      return {for (final e in json.entries) int.parse(e.key): (e.value as num).toInt()};
+    } on Object catch (error) {
+      debugPrint('ghost read state unreadable: $error');
+      return {};
+    }
+  }
+
+  void _saveGhostRead() {
+    final json = jsonEncode({for (final e in _ghostReadBase.entries) '${e.key}': e.value});
+    unawaited(File(_ghostReadPath).writeAsString(json).catchError((Object error) {
+      debugPrint('ghost read state not saved: $error');
+      return File(_ghostReadPath);
+    }));
+  }
+
+  /// Unread messages to show for [chat], after any ghost-mode local read.
+  int unreadFor(td.Chat chat) => unreadAfterLocalRead(chat.unreadCount, _ghostReadBase[chat.id]);
+
+  /// Ghost mode opened the chat: clear its badge here without telling Telegram.
+  void markReadLocally(int chatId) {
+    final chat = chats[chatId];
+    if (chat == null || chat.unreadCount == 0 || _ghostReadBase[chatId] == chat.unreadCount) return;
+    _ghostReadBase[chatId] = chat.unreadCount;
+    _saveGhostRead();
+    _markChat(chatId);
+    foldersRevision.value++;
+  }
+
+  /// A list's unread total without the messages ghost mode already read locally.
+  int unreadInList(String listKey) {
+    final total = unreadCounts[listKey] ?? 0;
+    var hidden = 0;
+    for (final MapEntry(key: chatId, value: base) in _ghostReadBase.entries) {
+      final chat = chats[chatId];
+      if (chat != null && chat.chatLists.any((l) => chatListKey(l) == listKey)) hidden += min(base, chat.unreadCount);
+    }
+    return max(0, total - hidden);
+  }
   final Map<int, Map<int, ActiveChatAction>> chatActions = {};
   final Map<int, int> onlineMemberCounts = {};
   final Map<String, bool> _listFullyLoaded = {};
@@ -87,6 +150,9 @@ class TelegramAccount {
   /// Message carrying the current bot reply keyboard of a chat (updateChatReplyMarkup).
   final Map<int, td.Message> replyMarkupMessages = {};
 
+  /// Who may notify about reactions (updateReactionNotificationSettings, sent at start).
+  td.ReactionNotificationSettings? reactionNotifications;
+
   /// Writing styles offered by Telegram's AI text composer (updateTextCompositionStyles).
   List<td.TextCompositionStyle> compositionStyles = const [];
 
@@ -101,6 +167,7 @@ class TelegramAccount {
 
   final _fileUpdates = StreamController<td.File>.broadcast(sync: true);
   final _messageEvents = StreamController<td.Update>.broadcast(sync: true);
+  final _callEvents = StreamController<td.Update>.broadcast(sync: true);
   StreamSubscription<td.TdObject>? _subscription;
   final Map<int, Timer> _actionTimers = {};
   bool _listDirty = false;
@@ -125,6 +192,7 @@ class TelegramAccount {
       .._credentials = credentials
       .._languageCode = languageCode;
     await account.archive.load();
+    await account.contactChanges.load();
     account._subscription = client.updates.listen(account._onUpdate);
     return account;
   }
@@ -154,6 +222,9 @@ class TelegramAccount {
 
   /// Message-level updates (new/edited/deleted messages, send results...) for chat history controllers.
   Stream<td.Update> get messageEvents => _messageEvents.stream;
+
+  /// updateCall and updateNewCallSignalingData, for the call service.
+  Stream<td.Update> get callEvents => _callEvents.stream;
 
   ValueNotifier<int> chatRevision(int chatId) => _chatRevisions.putIfAbsent(chatId, () => ValueNotifier(0));
 
@@ -350,6 +421,10 @@ class TelegramAccount {
       case td.UpdateOption(:final name, :final value):
         options[name] = value;
         if (name == 'my_id') _markUsers();
+      case td.UpdateReactionNotificationSettings(:final notificationSettings):
+        reactionNotifications = notificationSettings;
+      case td.UpdateAttachmentMenuBots(:final bots):
+        attachmentMenuBots = bots;
       case td.UpdateConnectionState(:final state):
         connectionState.value = state;
       case td.UpdateNewChat(:final chat):
@@ -373,6 +448,16 @@ class TelegramAccount {
         _updateChat(chatId, (c) => c.copyWith(chatLists: c.chatLists.where((l) => chatListKey(l) != key).toList()));
       case td.UpdateChatReadInbox(:final chatId, :final lastReadInboxMessageId, :final unreadCount):
         _updateChat(chatId, (c) => c.copyWith(lastReadInboxMessageId: lastReadInboxMessageId, unreadCount: unreadCount));
+        // Read for real (ghost off, or on another device): the local read shrinks or goes away.
+        final base = _ghostReadBase[chatId];
+        if (base != null && unreadCount < base) {
+          if (unreadCount == 0) {
+            _ghostReadBase.remove(chatId);
+          } else {
+            _ghostReadBase[chatId] = unreadCount;
+          }
+          _saveGhostRead();
+        }
       case td.UpdateChatReadOutbox(:final chatId, :final lastReadOutboxMessageId):
         _updateChat(chatId, (c) => c.copyWith(lastReadOutboxMessageId: lastReadOutboxMessageId));
       case td.UpdateChatUnreadMentionCount(:final chatId, :final unreadMentionCount):
@@ -409,6 +494,7 @@ class TelegramAccount {
         _onChatAction(chatId, senderKey(senderId), action);
       case td.UpdateUser(:final user):
         users[user.id] = user;
+        contactChanges.onUser(user);
         _markUsers();
         _markList();
       case td.UpdateUserStatus(:final userId, :final status):
@@ -460,6 +546,8 @@ class TelegramAccount {
         _messageEvents.add(object);
       case td.UpdateMessageSendFailed() || td.UpdateMessageInteractionInfo() || td.UpdateMessageIsPinned() || td.UpdateMessageSendAcknowledged():
         _messageEvents.add(object as td.Update);
+      case td.UpdateCall() || td.UpdateNewCallSignalingData():
+        _callEvents.add(object as td.Update);
       default:
         break;
     }
@@ -506,7 +594,7 @@ class TelegramAccount {
             apiId: credentials.apiId,
             apiHash: credentials.apiHash,
             systemLanguageCode: _languageCode,
-            deviceModel: _deviceModel(),
+            deviceModel: await _deviceModel(),
             systemVersion: Platform.operatingSystemVersion,
             applicationVersion: AppConfig.appVersion,
           ),
@@ -532,9 +620,24 @@ class TelegramAccount {
     return key;
   }
 
-  static String _deviceModel() {
-    if (Platform.isAndroid) return 'Android';
+  /// Shown to the user in Settings → Devices on every device, e.g. "Redmi Note 12 Pro" instead of "Android".
+  static Future<String> _deviceModel() async {
+    if (Platform.isAndroid) {
+      try {
+        Future<String> prop(String name) async => ((await Process.run('getprop', [name])).stdout as String).trim();
+        // Xiaomi and others keep the marketing name ("Redmi Note 12 Pro") apart from the model code ("2209116AG").
+        final marketName = await prop('ro.product.marketname');
+        if (marketName.isNotEmpty) return marketName.replaceAll(RegExp(r'\s+'), ' ');
+        final brand = await prop('ro.product.brand');
+        final model = await prop('ro.product.model');
+        if (model.isNotEmpty) return model.toLowerCase().startsWith(brand.toLowerCase()) ? model : '$brand $model'.trim();
+      } on ProcessException {
+        // Fall through to the generic name.
+      }
+      return 'Android';
+    }
     if (Platform.isIOS) return 'iPhone';
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) return Platform.localHostname;
     return Platform.operatingSystem;
   }
 
@@ -648,5 +751,6 @@ class TelegramAccount {
     }
     await _fileUpdates.close();
     await _messageEvents.close();
+    await _callEvents.close();
   }
 }

@@ -11,6 +11,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import 'message_content.dart';
+import 'sticker_sets.dart';
 
 // ------------------------------------------------------------------ mentions
 
@@ -350,12 +351,20 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
+              InkWell(
+                onTap: () async {
+                  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const StickerSetsScreen()));
+                  _setStickers.clear();
+                  await _load();
+                },
+                child: const SizedBox(width: 44, child: Icon(Icons.tune_rounded)),
+              ),
               tab(-1, const Icon(Icons.access_time_rounded)),
               if (_favorite.isNotEmpty) tab(-2, const Icon(Icons.star_rounded)),
               for (final set in _sets)
                 tab(
                   set.id,
-                  set.covers.isNotEmpty ? _StickerThumb(sticker: set.covers.first) : Center(child: Text(set.title.characters.first)),
+                  set.covers.isNotEmpty ? StickerThumb(sticker: set.covers.first) : Center(child: Text(set.title.characters.first)),
                 ),
             ],
           ),
@@ -371,18 +380,60 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
                   itemBuilder: (context, index) => InkWell(
                     borderRadius: BorderRadius.circular(8),
                     onTap: () => widget.onSticker(stickers[index]),
-                    child: _StickerThumb(sticker: stickers[index]),
+                    onLongPress: () => _stickerMenu(stickers[index]),
+                    child: StickerThumb(sticker: stickers[index]),
                   ),
                 ),
         ),
       ],
     );
   }
+
+  Future<void> _stickerMenu(td.Sticker sticker) async {
+    final s = context.s;
+    final favorite = _favorite.any((f) => f.sticker.id == sticker.sticker.id);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox.square(dimension: 120, child: StickerThumb(sticker: sticker)),
+            ListTile(
+              leading: Icon(favorite ? Icons.star_border_rounded : Icons.star_rounded),
+              title: Text(s.t(favorite ? 'sticker_unfavorite' : 'sticker_favorite')),
+              onTap: () => Navigator.pop(context, 'favorite'),
+            ),
+            if (sticker.setId != 0)
+              ListTile(leading: const Icon(Icons.collections_rounded), title: Text(s.t('sticker_view_set')), onTap: () => Navigator.pop(context, 'set')),
+            if (_selected == -1)
+              ListTile(leading: const Icon(Icons.history_toggle_off_rounded), title: Text(s.t('sticker_remove_recent')), onTap: () => Navigator.pop(context, 'recent')),
+            if (_selected == -1 && _recent.isNotEmpty)
+              ListTile(leading: const Icon(Icons.delete_sweep_rounded), title: Text(s.t('sticker_clear_recent')), onTap: () => Navigator.pop(context, 'clear')),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    final account = ref.read(accountProvider);
+    switch (action) {
+      case 'favorite':
+        await guard(context, () => account.setFavoriteSticker(sticker, !favorite));
+      case 'set':
+        await showStickerSetSheet(context, sticker.setId);
+      case 'recent':
+        await guard(context, () => account.removeRecentSticker(sticker));
+      case 'clear':
+        await guard(context, account.clearRecentStickers);
+    }
+    if (mounted) await _load();
+  }
 }
 
 /// Static preview of a sticker (thumbnail for animated ones keeps the grid light).
-class _StickerThumb extends StatelessWidget {
-  const _StickerThumb({required this.sticker});
+class StickerThumb extends StatelessWidget {
+  const StickerThumb({super.key, required this.sticker});
 
   final td.Sticker sticker;
 
@@ -509,6 +560,12 @@ class _GifsTabState extends ConsumerState<_GifsTab> with AutomaticKeepAliveClien
                         final thumb = animation.thumbnail;
                         return InkWell(
                           onTap: () => widget.onAnimation(animation),
+                          onLongPress: () async {
+                            final ok = await confirm(context, title: context.t('gif_remove_saved'), destructive: true);
+                            if (!ok || !context.mounted) return;
+                            await guard(context, () => ref.read(accountProvider).removeSavedGif(animation));
+                            await _loadSaved();
+                          },
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(6),
                             child: thumb != null && thumb.format is! td.ThumbnailFormatMpeg4

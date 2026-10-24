@@ -110,6 +110,8 @@ class MessageBubble extends ConsumerWidget {
     final hasText = text != null && text.text.isNotEmpty;
     // Time sits at the end of the last text line when it fits (Telegram layout).
     final inlineFooter = hasText && translation == null;
+    // Photos and videos without a caption carry the time on the media itself, edge to edge (Telegram/aka layout).
+    final footerOnMedia = isMediaBubble && !hasText && translation == null;
     final textColor = outgoing ? colors.outgoingText : colors.incomingText;
     final radius = Radius.circular(settings.bubbleRadius);
     final small = Radius.circular(settings.bubbleRadius / 3.5);
@@ -141,7 +143,17 @@ class MessageBubble extends ConsumerWidget {
             borderRadius: isMediaBubble && senderLabel == null && message.replyTo == null && message.forwardInfo == null
                 ? BorderRadius.vertical(top: radius, bottom: hasText ? Radius.zero : radius)
                 : BorderRadius.zero,
-            child: album != null ? AlbumGrid(messages: album, maxWidth: maxWidth) : MessageMedia(message: message, maxWidth: maxWidth),
+            child: Stack(
+              children: [
+                album != null ? AlbumGrid(messages: album, maxWidth: maxWidth) : MessageMedia(message: message, maxWidth: maxWidth),
+                if (footerOnMedia)
+                  Positioned(
+                    right: 6,
+                    bottom: 6,
+                    child: _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived, onMedia: true),
+                  ),
+              ],
+            ),
           ),
         ),
       if (hasText && inlineFooter)
@@ -177,7 +189,7 @@ class MessageBubble extends ConsumerWidget {
           decoration: BoxDecoration(border: Border(left: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2))),
           child: Text(translation, style: TextStyle(color: textColor, fontSize: 15 * settings.textScale, fontStyle: FontStyle.italic)),
         ),
-      if (!inlineFooter)
+      if (!inlineFooter && !footerOnMedia)
         Align(
           alignment: Alignment.bottomRight,
           child: Padding(
@@ -300,7 +312,7 @@ double _footerWidth(td.Message message, {required bool outgoing, required bool i
   return width;
 }
 
-class _Footer extends StatelessWidget {
+class _Footer extends ConsumerWidget {
   const _Footer({
     required this.message,
     required this.chat,
@@ -318,9 +330,14 @@ class _Footer extends StatelessWidget {
   final bool onMedia;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final s = context.s;
     final color = onMedia ? Colors.white : context.metaColor(outgoing);
+    // Saved Messages has no reader: Telegram shows its messages as read.
+    final savedMessages = switch (chat.type) {
+      td.ChatTypePrivate(:final userId) => userId == ref.read(accountProvider).myId,
+      _ => false,
+    };
     final views = message.interactionInfo?.viewCount ?? 0;
     final style = TextStyle(fontSize: 11.5, color: color);
     final row = Row(
@@ -342,7 +359,7 @@ class _Footer extends StatelessWidget {
         Text(formatTime(message.date, s.locale), style: style),
         if (message.isOutgoing && !isChannel) ...[
           const SizedBox(width: 3),
-          _statusIcon(color),
+          _statusIcon(color, alwaysRead: savedMessages),
         ],
       ],
     );
@@ -355,11 +372,11 @@ class _Footer extends StatelessWidget {
     );
   }
 
-  Widget _statusIcon(Color color) {
+  Widget _statusIcon(Color color, {required bool alwaysRead}) {
     final state = message.sendingState;
     if (state is td.MessageSendingStateFailed) return const Icon(Icons.error_rounded, size: 14, color: Colors.redAccent);
     if (state is td.MessageSendingStatePending) return Icon(Icons.schedule_rounded, size: 13, color: color);
-    final read = message.id <= chat.lastReadOutboxMessageId;
+    final read = alwaysRead || message.id <= chat.lastReadOutboxMessageId;
     return Icon(read ? Icons.done_all_rounded : Icons.done_rounded, size: 15, color: color);
   }
 }

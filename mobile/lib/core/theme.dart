@@ -82,7 +82,16 @@ extension ChatColorsX on BuildContext {
   Color get onAppBarMuted => onAppBar.withValues(alpha: onAppBar == Colors.white ? 0.7 : 0.55);
 }
 
-ThemeData buildTheme(Brightness brightness, Color accent) {
+/// Page change without animation (power saving / smooth transitions off).
+class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _InstantPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) =>
+      child;
+}
+
+ThemeData buildTheme(Brightness brightness, Color accent, {String fontFamily = '', bool smoothTransitions = true}) {
   final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness);
   final isDark = brightness == Brightness.dark;
   final surface = isDark ? const Color(0xFF151A21) : Colors.white;
@@ -104,7 +113,8 @@ ThemeData buildTheme(Brightness brightness, Color accent) {
   );
   // Base typography so custom text styles below keep the platform font family.
   final typography = Typography.material2021(platform: defaultTargetPlatform, colorScheme: scheme);
-  final textTheme = (isDark ? typography.white : typography.black);
+  // A chosen system font goes into the base text theme, so every style derived below carries it.
+  final textTheme = (isDark ? typography.white : typography.black).apply(fontFamily: fontFamily.isEmpty ? null : fontFamily);
   // Desktop follows Telegram Desktop: light bars with a hairline instead of accent-filled ones.
   final lightBars = isDesktop && !isDark;
   final barForeground = lightBars ? const Color(0xFF0E1621) : Colors.white;
@@ -233,9 +243,17 @@ ThemeData buildTheme(Brightness brightness, Color accent) {
     tooltipTheme: TooltipThemeData(
       decoration: BoxDecoration(color: isDark ? const Color(0xFF2A3340) : const Color(0xE6262D36), borderRadius: BorderRadius.circular(8)),
     ),
-    pageTransitionsTheme: const PageTransitionsTheme(builders: {
-      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-      TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-    }),
+    pageTransitionsTheme: smoothTransitions
+        ? const PageTransitionsTheme(builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          })
+        : const PageTransitionsTheme(builders: {
+            TargetPlatform.android: _InstantPageTransitionsBuilder(),
+            TargetPlatform.iOS: _InstantPageTransitionsBuilder(),
+            TargetPlatform.windows: _InstantPageTransitionsBuilder(),
+            TargetPlatform.linux: _InstantPageTransitionsBuilder(),
+            TargetPlatform.macOS: _InstantPageTransitionsBuilder(),
+          }),
   );
 }

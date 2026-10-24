@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -13,7 +14,11 @@ import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../profile/chat_info_screen.dart';
+import '../settings/privacy_screen.dart';
 import 'chat_screen.dart';
+
+/// Icon colors Telegram allows for new topics.
+const _topicColors = [0x6FB9F0, 0xFFD67E, 0xCB86DB, 0x8EEE98, 0xFF93B2, 0xFB6F5F];
 
 /// Topic list of a forum supergroup.
 class TopicsScreen extends ConsumerStatefulWidget {
@@ -102,6 +107,86 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     ));
   }
 
+  Future<void> _create() async {
+    final s = context.s;
+    final name = await promptText(context, title: s.t('topic_new'), label: s.t('topic_name'));
+    if (name == null || name.isEmpty || !mounted) return;
+    final info = await guard(context, () => _account.createTopic(widget.chatId, name, color: _topicColors[_topics.length % _topicColors.length]));
+    if (info == null || !mounted) return;
+    await _reload();
+    if (!mounted) return;
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChatScreen(chatId: widget.chatId, topicId: info.forumTopicId, topicName: info.name),
+    ));
+  }
+
+  /// Long-press actions; the server rejects the ones the user has no right to.
+  Future<void> _showTopicMenu(td.ForumTopic topic) async {
+    final s = context.s;
+    final info = topic.info;
+    final muted = topic.notificationSettings.muteFor > 0;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (icon, key, value) in <(IconData, String, String)>[
+                if (topic.unreadMentionCount > 0 || topic.unreadReactionCount > 0) (Icons.alternate_email_rounded, 'topic_read_mentions', 'read'),
+                (topic.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded, topic.isPinned ? 'unpin' : 'pin', 'pin'),
+                (muted ? Icons.notifications_rounded : Icons.notifications_off_rounded, muted ? 'unmute' : 'mute', 'mute'),
+                (Icons.link_rounded, 'copy_link', 'link'),
+                if (!info.isGeneral) (Icons.edit_rounded, 'topic_rename', 'rename'),
+                if (info.isGeneral)
+                  (info.isHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded, info.isHidden ? 'topic_show_general' : 'topic_hide_general', 'hide')
+                else
+                  (info.isClosed ? Icons.lock_open_rounded : Icons.lock_rounded, info.isClosed ? 'topic_reopen' : 'topic_close', 'close'),
+                (Icons.push_pin_outlined, 'unpin_all', 'unpin_all'),
+                if (!info.isGeneral) (Icons.delete_rounded, 'topic_delete', 'delete'),
+              ])
+                ListTile(
+                  leading: Icon(icon, color: value == 'delete' ? Theme.of(context).colorScheme.error : null),
+                  title: Text(s.t(key), style: value == 'delete' ? TextStyle(color: Theme.of(context).colorScheme.error) : null),
+                  onTap: () => Navigator.pop(context, value),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'read':
+        await guard(context, () => _account.readTopicMentionsAndReactions(info));
+      case 'pin':
+        await guard(context, () => _account.setTopicPinned(info, !topic.isPinned));
+      case 'mute':
+        // Same "forever" value Telegram uses for muted chats.
+        await guard(context, () => _account.setTopicMuted(topic, muted ? 0 : 0x7FFFFFFF));
+      case 'link':
+        final link = await guard(context, () => _account.topicLink(info));
+        if (link != null) {
+          await Clipboard.setData(ClipboardData(text: link));
+          if (mounted) showToast(context, s.t('link_copied'));
+        }
+      case 'rename':
+        final name = await promptText(context, title: s.t('topic_rename'), label: s.t('topic_name'), initial: info.name);
+        if (name != null && name.isNotEmpty && mounted) await guard(context, () => _account.renameTopic(info, name));
+      case 'hide':
+        await guard(context, () => _account.setGeneralTopicHidden(widget.chatId, !info.isHidden));
+      case 'close':
+        await guard(context, () => _account.setTopicClosed(info, !info.isClosed));
+      case 'unpin_all':
+        await guard(context, () => _account.unpinAllTopicMessages(info));
+      case 'delete':
+        final ok = await confirm(context, title: s.t('topic_delete'), message: s.t('topic_delete_confirm'), destructive: true);
+        if (ok && mounted) await guard(context, () => _account.deleteTopic(info));
+    }
+    if (mounted) await _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = ref.watch(chatProvider(widget.chatId));
@@ -151,19 +236,29 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
                     child: ListView.separated(
                       itemCount: visible.length,
                       separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
-                      itemBuilder: (context, index) => _TopicTile(topic: visible[index], onTap: () => _open(visible[index])),
+                      itemBuilder: (context, index) => _TopicTile(
+                        topic: visible[index],
+                        onTap: () => _open(visible[index]),
+                        onLongPress: () => _showTopicMenu(visible[index]),
+                      ),
                     ),
                   ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        tooltip: s.t('topic_new'),
+        onPressed: _create,
+        child: const Icon(Icons.add_comment_rounded),
       ),
     );
   }
 }
 
 class _TopicTile extends ConsumerWidget {
-  const _TopicTile({required this.topic, required this.onTap});
+  const _TopicTile({required this.topic, required this.onTap, required this.onLongPress});
 
   final td.ForumTopic topic;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -176,6 +271,7 @@ class _TopicTile extends ConsumerWidget {
     final muted = topic.notificationSettings.muteFor > 0;
     return ListTile(
       onTap: onTap,
+      onLongPress: onLongPress,
       leading: CircleAvatar(
         radius: 24,
         backgroundColor: color.withValues(alpha: 0.18),

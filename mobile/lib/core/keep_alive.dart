@@ -17,4 +17,15 @@ abstract final class KeepAliveService {
       debugPrint('keep-alive toggle failed: $error');
     }
   }
+
+  /// Battery charge in percent (Android only; null elsewhere or when unknown). Served by the same channel.
+  static Future<int?> batteryLevel() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<int>('batteryLevel');
+    } on PlatformException catch (error) {
+      debugPrint('battery level unavailable: $error');
+      return null;
+    }
+  }
 }

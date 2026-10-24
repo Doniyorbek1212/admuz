@@ -6,13 +6,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/media_saver.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
+import '../../widgets/settings_group.dart';
 import '../chat/message_content.dart';
+import 'storage_usage_screen.dart';
 
 // ------------------------------------------------------------------ proxy
 
@@ -218,7 +221,7 @@ class StorageScreen extends ConsumerStatefulWidget {
 
 class _StorageScreenState extends ConsumerState<StorageScreen> {
   td.StorageStatisticsFast? _stats;
-  bool _busy = false;
+  td.NetworkStatistics? _network;
 
   @override
   void initState() {
@@ -227,83 +230,193 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
   }
 
   Future<void> _load() async {
+    final account = ref.read(accountProvider);
     try {
-      final stats = await ref.read(accountProvider).storageStats();
-      if (mounted) setState(() => _stats = stats);
+      final stats = await account.storageStats();
+      final network = await account.send<td.NetworkStatistics>(const td.GetNetworkStatistics(onlyCurrent: false));
+      if (mounted) {
+        setState(() {
+          _stats = stats;
+          _network = network;
+        });
+      }
     } on TdException catch (error) {
       if (mounted) showToast(context, error.message);
     }
   }
 
-  Future<void> _clear() async {
-    final s = context.s;
-    final ok = await confirm(context, title: s.t('clear_cache'), message: s.t('clear_cache_confirm'), destructive: true);
-    if (!ok || !mounted) return;
-    setState(() => _busy = true);
-    await guard(context, () => ref.read(accountProvider).clearCache());
-    if (!mounted) return;
-    setState(() => _busy = false);
+  Future<void> _open(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
     await _load();
-    if (mounted) showToast(context, s.t('cache_cleared'));
+  }
+
+  Future<void> _setGallery(String kind, bool on) async {
+    // Ask for gallery access when turning it on, while the user is looking.
+    if (on && !await ensureGalleryAccess()) {
+      if (mounted) showToast(context, context.t('gallery_denied'));
+      return;
+    }
+    ref.read(settingsProvider.notifier).setSaveToGallery(kind, on);
   }
 
   @override
   Widget build(BuildContext context) {
     final s = context.s;
     final stats = _stats;
+    final network = _network;
     final settings = ref.watch(settingsProvider);
     final notifier = ref.read(settingsProvider.notifier);
+    final primary = Theme.of(context).colorScheme.primary;
+    Widget value(String? text) => Text(text ?? '…', style: TextStyle(color: primary, fontSize: 15.5));
     return Scaffold(
+      backgroundColor: groupedBackground(context),
       appBar: AppBar(title: Text(s.t('data_storage'))),
       body: ListView(
+        padding: const EdgeInsets.only(bottom: 16),
         children: [
-          SectionHeader(s.t('storage_usage')),
-          if (stats == null)
-            const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
-          else ...[
-            ListTile(leading: const Icon(Icons.perm_media_rounded), title: Text(s.t('storage_media')), trailing: Text('${formatFileSize(stats.filesSize)} · ${stats.fileCount}')),
-            ListTile(leading: const Icon(Icons.storage_rounded), title: Text(s.t('storage_database')), trailing: Text(formatFileSize(stats.databaseSize))),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: FilledButton.icon(
-                onPressed: _busy || stats.filesSize == 0 ? null : _clear,
-                icon: _busy ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cleaning_services_rounded),
-                label: Text(s.t('clear_cache')),
+          SettingsGroup(title: s.t('storage_and_network'), children: [
+            ListTile(
+              leading: const TileIcon(Icons.donut_large_rounded, Color(0xFF3D8AD8)),
+              title: Text(s.t('storage_usage')),
+              trailing: value(stats == null ? null : formatFileSize(stats.filesSize + stats.databaseSize)),
+              onTap: () => _open(const StorageUsageScreen()),
+            ),
+            ListTile(
+              leading: const TileIcon(Icons.bar_chart_rounded, Color(0xFF2EAD5B)),
+              title: Text(s.t('network_usage')),
+              trailing: value(network == null ? null : formatFileSize(networkTotal(network))),
+              onTap: () => _open(const NetworkUsageScreen()),
+            ),
+          ]),
+          SettingsGroup(title: s.t('auto_download'), children: [
+            SwitchListTile(
+              title: Text(s.t('auto_download_photos')),
+              value: settings.autoDownloadPhotos,
+              onChanged: notifier.setAutoDownloadPhotos,
+            ),
+          ]),
+          SettingsGroup(title: s.t('save_to_gallery'), children: [
+            for (final kind in const ['private', 'groups', 'channels'])
+              SwitchListTile(
+                title: Text(s.t('notif_$kind')),
+                subtitle: Text(s.t(settings.saveToGallery.contains(kind) ? 'state_on' : 'state_off')),
+                value: settings.saveToGallery.contains(kind),
+                onChanged: (on) => _setGallery(kind, on),
               ),
+          ]),
+          GroupHint(s.t('save_to_gallery_hint')),
+          SettingsGroup(children: [
+            ListTile(
+              title: Text(s.t('proxy_settings')),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProxyScreen())),
             ),
-          ],
-          const Divider(),
-          SectionHeader(s.t('keep_media')),
-          RadioGroup<int>(
-            groupValue: settings.keepMediaDays,
-            onChanged: (v) {
-              if (v != null) notifier.setKeepMediaDays(v);
-            },
-            child: Column(
-              children: [
-                for (final days in const [3, 7, 30, 0])
-                  RadioListTile<int>(value: days, title: Text(days == 0 ? s.t('keep_forever') : s.t('keep_days', {'n': '$days'}))),
-              ],
+            ListTile(
+              title: Text(s.t('delete_drafts')),
+              onTap: () async {
+                final ok = await confirm(context, title: s.t('delete_drafts'), message: s.t('delete_drafts_confirm'), destructive: true);
+                if (!ok || !context.mounted) return;
+                await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ClearAllDraftMessages(excludeSecretChats: false)));
+                if (context.mounted) showToast(context, s.t('done'));
+              },
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Text(s.t('keep_media_hint'), style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13)),
-          ),
-          const Divider(),
-          SectionHeader(s.t('auto_download')),
-          SwitchListTile(
-            title: Text(s.t('auto_download_photos')),
-            value: settings.autoDownloadPhotos,
-            onChanged: notifier.setAutoDownloadPhotos,
-          ),
-          SwitchListTile(
-            title: Text(s.t('autoplay_gifs')),
-            value: settings.autoplayGifs,
-            onChanged: notifier.setAutoplayGifs,
-          ),
+          ]),
         ],
       ),
+    );
+  }
+}
+
+/// Bytes sent plus received over all networks.
+int networkTotal(td.NetworkStatistics stats) => stats.entries.fold(0, (sum, entry) => sum + switch (entry) {
+      td.NetworkStatisticsEntryFile(:final sentBytes, :final receivedBytes) ||
+      td.NetworkStatisticsEntryCall(:final sentBytes, :final receivedBytes) =>
+        sentBytes + receivedBytes,
+      _ => 0,
+    });
+
+/// Traffic per network kind (mobile, Wi-Fi, roaming, other) since the counters were last reset.
+class NetworkUsageScreen extends ConsumerStatefulWidget {
+  const NetworkUsageScreen({super.key});
+
+  @override
+  ConsumerState<NetworkUsageScreen> createState() => _NetworkUsageScreenState();
+}
+
+class _NetworkUsageScreenState extends ConsumerState<NetworkUsageScreen> {
+  td.NetworkStatistics? _stats;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final stats = await guard(context, () => ref.read(accountProvider).send<td.NetworkStatistics>(const td.GetNetworkStatistics(onlyCurrent: false)));
+    if (mounted && stats != null) setState(() => _stats = stats);
+  }
+
+  static String _networkKey(td.NetworkType type) => switch (type) {
+        td.NetworkTypeMobile() => 'network_mobile',
+        td.NetworkTypeWiFi() => 'network_wifi',
+        td.NetworkTypeMobileRoaming() => 'network_roaming',
+        _ => 'network_other',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final stats = _stats;
+    final primary = Theme.of(context).colorScheme.primary;
+    final sent = <String, int>{};
+    final received = <String, int>{};
+    for (final entry in stats?.entries ?? const <td.NetworkStatisticsEntry>[]) {
+      final (type, out, inc) = switch (entry) {
+        td.NetworkStatisticsEntryFile(:final networkType, :final sentBytes, :final receivedBytes) => (networkType, sentBytes, receivedBytes),
+        td.NetworkStatisticsEntryCall(:final networkType, :final sentBytes, :final receivedBytes) => (networkType, sentBytes, receivedBytes),
+        _ => (null, 0, 0),
+      };
+      if (type == null) continue;
+      final key = _networkKey(type);
+      sent[key] = (sent[key] ?? 0) + out;
+      received[key] = (received[key] ?? 0) + inc;
+    }
+    return Scaffold(
+      backgroundColor: groupedBackground(context),
+      appBar: AppBar(title: Text(s.t('network_usage'))),
+      body: stats == null
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.only(bottom: 16),
+              children: [
+                for (final key in const ['network_mobile', 'network_wifi', 'network_roaming', 'network_other'])
+                  if ((sent[key] ?? 0) + (received[key] ?? 0) > 0)
+                    SettingsGroup(title: s.t(key), children: [
+                      ListTile(
+                        leading: const Icon(Icons.arrow_upward_rounded),
+                        title: Text(s.t('network_sent')),
+                        trailing: Text(formatFileSize(sent[key] ?? 0), style: TextStyle(color: primary)),
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.arrow_downward_rounded),
+                        title: Text(s.t('network_received')),
+                        trailing: Text(formatFileSize(received[key] ?? 0), style: TextStyle(color: primary)),
+                      ),
+                    ]),
+                GroupHint(s.t('network_since', {'date': formatChatTime(stats.sinceDate, s.locale)})),
+                SettingsGroup(children: [
+                  ListTile(
+                    title: Text(s.t('network_reset'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    onTap: () async {
+                      final ok = await confirm(context, title: s.t('network_reset'), destructive: true);
+                      if (!ok || !context.mounted) return;
+                      await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ResetNetworkStatistics()));
+                      await _load();
+                    },
+                  ),
+                ]),
+              ],
+            ),
     );
   }
 }

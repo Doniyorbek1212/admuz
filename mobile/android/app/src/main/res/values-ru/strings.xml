@@ -3,4 +3,9 @@
     <string name="keepalive_channel">Фоновое подключение</string>
     <string name="keepalive_title">UZARO подключён</string>
     <string name="keepalive_text">Сообщения приходят, даже когда приложение закрыто</string>
+    <string name="music_channel">Музыка</string>
+    <string name="music_play">Воспроизвести</string>
+    <string name="music_pause">Пауза</string>
+    <string name="music_next">Следующий</string>
+    <string name="music_previous">Предыдущий</string>
 </resources>

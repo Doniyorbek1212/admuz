@@ -81,6 +81,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           minDate: 0,
           maxDate: 0,
         ));
+        // #hashtag / $cashtag: public channel posts too, as Telegram's search does.
+        if (RegExp(r'^[#$]\w+$').hasMatch(query)) {
+          final public = await account.send<td.FoundMessages>(td.SearchPublicMessagesByTag(tag: query, offset: '', limit: 50));
+          final seen = {for (final m in found.messages) (m.chatId, m.id)};
+          return [...found.messages, ...public.messages.where((m) => !seen.contains((m.chatId, m.id)))];
+        }
         return found.messages;
       } on TdException {
         return const [];
@@ -172,22 +178,72 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      onTap: () => openChat(context, chatId),
+      onTap: () {
+        // Remembered so it shows under "Recently found" next time, like Telegram.
+        account.send<td.Ok>(td.AddRecentlyFoundChat(chatId: chatId)).ignore();
+        openChat(context, chatId);
+      },
     );
   }
 }
 
-/// Top chats shown before typing (Telegram shows recent/frequent chats).
-class _RecentChats extends ConsumerWidget {
+/// Before typing: frequent contacts, recently found chats and recommended channels, as in Telegram.
+class _RecentChats extends ConsumerStatefulWidget {
   const _RecentChats({required this.onTap});
 
   final ValueChanged<int> onTap;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final chats = ref.watch(chatListProvider('main')).take(20).toList();
+  ConsumerState<_RecentChats> createState() => _RecentChatsState();
+}
+
+class _RecentChatsState extends ConsumerState<_RecentChats> {
+  List<int> _top = const [];
+  List<int> _recent = const [];
+  List<int> _recommended = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final account = ref.read(accountProvider);
+    Future<List<int>> ids(td.TdFunction request) async {
+      try {
+        return (await account.send<td.Chats>(request)).chatIds;
+      } on TdException {
+        return const []; // Top chats are off when the user disabled them in Telegram.
+      }
+    }
+
+    final results = await Future.wait([
+      ids(const td.GetTopChats(category: td.TopChatCategoryUsers(), limit: 20)),
+      ids(const td.SearchRecentlyFoundChats(query: '', typeFilter: null, limit: 50)),
+      ids(const td.GetRecommendedChats()),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _top = results[0];
+      _recent = results[1];
+      _recommended = results[2];
+    });
+  }
+
+  Widget _row(td.Chat chat, String subtitle, {Widget? trailing}) => ListTile(
+        leading: ChatAvatar(chatId: chat.id, size: 44),
+        title: Text(chatTitle(chat, ref.read(accountProvider), context.s), maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: trailing,
+        onTap: () => widget.onTap(chat.id),
+      );
+
+  @override
+  Widget build(BuildContext context) {
     final account = ref.watch(accountProvider);
     final s = context.s;
+    final top = _top.isNotEmpty ? _top : ref.watch(chatListProvider('main')).take(20).map((c) => c.id).toList();
     return ListView(
       children: [
         SectionHeader(s.t('recent')),
@@ -197,25 +253,64 @@ class _RecentChats extends ConsumerWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             children: [
-              for (final chat in chats)
-                InkWell(
-                  onTap: () => onTap(chat.id),
-                  child: SizedBox(
-                    width: 76,
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 6),
-                        ChatAvatar(chatId: chat.id, size: 54),
-                        const SizedBox(height: 4),
-                        Text(chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
-                      ],
+              for (final id in top)
+                if (account.chats[id] case final chat?)
+                  InkWell(
+                    onTap: () => widget.onTap(id),
+                    onLongPress: _top.isEmpty
+                        ? null
+                        : () async {
+                            final ok = await confirm(context, title: s.t('top_chat_remove'), message: chatTitle(chat, account, s));
+                            if (!ok || !context.mounted) return;
+                            await guard(context, () => account.send<td.Ok>(td.RemoveTopChat(category: const td.TopChatCategoryUsers(), chatId: id)));
+                            await _load();
+                          },
+                    child: SizedBox(
+                      width: 76,
+                      child: Column(
+                        children: [
+                          const SizedBox(height: 6),
+                          ChatAvatar(chatId: id, size: 54),
+                          const SizedBox(height: 4),
+                          Text(chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                        ],
+                      ),
                     ),
                   ),
-                ),
             ],
           ),
         ),
+        if (_recent.isNotEmpty)
+          Row(
+            children: [
+              Expanded(child: SectionHeader(s.t('recently_found'))),
+              TextButton(
+                onPressed: () async {
+                  await guard(context, () => account.send<td.Ok>(const td.ClearRecentlyFoundChats()));
+                  await _load();
+                },
+                child: Text(s.t('clear')),
+              ),
+            ],
+          ),
+        for (final id in _recent)
+          if (account.chats[id] case final chat?)
+            _row(
+              chat,
+              chatSubtitle(chat, account, s),
+              trailing: IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18),
+                onPressed: () async {
+                  await guard(context, () => account.send<td.Ok>(td.RemoveRecentlyFoundChat(chatId: id)));
+                  await _load();
+                },
+              ),
+            ),
+        if (_recommended.isNotEmpty) SectionHeader(s.t('recommended_channels')),
+        for (final id in _recommended)
+          if (account.chats[id] case final chat?) _row(chat, chatSubtitle(chat, account, s)),
       ],
     );
   }
 }
+

@@ -210,9 +210,12 @@ class ChatHistory extends ChangeNotifier {
 
   int indexOf(int messageId) => messages.indexWhere((m) => m.id == messageId);
 
-  /// Marks messages as read on screen. Skipped entirely in ghost mode.
+  /// Marks messages as read on screen. Ghost mode only clears the badge on this phone; Telegram is not told.
   void markViewed(Iterable<int> messageIds) {
-    if (ghostMode) return;
+    if (ghostMode) {
+      account.markReadLocally(chatId);
+      return;
+    }
     final fresh = messageIds.where((id) => id > 0 && _viewed.add(id)).toList();
     if (fresh.isEmpty) return;
     unawaited(account

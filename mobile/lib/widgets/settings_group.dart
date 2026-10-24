@@ -8,6 +8,19 @@ Color groupedBackground(BuildContext context) =>
 Color groupCardColor(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1A212A) : Colors.white;
 
+/// Grey explanation under a [SettingsGroup], as in Telegram settings.
+class GroupHint extends StatelessWidget {
+  const GroupHint(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(28, 2, 28, 10),
+        child: Text(text, style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13.5, height: 1.35)),
+      );
+}
+
 /// Rounded card holding a run of related rows, with an optional accent title.
 class SettingsGroup extends StatelessWidget {
   const SettingsGroup({super.key, this.title, required this.children});

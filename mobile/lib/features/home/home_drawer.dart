@@ -14,6 +14,7 @@ import '../../widgets/settings_group.dart';
 import '../admin/admin_panel_screen.dart';
 import '../business/business_screen.dart';
 import '../chat/marked_messages_screen.dart';
+import '../calls/calls_screen.dart';
 import '../contacts/contacts_screen.dart';
 import '../settings/downloads_screen.dart';
 import '../settings/settings_screen.dart';
@@ -27,6 +28,17 @@ class HomeDrawer extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<HomeDrawer> createState() => _HomeDrawerState();
+}
+
+/// Hidden chats sit behind the passcode when one is set; true when the user may open them.
+Future<bool> unlockHiddenChats(BuildContext context, WidgetRef ref) async {
+  if (!ref.read(appLockProvider).enabled) return true;
+  final s = context.s;
+  final pin = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_enter')));
+  if (pin == null || !context.mounted) return false;
+  if (await ref.read(appLockProvider.notifier).verify(pin)) return true;
+  if (context.mounted) showToast(context, s.t('passcode_wrong'));
+  return false;
 }
 
 class _HomeDrawerState extends ConsumerState<HomeDrawer> {
@@ -52,17 +64,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
   }
 
   Future<void> _openHidden() async {
-    final s = context.s;
-    // Hidden chats sit behind the passcode when one is set.
-    if (ref.read(appLockProvider).enabled) {
-      final pin = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_enter')));
-      if (pin == null || !mounted) return;
-      if (!await ref.read(appLockProvider.notifier).verify(pin)) {
-        if (mounted) showToast(context, s.t('passcode_wrong'));
-        return;
-      }
-    }
-    _push(const HiddenChatsScreen());
+    if (await unlockHiddenChats(context, ref) && mounted) _push(const HiddenChatsScreen());
   }
 
   void _addStory() {
@@ -97,6 +99,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
             _row(Icons.group_add_rounded, const Color(0xFF2E9BF0), s.t('new_group'), () => _push(const ContactsScreen(createGroup: true))),
             _row(Icons.campaign_rounded, const Color(0xFFFF9F1A), s.t('new_channel'), () => _push(const NewChannelScreen())),
             _row(Icons.person_rounded, const Color(0xFF2EAD5B), s.t('contacts'), () => _push(const ContactsScreen())),
+            _row(Icons.call_rounded, const Color(0xFF2EAD5B), s.t('calls'), () => _push(const CallsScreen())),
             _row(Icons.bookmark_rounded, const Color(0xFF3D8BFF), s.t('saved_messages'), _openSaved),
             _row(Icons.star_rounded, const Color(0xFFF5A623), s.t('marked_messages'), () => _push(const MarkedMessagesScreen())),
             _row(Icons.archive_rounded, const Color(0xFF8E8E93), s.t('archive'), () => _push(const ArchiveScreen())),

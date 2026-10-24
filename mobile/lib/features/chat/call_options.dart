@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/calls/call_service.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 
-/// Call sheet for a person (chat header and profile). Voice/video calls over Telegram are not built
-/// yet (they need the tgcalls media stack), so they say so; a visible phone number can still be
-/// dialled over the SIM.
+/// Call sheet for a person (chat header and profile): Telegram voice/video call, or the SIM when the number is visible.
 Future<void> showCallOptions(BuildContext context, td.User user) async {
   final s = context.s;
   final phone = user.phoneNumber;
@@ -20,14 +19,12 @@ Future<void> showCallOptions(BuildContext context, td.User user) async {
           ListTile(
             leading: Icon(Icons.call_rounded, color: Theme.of(context).colorScheme.primary),
             title: Text(s.t('call_voice')),
-            subtitle: Text(s.t('calls_soon')),
-            onTap: () => Navigator.pop(context, 'soon'),
+            onTap: () => Navigator.pop(context, 'voice'),
           ),
           ListTile(
             leading: Icon(Icons.videocam_rounded, color: Theme.of(context).colorScheme.primary),
             title: Text(s.t('call_video')),
-            subtitle: Text(s.t('calls_soon')),
-            onTap: () => Navigator.pop(context, 'soon'),
+            onTap: () => Navigator.pop(context, 'video'),
           ),
           if (phone.isNotEmpty)
             ListTile(
@@ -41,7 +38,14 @@ Future<void> showCallOptions(BuildContext context, td.User user) async {
     ),
   );
   if (!context.mounted || choice == null) return;
-  if (choice == 'soon') return showToast(context, s.t('calls_soon'));
-  final launched = await launchUrl(Uri(scheme: 'tel', path: '+$phone'));
-  if (!launched && context.mounted) showToast(context, s.t('call_phone_failed'));
+  if (choice == 'phone') {
+    final launched = await launchUrl(Uri(scheme: 'tel', path: '+$phone'));
+    if (!launched && context.mounted) showToast(context, s.t('call_phone_failed'));
+    return;
+  }
+  await startTelegramCall(context, user.id, video: choice == 'video');
 }
+
+/// Starts a Telegram call; the call screen opens by itself once TDLib reports it.
+Future<void> startTelegramCall(BuildContext context, int userId, {bool video = false}) =>
+    guard(context, () => CallService.instance.startCall(userId, video: video));

@@ -7,14 +7,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import 'core/app_lock.dart';
+import 'core/calls/call_service.dart';
+import 'core/chat_sounds.dart';
 import 'core/file_guard.dart';
 import 'core/formatters.dart';
 import 'core/live_location.dart';
+import 'core/media_saver.dart';
 import 'core/notifications.dart';
 import 'core/push.dart';
 import 'core/tdlib/td_client.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screens.dart';
+import 'features/calls/call_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/home_shell.dart';
 import 'l10n/strings.dart';
@@ -31,12 +35,13 @@ class SadoApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
+    final smooth = ref.watch(motionProvider.select((m) => m.transitions));
     return MaterialApp(
       title: 'UZARO',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
-      theme: buildTheme(Brightness.light, settings.accent),
-      darkTheme: buildTheme(Brightness.dark, settings.accent),
+      theme: buildTheme(Brightness.light, settings.accent, fontFamily: settings.fontFamily, smoothTransitions: smooth),
+      darkTheme: buildTheme(Brightness.dark, settings.accent, fontFamily: settings.fontFamily, smoothTransitions: smooth),
       themeMode: settings.themeMode,
       locale: Locale(settings.localeCode),
       supportedLocales: [for (final code in Strings.supported) Locale(code)],
@@ -161,9 +166,33 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
     unawaited(MessageNotifier.instance.initialize());
     _messages = _account.messageEvents.listen(_onMessageEvent);
     unawaited(PushService.instance.register(_account));
-    final keepDays = ref.read(settingsProvider).keepMediaDays;
-    if (keepDays > 0) {
-      unawaited(_account.clearCache(ttl: keepDays * 86400).catchError((Object error) => debugPrint('storage cleanup failed: $error')));
+    CallService.instance.attach(_account);
+    CallService.instance.current.addListener(_onCallChanged);
+    final settings = ref.read(settingsProvider);
+    if (settings.keepMediaDays > 0 || settings.maxCacheGb > 0) {
+      unawaited(_account
+          .applyCacheLimits(keepDays: settings.keepMediaDays, maxGb: settings.maxCacheGb)
+          .catchError((Object error) => debugPrint('storage cleanup failed: $error')));
+    }
+  }
+
+  Route<void>? _callRoute;
+
+  /// Opens the call screen over everything when a call starts and closes it when the call is gone.
+  void _onCallChanged() {
+    final session = CallService.instance.current.value;
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) return;
+    if (session != null && _callRoute == null) {
+      final route = MaterialPageRoute<void>(builder: (_) => CallScreen(session: session), fullscreenDialog: true);
+      _callRoute = route;
+      unawaited(navigator.push(route).whenComplete(() {
+        if (_callRoute == route) _callRoute = null;
+      }));
+    } else if (session == null && _callRoute != null) {
+      final route = _callRoute!;
+      _callRoute = null;
+      if (route.isActive) navigator.removeRoute(route);
     }
   }
 
@@ -174,6 +203,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   void _onMessageEvent(td.Update update) {
     if (update is td.UpdateMessageSendSucceeded) {
       LiveLocationService.instance.onMessageIdChanged(update.message.chatId, update.oldMessageId, update.message.id);
+      final settings = ref.read(settingsProvider);
+      if (settings.chatSounds && _lifecycle == AppLifecycleState.resumed) unawaited(ChatSounds.instance.play(settings.sendSound));
       return;
     }
     if (update is! td.UpdateNewMessage) return;
@@ -184,11 +215,16 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
       unawaited(_quarantine(message, settings.fileGuard));
       return;
     }
+    unawaited(autoSaveToGallery(_account, message, settings.saveToGallery).catchError((Object error) => debugPrint('auto-save failed: $error')));
     if (message.isOutgoing || !settings.notificationsEnabled) return;
     final chat = _account.chats[message.chatId];
     if (chat == null || _account.isMuted(chat)) return;
     final inForeground = _lifecycle == AppLifecycleState.resumed;
-    if (inForeground && ref.read(openChatProvider) == message.chatId) return;
+    if (inForeground && ref.read(openChatProvider) == message.chatId) {
+      // The open chat shows the message instead of a notification; Telegram plays its in-chat cue.
+      if (settings.chatSounds) unawaited(ChatSounds.instance.play(settings.receiveSound));
+      return;
+    }
     if (!mounted) return;
     unawaited(MessageNotifier.instance.showMessage(
       account: _account,
@@ -240,6 +276,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _messages?.cancel();
+    CallService.instance.current.removeListener(_onCallChanged);
+    CallService.instance.detach();
     super.dispose();
   }
 

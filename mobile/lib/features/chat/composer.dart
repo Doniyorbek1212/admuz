@@ -24,9 +24,14 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
-import '../contacts/contacts_screen.dart';
 import '../webapp/web_app_screen.dart';
+import 'article_editor.dart';
+import 'attach_sheet.dart';
+import 'checklist_creator.dart';
 import 'composer_panels.dart';
+import 'contact_picker.dart';
+import 'location_picker.dart';
+import 'poll_creator.dart';
 
 class Composer extends ConsumerStatefulWidget {
   const Composer({
@@ -67,6 +72,13 @@ class ComposerState extends ConsumerState<Composer> {
   String _inlineQuery = '';
   Timer? _suggestTimer;
   int _suggestGeneration = 0;
+
+  /// Preview of the first link in the draft; closing it sends the message without a preview.
+  td.LinkPreview? _preview;
+  String? _previewUrl;
+  bool _previewClosed = false;
+  Timer? _previewTimer;
+  static final _urlPattern = RegExp(r'(https?://|t\.me/|www\.)\S+', caseSensitive: false);
 
   /// Commands and menu button of the bot in a private bot chat.
   td.BotInfo? _botInfo;
@@ -144,6 +156,7 @@ class ComposerState extends ConsumerState<Composer> {
   void dispose() {
     _draftTimer?.cancel();
     _suggestTimer?.cancel();
+    _previewTimer?.cancel();
     if (widget.editing == null) {
       unawaited(_account.saveDraft(widget.chat.id, _controller.text, replyToMessageId: widget.replyTo?.id));
     }
@@ -181,6 +194,38 @@ class ComposerState extends ConsumerState<Composer> {
       });
     }
       _scheduleSuggestions();
+    _schedulePreview();
+  }
+
+  void _schedulePreview() {
+    final url = _urlPattern.firstMatch(_controller.text)?.group(0);
+    if (url == _previewUrl) return;
+    _previewUrl = url;
+    _previewTimer?.cancel();
+    if (url == null) {
+      if (_preview != null || _previewClosed) {
+        setState(() {
+          _preview = null;
+          _previewClosed = false;
+        });
+      }
+      return;
+    }
+    _previewTimer = Timer(const Duration(milliseconds: 700), () async {
+      final text = _controller.text;
+      td.LinkPreview? preview;
+      try {
+        preview = await _account.send<td.LinkPreview>(td.GetLinkPreview(text: td.FormattedText(text: text, entities: const []), linkPreviewOptions: null));
+      } on TdException {
+        preview = null; // 404: the link has no preview.
+      }
+      if (mounted && _previewUrl == url) {
+        setState(() {
+          _preview = preview;
+          _previewClosed = false;
+        });
+      }
+    });
   }
 
   static final _inlinePattern = RegExp(r'^@([A-Za-z0-9_]{3,32}) (.*)$', dotAll: true);
@@ -317,7 +362,15 @@ class ComposerState extends ConsumerState<Composer> {
     if (command != null && mounted) await _sendCommand(command);
   }
 
+  /// aka-style guard against accidental taps: asks before sending when the matching setting is on.
+  Future<bool> _confirmSend(bool enabled, String what) async {
+    if (!enabled) return true;
+    final s = context.s;
+    return confirm(context, title: s.t('confirm_send_title'), message: s.t('confirm_send_$what'));
+  }
+
   Future<void> _sendSticker(td.Sticker sticker) async {
+    if (!await _confirmSend(ref.read(settingsProvider).confirmSticker, 'sticker') || !mounted) return;
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
     widget.onSent();
@@ -325,6 +378,7 @@ class ComposerState extends ConsumerState<Composer> {
   }
 
   Future<void> _sendAnimation(td.Animation animation) async {
+    if (!await _confirmSend(ref.read(settingsProvider).confirmGif, 'gif') || !mounted) return;
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
     widget.onSent();
@@ -416,6 +470,7 @@ class ComposerState extends ConsumerState<Composer> {
       widget.onCancelEdit();
       return;
     }
+    final disablePreview = _previewClosed;
     _controller.clear();
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
@@ -425,7 +480,14 @@ class ComposerState extends ConsumerState<Composer> {
       final part = text.substring(start, min(text.length, start + 4096));
       final sent = await guard(
         context,
-        () => account.sendText(widget.chat.id, part, replyToId: start == 0 ? replyId : null, silent: silent, scheduleAt: scheduleAt),
+        () => account.sendText(
+          widget.chat.id,
+          part,
+          replyToId: start == 0 ? replyId : null,
+          silent: silent,
+          scheduleAt: scheduleAt,
+          disablePreview: disablePreview,
+        ),
       );
       if (sent == null) {
         if (mounted && _controller.text.isEmpty) setText(text);
@@ -472,71 +534,151 @@ class ComposerState extends ConsumerState<Composer> {
 
   // ------------------------------------------------------------------ attachments
 
-  Future<void> _attach() async {
+  /// "Send as": the user or one of their channels, for chats that allow choosing.
+  Future<void> _pickSender() async {
     final s = context.s;
-    final choice = await showModalBottomSheet<String>(
+    final senders = await guard(context, () => _account.send<td.ChatMessageSenders>(td.GetChatAvailableMessageSenders(chatId: widget.chat.id)));
+    if (senders == null || !mounted) return;
+    final current = widget.chat.messageSenderId;
+    final chosen = await showModalBottomSheet<td.MessageSender>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: GridView.count(
-          crossAxisCount: 4,
+        child: ListView(
           shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
           children: [
-            _AttachButton(icon: Icons.photo_library_rounded, color: Colors.blue, label: s.t('gallery'), value: 'gallery'),
-            _AttachButton(icon: Icons.photo_camera_rounded, color: Colors.pink, label: s.t('camera'), value: 'camera'),
-            _AttachButton(icon: Icons.videocam_rounded, color: Colors.deepPurple, label: s.t('video'), value: 'video'),
-            _AttachButton(icon: Icons.insert_drive_file_rounded, color: Colors.teal, label: s.t('file'), value: 'file'),
-            _AttachButton(icon: Icons.location_on_rounded, color: Colors.green, label: s.t('location'), value: 'location'),
-            _AttachButton(icon: Icons.poll_rounded, color: Colors.orange, label: s.t('poll'), value: 'poll'),
-            _AttachButton(icon: Icons.person_rounded, color: Colors.indigo, label: s.t('contact'), value: 'contact'),
+            Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Text(s.t('send_as'), style: Theme.of(context).textTheme.titleMedium)),
+            for (final option in senders.senders)
+              ListTile(
+                leading: switch (option.sender) {
+                  td.MessageSenderChat(:final chatId) => ChatAvatar(chatId: chatId, size: 40, showOnline: false),
+                  td.MessageSenderUser(:final userId) => UserAvatar(userId: userId, size: 40, showOnline: false),
+                  _ => const Icon(Icons.person_rounded),
+                },
+                title: Text(_account.senderName(option.sender)),
+                subtitle: option.needsPremium ? Text(s.t('premium_only')) : null,
+                trailing: option.sender == current ? Icon(Icons.check_rounded, color: Theme.of(context).colorScheme.primary) : null,
+                onTap: () => Navigator.pop(context, option.sender),
+              ),
           ],
         ),
       ),
     );
+    if (chosen == null || chosen == current || !mounted) return;
+    await guard(context, () => _account.send<td.Ok>(td.SetChatMessageSender(chatId: widget.chat.id, messageSenderId: chosen)));
+  }
+
+  Future<void> _attach() async {
+    // The in-app gallery needs media permissions only granted on phones; desktop keeps the system pickers.
+    final bots = ref.read(accountProvider).attachmentMenuBots.where((b) => b.showInAttachmentMenu && _botFitsChat(b)).toList();
+    final choice = isDesktop ? const AttachAction('system_gallery') : await showAttachSheet(context, bots: bots);
     if (choice == null || !mounted) return;
     final account = ref.read(accountProvider);
     final chatId = widget.chat.id;
     final replyId = widget.replyTo?.id;
     final picker = ImagePicker();
     switch (choice) {
-      case 'gallery':
+      case AttachMedia():
+        await _sendMedia(choice);
+      case AttachAction(action: 'system_gallery'):
         final files = await picker.pickMultipleMedia(imageQuality: 90);
-        // Several photos/videos go out as albums of up to 10, like Telegram.
-        for (var start = 0; start < files.length; start += 10) {
-          final batch = files.sublist(start, min(files.length, start + 10));
-          if (!mounted) return;
-          await guard(context, () => account.sendAlbum(
-                chatId,
-                [for (final file in batch) _isVideoPath(file.path) ? videoContent(file.path) : photoContent(file.path)],
-                replyToId: start == 0 ? replyId : null,
-              ));
-        }
-      case 'camera':
+        await _sendMedia(AttachMedia(
+          media: [for (final file in files) PickedMedia(path: file.path, isVideo: _isVideoPath(file.path))],
+          caption: '',
+        ));
+      case AttachAction(action: 'camera'):
         final file = await picker.pickImage(source: ImageSource.camera, imageQuality: 90);
         if (file != null && mounted) await guard(context, () => account.sendPhoto(chatId, file.path, replyToId: replyId));
-      case 'video':
-        final file = await picker.pickVideo(source: ImageSource.gallery);
+      case AttachAction(action: 'record_video'):
+        final file = await picker.pickVideo(source: ImageSource.camera);
         if (file != null && mounted) await guard(context, () => account.sendVideo(chatId, file.path, replyToId: replyId));
-      case 'file':
+      case AttachAction(action: 'file'):
         final files = await FilePicker.pickFiles();
         for (final file in files) {
           final path = file.path;
           if (path == null || !mounted) continue;
           await guard(context, () => account.sendDocument(chatId, path, replyToId: replyId));
         }
-      case 'location':
+      case AttachAction(action: 'music'):
+        final files = await FilePicker.pickFiles(type: FileType.audio);
+        for (final file in files) {
+          final path = file.path;
+          if (path == null || !mounted) continue;
+          await guard(context, () => account.sendAudio(chatId, path, replyToId: replyId));
+        }
+      case AttachAction(action: 'location'):
         await _sendLocation();
-      case 'poll':
+      case AttachAction(action: 'poll'):
         await _createPoll();
-      case 'contact':
-        final user = await Navigator.of(context).push<td.User>(
-          MaterialPageRoute(builder: (_) => const ContactsScreen(pickUser: true)),
+      case AttachAction(action: 'article'):
+        final text = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const ArticleEditorScreen()));
+        if (text != null && mounted) await guard(context, () => account.sendText(chatId, text, replyToId: replyId));
+      case AttachAction(action: 'checklist'):
+        final checklist = await Navigator.of(context).push<td.InputChecklist>(MaterialPageRoute(builder: (_) => const ChecklistCreatorScreen()));
+        if (checklist != null && mounted) {
+          await guard(context, () => account.sendContent(chatId, td.InputMessageChecklist(checklist: checklist), replyToId: replyId));
+        }
+      case AttachAction(:final action) when action.startsWith('bot:'):
+        final botId = int.tryParse(action.substring(4));
+        if (botId != null) await openInlineWebApp(context, ref, chatId: chatId, botUserId: botId, url: '');
+        return;
+      case AttachAction(action: 'contact'):
+        final contact = await Navigator.of(context).push<td.Contact>(
+          MaterialPageRoute(builder: (_) => const ContactPickerScreen()),
         );
-        if (user != null && mounted) await guard(context, () => account.sendContactCard(chatId, user));
+        if (contact != null && mounted) {
+          await guard(context, () => account.sendContent(chatId, td.InputMessageContact(contact: contact), replyToId: replyId));
+        }
+      case AttachAction():
+        return;
     }
     widget.onCancelReply();
     widget.onSent();
+  }
+
+  /// Whether an attach-menu Mini App works in this kind of chat (TDLib's supports* flags).
+  bool _botFitsChat(td.AttachmentMenuBot bot) {
+    final account = ref.read(accountProvider);
+    final chat = widget.chat;
+    return switch (chat.type) {
+      td.ChatTypePrivate(:final userId) when userId == account.myId => bot.supportsSelfChat,
+      td.ChatTypePrivate() when account.isBot(account.privateUser(chat)) => bot.supportsBotChats,
+      td.ChatTypePrivate() || td.ChatTypeSecret() => bot.supportsUserChats,
+      td.ChatTypeSupergroup(:final isChannel) when isChannel => bot.supportsChannelChats,
+      _ => bot.supportsGroupChats,
+    };
+  }
+
+  /// Photos/videos go out as albums of up to 10 with the caption on the first one, like Telegram;
+  /// "without compression" sends the originals as files.
+  Future<void> _sendMedia(AttachMedia pick) async {
+    final account = ref.read(accountProvider);
+    final chatId = widget.chat.id;
+    final replyId = widget.replyTo?.id;
+    if (pick.asFiles) {
+      for (var i = 0; i < pick.media.length; i++) {
+        if (!mounted) return;
+        final caption = i == pick.media.length - 1 ? pick.caption : '';
+        await guard(context, () => account.sendDocument(chatId, pick.media[i].path,
+            caption: caption, replyToId: i == 0 ? replyId : null, silent: pick.silent));
+      }
+      return;
+    }
+    for (var start = 0; start < pick.media.length; start += 10) {
+      final batch = pick.media.sublist(start, min(pick.media.length, start + 10));
+      if (!mounted) return;
+      await guard(context, () => account.sendAlbum(
+            chatId,
+            [
+              for (final (i, m) in batch.indexed)
+                m.isVideo
+                    ? videoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height, duration: m.duration)
+                    : photoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height),
+            ],
+            replyToId: start == 0 ? replyId : null,
+            silent: pick.silent,
+          ));
+    }
   }
 
   static bool _isVideoPath(String path) {
@@ -545,49 +687,45 @@ class ComposerState extends ConsumerState<Composer> {
         lower.endsWith('.3gp');
   }
 
+  /// Telegram's location tab: a map of where you are, then send it once or share it live.
   Future<void> _sendLocation() async {
     final s = context.s;
-    final choice = await showModalBottomSheet<int>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(leading: const Icon(Icons.my_location_rounded), title: Text(s.t('send_current_location')), onTap: () => Navigator.pop(context, 0)),
-            for (final minutes in const [15, 60, 480])
-              ListTile(
-                leading: const Icon(Icons.share_location_rounded),
-                title: Text(s.t('share_live_location', {'time': minutes < 60 ? '$minutes min' : '${minutes ~/ 60} h'})),
-                onTap: () => Navigator.pop(context, minutes),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (choice == null || !mounted) return;
-    if (choice > 0) {
-      final ok = await guard(context, () => LiveLocationService.instance.start(_account, widget.chat.id, Duration(minutes: choice)));
-      if (ok == false && mounted) showToast(context, s.t('location_permission'));
-      return;
-    }
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      if (mounted) showToast(context, context.t('location_permission'));
+      if (mounted) showToast(context, s.t('location_permission'));
       return;
     }
-    final position = await Geolocator.getCurrentPosition();
     if (!mounted) return;
-    await guard(context, () => ref.read(accountProvider).sendLocation(widget.chat.id, position.latitude, position.longitude));
+    final account = ref.read(accountProvider);
+    final chatId = widget.chat.id;
+    final choice = await Navigator.of(context).push<LocationChoice>(MaterialPageRoute(builder: (_) => LocationPickerScreen(chatId: chatId)));
+    if (choice == null || !mounted) return;
+    switch (choice) {
+      case PointChoice(:final latitude, :final longitude):
+        await guard(context, () => account.sendLocation(chatId, latitude, longitude));
+      case VenueChoice(:final venue):
+        await guard(context, () => account.sendContent(chatId, td.InputMessageVenue(venue: venue)));
+      case LiveChoice(:final minutes):
+        final ok = await guard(context, () => LiveLocationService.instance.start(_account, chatId, Duration(minutes: minutes)));
+        if (ok == false && mounted) showToast(context, s.t('location_permission'));
+    }
   }
 
   Future<void> _createPoll() async {
-    final result = await showDialog<(String, List<String>, bool, bool)>(context: context, builder: (_) => const _PollDialog());
-    if (result == null || !mounted) return;
+    final poll = await Navigator.of(context).push<PollDraft>(MaterialPageRoute(builder: (_) => const PollCreatorScreen()));
+    if (poll == null || !mounted) return;
     await guard(
       context,
-      () => ref.read(accountProvider).sendPoll(widget.chat.id, result.$1, result.$2, anonymous: result.$3, multiple: result.$4),
+      () => ref.read(accountProvider).sendPoll(
+            widget.chat.id,
+            poll.question,
+            poll.options,
+            anonymous: poll.anonymous,
+            multiple: poll.multiple,
+            correctOption: poll.correctOption,
+            explanation: poll.explanation,
+          ),
     );
   }
 
@@ -742,6 +880,10 @@ class ComposerState extends ConsumerState<Composer> {
         ? <int>[]
         : List<int>.generate(100, (i) => _waveform[(i * _waveform.length / 100).floor()]);
     if (!mounted) return;
+    if (!await _confirmSend(ref.read(settingsProvider).confirmVoice, 'voice') || !mounted) {
+      unawaited(File(path).delete().catchError((Object _) => File(path)));
+      return;
+    }
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
     widget.onSent();
@@ -971,6 +1113,25 @@ class ComposerState extends ConsumerState<Composer> {
               )
             else if (_mentions.isNotEmpty)
               MentionSuggestions(members: _mentions, onPick: _pickMention),
+            if (_preview case final preview? when !_previewClosed && widget.editing == null)
+              Material(
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.link_rounded, color: theme.colorScheme.primary),
+                  title: Text(preview.title.isNotEmpty ? preview.title : preview.siteName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(
+                    preview.description.text.isNotEmpty ? preview.description.text : preview.displayUrl,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    tooltip: s.t('link_preview_remove'),
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => setState(() => _previewClosed = true),
+                  ),
+                ),
+              ),
             if (reference != null)
               _ReferenceBar(
                 message: reference,
@@ -1059,6 +1220,16 @@ class ComposerState extends ConsumerState<Composer> {
               icon: Icon(botMenu != null && botMenu.url.isNotEmpty ? Icons.apps_rounded : Icons.menu_rounded, size: 18),
               label: Text(botMenu != null && botMenu.text.isNotEmpty ? botMenu.text : s.t('bot_menu'), style: const TextStyle(fontSize: 14)),
             ),
+          ),
+        if (widget.chat.messageSenderId case final sender? when widget.editing == null)
+          IconButton(
+            tooltip: s.t('send_as'),
+            onPressed: _pickSender,
+            icon: switch (sender) {
+              td.MessageSenderChat(:final chatId) => ChatAvatar(chatId: chatId, size: 28, showOnline: false),
+              td.MessageSenderUser(:final userId) => UserAvatar(userId: userId, size: 28, showOnline: false),
+              _ => const Icon(Icons.person_rounded),
+            },
           ),
         IconButton(
           icon: Icon(_showEmoji ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined, color: theme.hintColor),
@@ -1479,106 +1650,6 @@ class _ReferenceBar extends ConsumerWidget {
           IconButton(icon: const Icon(Icons.close_rounded), onPressed: onClose),
         ],
       ),
-    );
-  }
-}
-
-class _AttachButton extends StatelessWidget {
-  const _AttachButton({required this.icon, required this.color, required this.label, required this.value});
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => Navigator.pop(context, value),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircleAvatar(radius: 26, backgroundColor: color, child: Icon(icon, color: Colors.white)),
-            const SizedBox(height: 6),
-            Text(label, style: const TextStyle(fontSize: 12.5), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
-        ),
-      );
-}
-
-class _PollDialog extends StatefulWidget {
-  const _PollDialog();
-
-  @override
-  State<_PollDialog> createState() => _PollDialogState();
-}
-
-class _PollDialogState extends State<_PollDialog> {
-  final _question = TextEditingController();
-  final List<TextEditingController> _options = [TextEditingController(), TextEditingController()];
-  bool _anonymous = true;
-  bool _multiple = false;
-
-  @override
-  void dispose() {
-    _question.dispose();
-    for (final c in _options) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = context.s;
-    return AlertDialog(
-      title: Text(s.t('new_poll')),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: _question, decoration: InputDecoration(labelText: s.t('poll_question'))),
-            const SizedBox(height: 8),
-            for (var i = 0; i < _options.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: TextField(controller: _options[i], decoration: InputDecoration(labelText: '${s.t('poll_option')} ${i + 1}')),
-              ),
-            if (_options.length < 10)
-              TextButton.icon(
-                onPressed: () => setState(() => _options.add(TextEditingController())),
-                icon: const Icon(Icons.add_rounded),
-                label: Text(s.t('poll_add_option')),
-              ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(s.t('poll_anonymous')),
-              value: _anonymous,
-              onChanged: (v) => setState(() => _anonymous = v),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(s.t('poll_multiple')),
-              value: _multiple,
-              onChanged: (v) => setState(() => _multiple = v),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel'))),
-        TextButton(
-          onPressed: () {
-            final options = _options.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList();
-            if (_question.text.trim().isEmpty || options.length < 2) {
-              showToast(context, s.t('poll_invalid'));
-              return;
-            }
-            Navigator.pop(context, (_question.text.trim(), options, _anonymous, _multiple));
-          },
-          child: Text(s.t('send')),
-        ),
-      ],
     );
   }
 }

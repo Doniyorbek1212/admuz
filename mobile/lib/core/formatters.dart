@@ -174,6 +174,8 @@ String? contentPreview(td.MessageContent content, Strings s) {
       return '👤 ${'${contact.firstName} ${contact.lastName}'.trim()}';
     case td.MessagePoll(:final poll):
       return '📊 ${poll.question.text}';
+    case td.MessageChecklist(:final list):
+      return '☑️ ${list.title.text}';
     case td.MessageCall(:final isVideo, :final duration):
       final label = isVideo ? s.t('video_call') : s.t('voice_call');
       return duration > 0 ? '📞 $label (${formatDuration(Duration(seconds: duration))})' : '📞 $label';

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +19,8 @@ import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../chat/call_options.dart';
 import '../chat/media_viewers.dart';
+import '../chat/message_extras.dart';
+import '../settings/premium_extras.dart';
 import '../chat/message_content.dart';
 import '../contacts/contacts_screen.dart';
 import '../home/home_screen.dart';
@@ -118,7 +122,11 @@ class ChatInfoScreen extends ConsumerWidget {
               // aka-style header: centered avatar, name, status, then quick actions.
               Center(
                 child: GestureDetector(
-                  onTap: chat.photo == null ? null : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
+                  onTap: chat.photo == null
+                      ? null
+                      : user != null
+                          ? () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(builder: (_) => _ProfilePhotosScreen(userId: user.id)))
+                          : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
                   child: Hero(
                     tag: 'avatar_$chatId',
                     child: GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
@@ -155,7 +163,7 @@ class ChatInfoScreen extends ConsumerWidget {
                     ),
                     if (callable) ...[
                       _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
-                      _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => showToast(context, s.t('calls_soon'))),
+                      _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => startTelegramCall(context, user.id, video: true)),
                     ] else if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
                       _ActionTile(
                         icon: Icons.logout_rounded,
@@ -181,6 +189,15 @@ class ChatInfoScreen extends ConsumerWidget {
                       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ManageChatScreen(chatId: chatId))),
                     ),
                   if (user != null && user.id != account.myId) ...[
+                    if (user.isContact)
+                      ListTile(
+                        leading: const Icon(Icons.person_remove_rounded),
+                        title: Text(s.t('delete_contact')),
+                        onTap: () async {
+                          final ok = await confirm(context, title: s.t('delete_contact'), message: chatTitle(chat, account, s), destructive: true);
+                          if (ok && context.mounted) await guard(context, () => account.send<td.Ok>(td.RemoveContacts(userIds: [user.id])));
+                        },
+                      ),
                     if (!user.isContact)
                       ListTile(
                         leading: const Icon(Icons.person_add_rounded),
@@ -223,6 +240,25 @@ class ChatInfoScreen extends ConsumerWidget {
                       ),
                     ),
                   ],
+                  if (info != null && info.commonGroups > 0 && user != null)
+                    ListTile(
+                      leading: const Icon(Icons.groups_rounded),
+                      title: Text(s.t('groups_in_common')),
+                      trailing: Text('${info.commonGroups}'),
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _CommonGroupsScreen(userId: user.id))),
+                    ),
+                  if (account.isChannel(chat) || account.supergroupOf(chat) != null)
+                    ListTile(
+                      leading: const Icon(Icons.bolt_rounded),
+                      title: Text(s.t('boost')),
+                      onTap: () => showBoostSheet(context, account, chatId),
+                    ),
+                  if (chat.canBeReported)
+                    ListTile(
+                      leading: Icon(Icons.flag_outlined, color: theme.colorScheme.error),
+                      title: Text(s.t('report'), style: TextStyle(color: theme.colorScheme.error)),
+                      onTap: () => reportChat(context, account, chatId),
+                    ),
                   if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
                     ListTile(
                       leading: Icon(Icons.logout_rounded, color: theme.colorScheme.error),
@@ -238,6 +274,7 @@ class ChatInfoScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               _SharedMediaSection(chatId: chatId),
+              if (account.isChannel(chat)) _SimilarChannels(chatId: chatId),
               if (info != null && info.members.isNotEmpty) ...[
                 const Divider(),
                 Row(
@@ -264,6 +301,166 @@ class ChatInfoScreen extends ConsumerWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+final _similarProvider = FutureProvider.autoDispose.family<List<td.Chat>, int>((ref, chatId) => ref.watch(accountProvider).similarChats(chatId));
+
+/// Horizontal strip of channels Telegram recommends next to this one.
+class _SimilarChannels extends ConsumerWidget {
+  const _SimilarChannels({required this.chatId});
+
+  final int chatId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final similar = ref.watch(_similarProvider(chatId)).value ?? const [];
+    if (similar.isEmpty) return const SizedBox.shrink();
+    final account = ref.watch(accountProvider);
+    final s = context.s;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        SectionHeader(s.t('similar_channels')),
+        SizedBox(
+          height: 112,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: similar.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final chat = similar[index];
+              return InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () {
+                  unawaited(account.similarChatOpened(chatId, chat.id));
+                  openChat(context, chat.id);
+                },
+                child: SizedBox(
+                  width: 80,
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 6),
+                      ChatAvatar(chatId: chat.id, size: 56, showOnline: false),
+                      const SizedBox(height: 6),
+                      Text(chat.title, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Swipeable history of a user's profile photos; on your own profile each one can be deleted.
+class _ProfilePhotosScreen extends ConsumerStatefulWidget {
+  const _ProfilePhotosScreen({required this.userId});
+
+  final int userId;
+
+  @override
+  ConsumerState<_ProfilePhotosScreen> createState() => _ProfilePhotosScreenState();
+}
+
+class _ProfilePhotosScreenState extends ConsumerState<_ProfilePhotosScreen> {
+  List<td.ChatPhoto>? _photos;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final result = await guard(
+      context,
+      () => ref.read(accountProvider).send<td.ChatPhotos>(td.GetUserProfilePhotos(userId: widget.userId, offset: 0, limit: 100)),
+    );
+    if (mounted) setState(() => _photos = result?.photos ?? const []);
+  }
+
+  Future<void> _delete(td.ChatPhoto photo) async {
+    final s = context.s;
+    final ok = await confirm(context, title: s.t('delete_photo'), destructive: true);
+    if (!ok || !mounted) return;
+    await guard(context, () => ref.read(accountProvider).send<td.Ok>(td.DeleteProfilePhoto(profilePhotoId: photo.id)));
+    _index = 0;
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final photos = _photos;
+    final mine = widget.userId == ref.watch(accountProvider).myId;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(photos == null || photos.isEmpty ? '' : '${_index + 1} / ${photos.length}'),
+        actions: [
+          if (mine && photos != null && photos.isNotEmpty)
+            IconButton(tooltip: s.t('delete'), icon: const Icon(Icons.delete_outline_rounded), onPressed: () => _delete(photos[_index])),
+        ],
+      ),
+      body: photos == null
+          ? const Center(child: CircularProgressIndicator())
+          : photos.isEmpty
+              ? Center(child: Text(s.t('nothing_here'), style: const TextStyle(color: Colors.white70)))
+              : PageView.builder(
+                  itemCount: photos.length,
+                  onPageChanged: (index) => setState(() => _index = index),
+                  itemBuilder: (context, index) {
+                    final photo = photos[index];
+                    final biggest = photo.sizes.reduce((a, b) => a.width * a.height >= b.width * b.height ? a : b);
+                    return InteractiveViewer(
+                      child: Center(child: TdImage(file: biggest.photo, minithumbnail: photo.minithumbnail, fit: BoxFit.contain)),
+                    );
+                  },
+                ),
+    );
+  }
+}
+
+class _CommonGroupsScreen extends ConsumerWidget {
+  const _CommonGroupsScreen({required this.userId});
+
+  final int userId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final account = ref.watch(accountProvider);
+    final s = context.s;
+    return Scaffold(
+      appBar: AppBar(title: Text(s.t('groups_in_common'))),
+      body: FutureBuilder<td.Chats>(
+        future: account.send<td.Chats>(td.GetGroupsInCommon(userId: userId, offsetChatId: 0, limit: 100)),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text(s.t('err_GENERIC')));
+          final ids = snapshot.data?.chatIds;
+          if (ids == null) return const Center(child: CircularProgressIndicator());
+          if (ids.isEmpty) return Center(child: Text(s.t('nothing_here')));
+          return ListView(
+            children: [
+              for (final id in ids)
+                ListTile(
+                  leading: ChatAvatar(chatId: id, size: 44, showOnline: false),
+                  title: Text(account.chats[id]?.title ?? ''),
+                  onTap: () => openChat(context, id),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

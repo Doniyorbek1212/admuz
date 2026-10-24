@@ -1,6 +1,7 @@
 package uz.sado.app
 
 import android.app.Application
+import android.os.BatteryManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -21,6 +22,10 @@ class MainApplication : Application() {
                     KeepAliveService.setEnabled(this, call.arguments as? Boolean ?: true)
                     result.success(null)
                 }
+                // Power saving mode turns on below a chosen battery level.
+                "batteryLevel" -> result.success(
+                    getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY),
+                )
                 else -> result.notImplemented()
             }
         }
@@ -35,6 +40,21 @@ class MainApplication : Application() {
                     } else {
                         VideoNoteTranscoder.cropSquare(this, input, output, size, result)
                     }
+                }
+                else -> result.notImplemented()
+            }
+        }
+        val music = MethodChannel(engine.dartExecutor.binaryMessenger, MusicService.CHANNEL)
+        MusicService.channel = music
+        music.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "update" -> {
+                    MusicService.update(this, call.arguments as? Map<*, *> ?: emptyMap<String, Any>())
+                    result.success(null)
+                }
+                "stop" -> {
+                    MusicService.stop(this)
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }

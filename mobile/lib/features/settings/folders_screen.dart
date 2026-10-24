@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
@@ -48,14 +49,26 @@ class FoldersScreen extends ConsumerWidget {
                   key: ValueKey(folder.id),
                   leading: const Icon(Icons.folder_rounded),
                   title: Text(folder.name.text.text),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    onPressed: () async {
-                      final ok = await confirm(context, title: s.t('delete_folder'), message: folder.name.text.text, destructive: true);
-                      if (ok && context.mounted) {
-                        await guard(context, () => account.send<td.Ok>(td.DeleteChatFolder(chatFolderId: folder.id, leaveChatIds: const [])));
-                      }
-                    },
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: s.t('folder_share'),
+                        icon: const Icon(Icons.ios_share_rounded),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(builder: (_) => _FolderLinksScreen(folderId: folder.id, name: folder.name.text.text)),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        onPressed: () async {
+                          final ok = await confirm(context, title: s.t('delete_folder'), message: folder.name.text.text, destructive: true);
+                          if (ok && context.mounted) {
+                            await guard(context, () => account.send<td.Ok>(td.DeleteChatFolder(chatFolderId: folder.id, leaveChatIds: const [])));
+                          }
+                        },
+                      ),
+                    ],
                   ),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => FolderEditScreen(folderId: folder.id))),
                 ),
@@ -78,6 +91,82 @@ class FoldersScreen extends ConsumerWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Shareable t.me/addlist links of one folder: create, copy/share, delete.
+class _FolderLinksScreen extends ConsumerStatefulWidget {
+  const _FolderLinksScreen({required this.folderId, required this.name});
+
+  final int folderId;
+  final String name;
+
+  @override
+  ConsumerState<_FolderLinksScreen> createState() => _FolderLinksScreenState();
+}
+
+class _FolderLinksScreenState extends ConsumerState<_FolderLinksScreen> {
+  List<td.ChatFolderInviteLink>? _links;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final result = await guard(context, () => ref.read(accountProvider).send<td.ChatFolderInviteLinks>(td.GetChatFolderInviteLinks(chatFolderId: widget.folderId)));
+    if (mounted) setState(() => _links = result?.inviteLinks ?? const []);
+  }
+
+  Future<void> _create() async {
+    final account = ref.read(accountProvider);
+    // Telegram decides which folder chats can be shared (groups and channels the user may invite to).
+    final chats = await guard(context, () => account.send<td.Chats>(td.GetChatsForChatFolderInviteLink(chatFolderId: widget.folderId)));
+    if (chats == null || !mounted) return;
+    if (chats.chatIds.isEmpty) {
+      showToast(context, context.t('folder_share_empty'));
+      return;
+    }
+    await guard(context, () => account.send<td.ChatFolderInviteLink>(td.CreateChatFolderInviteLink(chatFolderId: widget.folderId, name: '', chatIds: chats.chatIds)));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final links = _links;
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.name)),
+      floatingActionButton: FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_link_rounded), label: Text(s.t('folder_link_create'))),
+      body: links == null
+          ? const Center(child: CircularProgressIndicator())
+          : links.isEmpty
+              ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(s.t('folder_share_hint'), textAlign: TextAlign.center)))
+              : ListView(
+                  children: [
+                    for (final link in links)
+                      ListTile(
+                        leading: const Icon(Icons.link_rounded),
+                        title: Text(link.name.isNotEmpty ? link.name : link.inviteLink, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text(s.count('chats', link.chatIds.length)),
+                        onTap: () => SharePlus.instance.share(ShareParams(text: link.inviteLink)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          onPressed: () async {
+                            final ok = await confirm(context, title: s.t('folder_link_delete'), destructive: true);
+                            if (!ok || !context.mounted) return;
+                            await guard(
+                              context,
+                              () => ref.read(accountProvider).send<td.Ok>(td.DeleteChatFolderInviteLink(chatFolderId: widget.folderId, inviteLink: link.inviteLink)),
+                            );
+                            await _load();
+                          },
+                        ),
+                      ),
+                  ],
+                ),
     );
   }
 }

@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "C:/Users/Comp X/Desktop/sado/mobile/windows"
+    "cmake.sourceDirectory": "C:/Users/Comp X/Desktop/sado/mobile/windows",
+    "java.compile.nullAnalysis.mode": "automatic"
 }

@@ -5,6 +5,7 @@ import 'package:sado/core/redaction.dart';
 import 'package:sado/state/actions.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:sado/core/app_lock.dart';
+import 'package:sado/core/formatters.dart';
 import 'package:sado/core/push.dart';
 import 'package:sado/features/chat/message_content.dart';
 import 'package:sado/l10n/strings.dart';
@@ -58,7 +59,23 @@ void main() {
       expect(hashPasscode('1234', 'salt'), hashPasscode('1234', 'salt'));
       expect(hashPasscode('1234', 'salt'), isNot(hashPasscode('1234', 'other')));
       expect(hashPasscode('1234', 'salt'), isNot(hashPasscode('1235', 'salt')));
-      expect(hashPasscode('1234', 'salt'), i2sNot(contains('1234')));
+      expect(hashPasscode('1234', 'salt'), isNot(contains('1234')));
+    });
+  });
+
+  group('checklist messages', () {
+    test('chat list preview shows the checklist title', () {
+      const content = td.MessageChecklist(
+        list: td.Checklist(
+          title: td.FormattedText(text: 'Shopping', entities: []),
+          tasks: [td.ChecklistTask(id: 1, text: td.FormattedText(text: 'Milk', entities: []), completionDate: 0)],
+          othersCanAddTasks: false,
+          canAddTasks: false,
+          othersCanMarkTasksAsDone: false,
+          canMarkTasksAsDone: true,
+        ),
+      );
+      expect(contentPreview(content, const Strings('en')), '☑️ Shopping');
     });
   });
 

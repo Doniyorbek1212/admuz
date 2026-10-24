@@ -161,7 +161,7 @@ bool _matchesType(TelegramAccount account, td.Chat chat, String type) => switch 
       'type:group' => account.isGroup(chat),
       'type:channel' => account.isChannel(chat),
       'type:bot' => account.isBot(account.privateUser(chat)),
-      'type:unread' => chat.unreadCount > 0 || chat.isMarkedAsUnread,
+      'type:unread' => account.unreadFor(chat) > 0 || chat.isMarkedAsUnread,
       _ => true,
     };
 
@@ -214,7 +214,7 @@ final foldersProvider = Provider<List<td.ChatFolderInfo>>((ref) {
 final unreadCountProvider = Provider.family<int, String>((ref, listKey) {
   final account = ref.watch(accountProvider);
   watchListenable(ref, account.foldersRevision);
-  return account.unreadCounts[listKey] ?? 0;
+  return account.unreadInList(listKey);
 });
 
 /// Local path of a file once downloaded; starts the download on first watch.

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -17,6 +18,9 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
+import '../../widgets/message_context_menu.dart';
+import '../../widgets/playback_bar.dart';
+import '../../widgets/swipe_to_reply.dart';
 import '../home/home_screen.dart';
 import '../profile/chat_info_screen.dart';
 import '../settings/wallpaper.dart';
@@ -26,9 +30,11 @@ import 'chat_search_screen.dart';
 import 'composer.dart';
 import 'forward_picker.dart';
 import 'marked_messages_screen.dart';
+import 'media_gallery.dart';
 import 'media_viewers.dart';
 import 'message_bubble.dart';
 import 'message_content.dart';
+import 'message_extras.dart';
 import 'scheduled_screen.dart';
 import 'sponsored_bubble.dart';
 
@@ -113,6 +119,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     await guard(context, () => _account.sendText(chat.id, text, replyToId: replyId));
     unawaited(_scrollToBottom());
   }
+
+  /// Private chats always; groups and channels need pin rights (the server has the final say).
+  bool _canUnpinAll(td.Chat chat) => _account.privateUser(chat) != null || _account.isAdmin(chat) || chat.permissions.canPinMessages;
 
   Future<void> _refreshPinned() async {
     final pinned = await _account.pinnedMessage(widget.chatId);
@@ -233,36 +242,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (text.isNotEmpty) (Icons.translate_rounded, s.t('translate'), 'translate'),
       if (text.length > 300) (Icons.summarize_rounded, s.t('ai_summarize'), 'summarize'),
       if (props?.canBeEdited ?? false) (Icons.edit_rounded, s.t('edit'), 'edit'),
+      if ((props?.canEditMedia ?? false) && (message.content is td.MessagePhoto || message.content is td.MessageVideo))
+        (Icons.photo_library_outlined, s.t('replace_media'), 'replace_media'),
       if (hasVersions) (Icons.history_rounded, s.t('edit_history'), 'history'),
       (marked ? Icons.star_rounded : Icons.star_outline_rounded, s.t(marked ? 'unmark_message' : 'mark_message'), 'mark'),
       if (props?.canBePinned ?? false)
         (message.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded, s.t(message.isPinned ? 'unpin' : 'pin'), 'pin'),
       if (props?.canBeForwarded ?? true) (Icons.forward_rounded, s.t('forward'), 'forward'),
       if (props?.canGetLink ?? false) (Icons.link_rounded, s.t('copy_link'), 'link'),
+      if ((props?.canGetViewers ?? false) || (props?.canGetReadDate ?? false)) (Icons.done_all_rounded, s.t('seen'), 'seen'),
+      if (message.content case td.MessagePoll(:final poll) when !poll.isClosed && (props?.canBeEdited ?? false))
+        (Icons.stop_circle_outlined, s.t('stop_poll'), 'stop_poll'),
+      if (!blockedFile && message.content is td.MessageAnimation) (Icons.gif_box_outlined, s.t('save_gif'), 'save_gif'),
       if (text.isNotEmpty) (Icons.share_rounded, s.t('share'), 'share'),
       if (!blockedFile && _isGalleryMedia(message) && (props?.canBeSaved ?? message.canBeSaved))
         (Icons.download_rounded, s.t('save_to_gallery'), 'save'),
       if (!blockedFile && (message.content is td.MessageDocument || message.content is td.MessageAudio))
         (Icons.file_download_outlined, s.t('download'), 'download'),
       (Icons.check_circle_outline_rounded, s.t('select'), 'select'),
+      if ((message.interactionInfo?.reactions?.reactions.isNotEmpty ?? false) && !_account.isChannel(chat))
+        (Icons.favorite_border_rounded, s.t('reactions_who'), 'reactions_who'),
+      if (props?.canReportChat ?? false) (Icons.flag_outlined, s.t('report'), 'report'),
+      if (props?.canReportSupergroupSpam ?? false) (Icons.gavel_rounded, s.t('moderate_sender'), 'moderate'),
       if ((props?.canBeDeletedOnlyForSelf ?? true) || (props?.canBeDeletedForAllUsers ?? false))
         (Icons.delete_rounded, s.t('delete'), 'delete:destructive'),
     ];
-    Widget reactionRow(BuildContext context) => SizedBox(
-          height: 52,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            children: [
-              for (final emoji in reactions)
-                InkWell(
-                  borderRadius: BorderRadius.circular(24),
-                  onTap: () => Navigator.pop(context, 'react:$emoji'),
-                  child: Padding(padding: const EdgeInsets.all(8), child: Text(emoji, style: const TextStyle(fontSize: 28))),
-                ),
-            ],
-          ),
-        );
     final String? action;
     if (isDesktop) {
       // Telegram Desktop style: a compact menu at the pointer instead of a bottom sheet.
@@ -305,26 +309,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       );
     } else {
-      action = await showModalBottomSheet<String>(
+      // Telegram on phones: reactions and a floating card next to the touched message.
+      action = await showMessageContextMenu(
         context: context,
-        showDragHandle: true,
-        isScrollControlled: true,
-        builder: (context) => SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showReactions) reactionRow(context),
-                for (final (icon, label, value) in items)
-                  ListTile(
-                    leading: _menuRow(context, icon, null, destructive: value.endsWith(':destructive')),
-                    title: _menuLabel(context, label, destructive: value.endsWith(':destructive')),
-                    onTap: () => Navigator.pop(context, value),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        anchor: _lastPointer,
+        alignEnd: message.isOutgoing,
+        items: items,
+        reactions: showReactions ? reactions : const [],
       );
     }
     if (action == null || !mounted) return;
@@ -340,6 +331,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _menuLabel(BuildContext context, String label, {bool destructive = false}) =>
       Text(label, style: TextStyle(color: destructive ? Theme.of(context).colorScheme.error : null));
+
+  /// Actions picked in the media viewer, run here once it has closed.
+  Future<void> _runFromViewer(String action, td.Message message) async {
+    if (action == 'show_in_chat') return _jumpTo(message.id);
+    td.MessageProperties? props;
+    try {
+      props = await _account.send<td.MessageProperties>(td.GetMessageProperties(chatId: message.chatId, messageId: message.id));
+    } on TdException catch (error) {
+      debugPrint('message properties failed: $error');
+    }
+    if (mounted) await _runAction(action, message, props);
+  }
 
   Future<void> _runAction(String action, td.Message message, td.MessageProperties? props) async {
     final s = context.s;
@@ -422,6 +425,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (mounted) showToast(context, s.t(wasMarked ? 'unmarked' : 'marked'));
       case 'forget':
         _history.dismissDeleted(message.id);
+      case 'seen':
+        if (props != null) await showMessageSeen(context, _account, message, props);
+      case 'replace_media':
+        final picked = await ImagePicker().pickMedia();
+        if (picked == null || !mounted) return;
+        final isVideo = (picked.mimeType ?? '').startsWith('video') || RegExp(r'\.(mp4|mov|mkv|webm|3gp)$', caseSensitive: false).hasMatch(picked.path);
+        await guard(context, () => _account.replaceMedia(message, picked.path, isVideo: isVideo, caption: captionOf(message.content)?.text ?? ''));
+      case 'stop_poll':
+        if (await confirm(context, title: s.t('stop_poll_confirm'), confirmLabel: s.t('stop_poll'))) {
+          if (mounted) await guard(context, () => _account.stopPoll(message));
+        }
+      case 'save_gif':
+        if (message.content case td.MessageAnimation(:final animation)) {
+          final saved = await guard(context, () async {
+            await _account.saveGif(animation);
+            return true;
+          });
+          if (saved == true && mounted) showToast(context, s.t('gif_saved'));
+        }
+      case 'reactions_who':
+        await showAddedReactions(context, _account, message);
+      case 'moderate':
+        await moderateSender(context, _account, message);
+      case 'report':
+        await reportChat(context, _account, message.chatId, messageIds: _albumOf(message).map((m) => m.id).toList());
     }
   }
 
@@ -555,7 +583,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _ => null,
     };
     final showStart = _history.initialized && _history.messages.isEmpty && _account.isBot(_account.privateUser(chat));
-    return PopScope(
+    return MessageActionScope(
+      run: _runFromViewer,
+      child: PopScope(
       canPop: !selecting,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && selecting) setState(_selected.clear);
@@ -571,6 +601,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         appBar: selecting ? _selectionBar(s) : _chatBar(chat, s),
         body: Column(
           children: [
+            const PlaybackBar(),
             if (_pinned != null) _PinnedBar(message: _pinned!, onTap: () => _jumpTo(_pinned!.id), onClose: () => setState(() => _pinned = null)),
             Expanded(
               child: ChatBackground(
@@ -600,8 +631,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           foregroundColor: Theme.of(context).hintColor,
                           onPressed: _scrollToBottom,
                           child: Badge(
-                            isLabelVisible: chat.unreadCount > 0,
-                            label: Text(formatCount(chat.unreadCount)),
+                            isLabelVisible: _account.unreadFor(chat) > 0,
+                            label: Text(formatCount(_account.unreadFor(chat))),
                             child: const Icon(Icons.keyboard_arrow_down_rounded),
                           ),
                         ),
@@ -642,6 +673,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
           ],
         ),
+      ),
       ),
       ),
       ),
@@ -820,6 +852,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         item('search', Icons.search_rounded, s.t('search')),
         item('marked', Icons.star_outline_rounded, s.t('find_marked')),
         item('first', Icons.vertical_align_top_rounded, s.t('go_to_first')),
+        item('date', Icons.calendar_month_rounded, s.t('go_to_date')),
+        item('silent', chat.defaultDisableNotification ? Icons.notifications_active_outlined : Icons.notifications_paused_outlined,
+            s.t(chat.defaultDisableNotification ? 'silent_default_off' : 'silent_default_on')),
+        if (_pinned != null && _canUnpinAll(chat)) item('unpin_all', Icons.push_pin_outlined, s.t('unpin_all')),
         if (chat.hasScheduledMessages) item('scheduled', Icons.schedule_rounded, s.t('scheduled_messages')),
         item('wallpaper', Icons.wallpaper_rounded, s.t('chat_background')),
         item('clear', Icons.cleaning_services_rounded, s.t('clear_history')),
@@ -839,7 +875,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (seconds != null && mounted) await guard(context, () => account.setMuted(chat, seconds));
         }
       case 'video':
-        showToast(context, s.t('calls_soon'));
+        final user = _callableUser(chat);
+        if (user != null) await startTelegramCall(context, user.id, video: true);
       case 'search':
         final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => ChatSearchScreen(chatId: chat.id)));
         if (id != null && mounted) await _jumpTo(id);
@@ -848,6 +885,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (id != null && mounted) await _jumpTo(id);
       case 'first':
         await _jumpToFirst(chat);
+      case 'date':
+        final now = DateTime.now();
+        final day = await showDatePicker(context: context, firstDate: DateTime(2013, 8), lastDate: now, initialDate: now);
+        if (day == null || !mounted) return;
+        // End of the chosen day: Telegram returns the last message sent no later than this.
+        final until = DateTime(day.year, day.month, day.day, 23, 59, 59).millisecondsSinceEpoch ~/ 1000;
+        final found = await guard(context, () => account.send<td.Message>(td.GetChatMessageByDate(chatId: chat.id, date: until)));
+        if (found != null && mounted) await _jumpTo(found.id);
+      case 'silent':
+        await guard(
+          context,
+          () => account.send<td.Ok>(td.ToggleChatDefaultDisableNotification(chatId: chat.id, defaultDisableNotification: !chat.defaultDisableNotification)),
+        );
+      case 'unpin_all':
+        final ok = await confirm(context, title: s.t('unpin_all'), destructive: true);
+        if (!ok || !mounted) return;
+        await guard(context, () => account.send<td.Ok>(td.UnpinAllChatMessages(chatId: chat.id)));
+        await _refreshPinned();
       case 'scheduled':
         await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ScheduledMessagesScreen(chatId: chat.id)));
       case 'wallpaper':
@@ -991,13 +1046,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             showTail: !sameSenderAsNewer,
             selected: _selected.contains(message.id) || _highlighted == message.id,
             onTap: () {
-              if (_selected.isNotEmpty) _toggleSelected(message);
+              if (_selected.isNotEmpty) {
+                _toggleSelected(message);
+              } else if (!isDesktop) {
+                // Telegram on phones: a tap on the message or the empty space beside it opens the menu.
+                unawaited(_showMessageMenu(message));
+              }
             },
             onLongPress: () => _selected.isNotEmpty ? _toggleSelected(message) : _showMessageMenu(message),
             onReplyTap: _jumpTo,
             onInsertText: _insertText,
             album: album,
           );
+          // Telegram: swipe a message left to reply (not while selecting, where you cannot write, or before it is sent).
+          if (_selected.isEmpty && _account.canSendMessages(chat) && message.sendingState == null) {
+            item = SwipeToReply(onReply: () => unawaited(_runAction('reply', message, null)), child: item);
+          }
         }
         return Column(
           key: key,

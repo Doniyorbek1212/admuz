@@ -55,6 +55,8 @@ void main() {
         'main', 'fix', 'translate', 'emoji', 'summarize', 'clear', 'mute', 'delete', 'pin', 'retry', 'reply', 'copy',
         'edit', 'forward', 'share', 'select', 'gallery', 'camera', 'video', 'file', 'location', 'poll', 'contact', 'read',
         'archive', 'count', 'domain', 'seconds', 'bot', 'now', 'scheduled', 'reschedule', 'admins', 'dismiss', 'remove', 'version',
+        'amount', 'code', 'days', 'default', 'first', 'list', 'my_shop', 'old', 'period', 'price', 'reason', 'region', 'regions',
+        'soon', 'wallpaper', 'what', 'total', 'system_gallery', 'set', 'moderate', 'everyone', 'rejoin', 'renew',
       };
       final missing = used.where((k) => !notKeys.contains(k) && !en.containsKey(k) && !en.containsKey('${k}_one')).toList()..sort();
       expect(missing, isEmpty);

@@ -12,6 +12,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../profile/chat_info_screen.dart';
 
 class ChatTile extends ConsumerWidget {
   const ChatTile({super.key, required this.chatId, required this.list, required this.onTap, this.selected = false});
@@ -82,13 +83,14 @@ class ChatTile extends ConsumerWidget {
       subtitle = const SizedBox.shrink();
     }
 
-    final unread = chat.unreadCount > 0 || chat.isMarkedAsUnread;
+    final unreadCount = account.unreadFor(chat);
+    final unread = unreadCount > 0 || chat.isMarkedAsUnread;
     final trailingBadges = <Widget>[
       if (chat.unreadMentionCount > 0) _Badge(text: '@', color: theme.colorScheme.primary),
       if (chat.unreadReactionCount > 0) _Badge(text: '❤', color: Colors.redAccent),
       if (unread)
         _Badge(
-          text: chat.unreadCount > 0 ? formatCount(chat.unreadCount) : '',
+          text: unreadCount > 0 ? formatCount(unreadCount) : '',
           color: muted ? colors.mutedBadge : colors.unreadBadge,
         )
       else if (position?.isPinned ?? false)
@@ -110,7 +112,12 @@ class ChatTile extends ConsumerWidget {
           child: Row(
             children: [
               // Denser rows on desktop, close to Telegram Desktop's list.
-              _StoryRing(chatId: chat.id, size: isDesktop ? 48 : 56, child: ChatAvatar(chatId: chat.id, size: isDesktop ? 48 : 56)),
+              GestureDetector(
+                onTap: ref.watch(settingsProvider.select((st) => st.avatarOpensProfile))
+                    ? () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id)))
+                    : null,
+                child: _StoryRing(chatId: chat.id, size: isDesktop ? 48 : 56, child: ChatAvatar(chatId: chat.id, size: isDesktop ? 48 : 56)),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -231,7 +238,7 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
   final pinned = account.positionIn(chat, list)?.isPinned ?? false;
   final muted = account.isMuted(chat);
   final archived = account.isArchived(chat);
-  final unread = chat.unreadCount > 0 || chat.isMarkedAsUnread;
+  final unread = account.unreadFor(chat) > 0 || chat.isMarkedAsUnread;
   final isPrivate = account.privateUser(chat) != null;
   final hidden = ref.read(settingsProvider).hiddenChatIds.contains(chat.id);
   final action = await showModalBottomSheet<String>(
@@ -286,6 +293,9 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
       await guard(context, () => account.setMuted(chat, muted ? 0 : muteForever));
     case 'archive':
       await guard(context, () => account.setArchived(chat, !archived));
+    case 'read' when unread && ref.read(settingsProvider).ghostMode && !chat.isMarkedAsUnread:
+      // Ghost mode: read on this phone only, so the sender still sees the message as unread.
+      account.markReadLocally(chat.id);
     case 'read':
       await guard(context, () => unread ? account.markRead(chat) : account.markUnread(chat));
     case 'hide':

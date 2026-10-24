@@ -13,6 +13,8 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
+import 'event_log_screen.dart';
+import 'supergroup_settings.dart';
 
 /// Entry list of admin tools for a group or channel.
 class ManageChatScreen extends ConsumerWidget {
@@ -89,6 +91,55 @@ class ManageChatScreen extends ConsumerWidget {
                 final value = await _pickSeconds(context, s, const [0, 86400, 604800, 2592000], chat.messageAutoDeleteTime);
                 if (value != null && context.mounted) await guard(context, () => account.setAutoDelete(chatId, value));
               },
+            ),
+          if (account.supergroupOf(chat) != null && (isCreator || rights != null))
+            ListTile(
+              leading: const Icon(Icons.history_rounded),
+              title: Text(s.t('recent_actions')),
+              onTap: () => push(EventLogScreen(chatId: chatId)),
+            ),
+          if (isCreator)
+            SwitchListTile(
+              secondary: const Icon(Icons.no_photography_outlined),
+              title: Text(s.t('protect_content')),
+              subtitle: Text(s.t('protect_content_hint')),
+              value: chat.hasProtectedContent,
+              onChanged: (on) => guard(context, () => account.send<td.Ok>(td.ToggleChatHasProtectedContent(chatId: chatId, hasProtectedContent: on))),
+            ),
+          if (isCreator && account.basicGroupOf(chat) != null)
+            ListTile(
+              leading: const Icon(Icons.upgrade_rounded),
+              title: Text(s.t('upgrade_to_supergroup')),
+              subtitle: Text(s.t('upgrade_to_supergroup_hint')),
+              onTap: () async {
+                final ok = await confirm(context, title: s.t('upgrade_to_supergroup'), message: s.t('upgrade_to_supergroup_hint'));
+                if (!ok || !context.mounted) return;
+                final upgraded = await guard(context, () => account.send<td.Chat>(td.UpgradeBasicGroupChatToSupergroupChat(chatId: chatId)));
+                if (upgraded != null && context.mounted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  openChat(context, upgraded.id);
+                }
+              },
+            ),
+          if (chat.canBeDeletedForAllUsers && account.privateUser(chat) == null)
+            ListTile(
+              leading: Icon(Icons.delete_forever_rounded, color: Theme.of(context).colorScheme.error),
+              title: Text(s.t(isChannel ? 'delete_channel' : 'delete_group'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              onTap: () async {
+                final ok = await confirm(context, title: s.t(isChannel ? 'delete_channel' : 'delete_group'), message: s.t('delete_for_all_hint'), destructive: true);
+                if (!ok || !context.mounted) return;
+                final done = await guard(context, () async {
+                  await account.send<td.Ok>(td.DeleteChat(chatId: chatId));
+                  return true;
+                });
+                if (done == true && context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+              },
+            ),
+          if (account.supergroupOf(chat) != null && (isCreator || rights != null))
+            ListTile(
+              leading: const Icon(Icons.tune_rounded),
+              title: Text(s.t('group_settings')),
+              onTap: () => push(SupergroupSettingsScreen(chatId: chatId)),
             ),
         ],
       ),

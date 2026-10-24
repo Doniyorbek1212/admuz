@@ -14,6 +14,7 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
+import '../../widgets/playback_bar.dart';
 import '../chat/chat_screen.dart';
 import '../chat/topics_screen.dart';
 import '../contacts/contacts_screen.dart';
@@ -94,6 +95,7 @@ class HomeScreen extends ConsumerWidget {
                     child: Column(
                       children: [
                         _DesktopListHeader(showMenu: tabs.length <= 1),
+                        const PlaybackBar(),
                         Expanded(child: pages),
                       ],
                     ),
@@ -128,12 +130,17 @@ class HomeScreen extends ConsumerWidget {
                         tooltip: s.t('search'),
                         onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
                       ),
-                      const _RoundAction(child: GhostModeButton()),
+                      if (ref.watch(settingsProvider.select((st) => st.showGhostButton))) const _RoundAction(child: GhostModeButton()),
                       const SizedBox(width: 8),
                     ],
                     bottom: tabs.length > 1 ? _PillTabBar(tabs: tabs) : null,
                   ),
-                  body: _ListCard(child: pages),
+                  body: Column(
+                    children: [
+                      const PlaybackBar(),
+                      Expanded(child: _ListCard(child: pages)),
+                    ],
+                  ),
                   // Lifts the button above the shell's floating bottom bar (reported as bottom padding).
                   floatingActionButton: Padding(
                     padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
@@ -420,7 +427,7 @@ class _DesktopListHeader extends ConsumerWidget {
               ),
             ),
           ),
-          GhostModeButton(color: theme.hintColor),
+          if (ref.watch(settingsProvider.select((st) => st.showGhostButton))) GhostModeButton(color: theme.hintColor),
           // Takes the floating "new message" button's place, as in Telegram Desktop.
           IconButton(
             icon: Icon(Icons.edit_outlined, color: theme.hintColor),
@@ -658,7 +665,7 @@ class _ArchiveTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
     final s = context.s;
-    final unread = chats.where((c) => c.unreadCount > 0).length;
+    final unread = chats.where((c) => account.unreadFor(c) > 0).length;
     final names = chats.take(4).map((c) => chatTitle(c, account, s)).join(', ');
     final accent = Theme.of(context).colorScheme.primary;
     return InkWell(

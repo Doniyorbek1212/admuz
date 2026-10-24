@@ -46,7 +46,8 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
       await controller.initialize();
       await controller.setVolume(0);
       await controller.setLooping(true);
-      await controller.play();
+      // Power saving / video autoplay off: the first frame waits for a tap.
+      if (ref.read(motionProvider).videos) await controller.play();
     } on Object catch (error) {
       debugPrint('video note failed: $error');
       await controller.dispose();
@@ -64,7 +65,8 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     // Finished the audible run: back to the silent loop.
     if (_withSound && !value.isPlaying && value.position >= value.duration - const Duration(milliseconds: 200)) {
       setState(() => _withSound = false);
-      unawaited(controller.setVolume(0).then((_) => controller.setLooping(true)).then((_) => controller.play()));
+      final loop = ref.read(motionProvider).videos;
+      unawaited(controller.setVolume(0).then((_) => controller.setLooping(true)).then((_) => loop ? controller.play() : controller.seekTo(Duration.zero)));
       return;
     }
     if (_withSound) setState(() {});
