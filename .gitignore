@@ -37,3 +37,6 @@ mobile/test/failures/
 
 # Local agent settings
 .claude/
+
+# Deploy archive
+server.tgz

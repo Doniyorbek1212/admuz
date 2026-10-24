@@ -267,8 +267,22 @@ class AdminUser(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)
     role: Mapped[AdminRole] = mapped_column(_enum(AdminRole, "admin_role"))
+    # Optional login/password for the web panel (scrypt hash); the key keeps working alongside.
+    login: Mapped[str | None] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AppSetting(Base):
+    """Owner-editable settings (prices, payment card, app release) overriding the environment defaults."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(2000))
+    updated_by: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AuditLog(Base):

@@ -1,15 +1,19 @@
 """Operational commands.
 
     python -m app.cli create-admin <name> <viewer|support|finance|owner>
+    python -m app.cli set-login <name> <login> <password>
+    python -m app.cli list-admins
     python -m app.cli release-expired-reservations
 """
 
 import asyncio
 import sys
 
+from sqlalchemy import select
+
 from app.db import SessionFactory
 from app.models import AdminRole, AdminUser
-from app.security import new_secret, sha256_hex
+from app.security import hash_password, new_secret, sha256_hex
 from app.services import credits
 from app.services.audit import audit
 
@@ -24,6 +28,25 @@ async def create_admin(name: str, role: str) -> None:
     print(f"admin key for {name} ({role}): {key}")
 
 
+async def set_login(name: str, login: str, password: str) -> None:
+    async with SessionFactory() as db:
+        admin = await db.scalar(select(AdminUser).where(AdminUser.name == name))
+        if admin is None:
+            print(f"no admin named {name}")
+            sys.exit(1)
+        admin.login = login
+        admin.password_hash = hash_password(password)
+        audit(db, "cli", "admin_credentials_set", name, login=login)
+        await db.commit()
+    print(f"login set for {name}: {login}")
+
+
+async def list_admins() -> None:
+    async with SessionFactory() as db:
+        for admin in await db.scalars(select(AdminUser).order_by(AdminUser.created_at)):
+            print(f"{admin.name}	{admin.role.value}	active={admin.active}	login={admin.login or '-'}")
+
+
 async def release_expired() -> None:
     async with SessionFactory() as db:
         released = await credits.release_expired(db)
@@ -34,6 +57,10 @@ def main() -> None:
     match sys.argv[1:]:
         case ["create-admin", name, role]:
             asyncio.run(create_admin(name, role))
+        case ["set-login", name, login, password]:
+            asyncio.run(set_login(name, login, password))
+        case ["list-admins"]:
+            asyncio.run(list_admins())
         case ["release-expired-reservations"]:
             asyncio.run(release_expired())
         case _:

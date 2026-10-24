@@ -32,7 +32,7 @@ from app.providers.mock import make_token, sign_notification
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 TABLES = (
-    "stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
+    "app_settings, stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
     "ai_usage, credit_reservations, credit_ledger, credit_accounts, entitlement_overrides, transactions, "
     "provider_events, purchases, subscriptions, devices, audit_log, admin_users, customers"
 )

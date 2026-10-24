@@ -48,6 +48,24 @@ def sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+
+
+def hash_password(password: str) -> str:
+    """scrypt with a random salt, stored as scrypt$<salt hex>$<hash hex>."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, dklen=32, **_SCRYPT)
+    return f"scrypt${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    if not stored or not stored.startswith("scrypt$"):
+        return False
+    _, salt_hex, digest_hex = stored.split("$", 2)
+    digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), dklen=32, **_SCRYPT)
+    return hmac.compare_digest(digest.hex(), digest_hex)
+
+
 def hmac_sha256_hex(secret: str, message: bytes) -> str:
     return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 

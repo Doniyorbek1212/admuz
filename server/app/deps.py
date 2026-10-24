@@ -57,16 +57,25 @@ async def get_current_customer(request: Request, db: DbDep) -> CurrentCustomer:
 CustomerDep = Annotated[CurrentCustomer, Depends(get_current_customer)]
 
 _ROLE_RANK = {AdminRole.VIEWER: 0, AdminRole.SUPPORT: 1, AdminRole.FINANCE: 2, AdminRole.OWNER: 3}
+ADMIN_FAILURES_PER_WINDOW = 20
+ADMIN_SESSION_PREFIX = "adminsess:"
 
 
 def require_admin(minimum: AdminRole) -> Callable[..., Coroutine[Any, Any, AdminUser]]:
     """Admin auth via X-Admin-Key (stored hashed). Roles are hierarchical."""
 
-    async def dependency(db: DbDep, x_admin_key: Annotated[str | None, Header()] = None) -> AdminUser:
+    async def dependency(request: Request, db: DbDep, x_admin_key: Annotated[str | None, Header()] = None) -> AdminUser:
         if not x_admin_key:
             raise unauthorized("ADMIN_KEY_REQUIRED")
         admin = await db.scalar(select(AdminUser).where(AdminUser.key_hash == sha256_hex(x_admin_key)))
+        if admin is None:
+            # Not a permanent key: maybe a session token from login/password (see admin_auth).
+            session_admin = await get_redis().get(f"{ADMIN_SESSION_PREFIX}{sha256_hex(x_admin_key)}")
+            if session_admin:
+                admin = await db.get(AdminUser, uuid.UUID(session_admin))
         if admin is None or not admin.active:
+            # The web panel makes key guessing cheap: cap wrong keys per address.
+            await rate_limit(f"adminfail:{client_ip(request)}", limit=ADMIN_FAILURES_PER_WINDOW, window_seconds=900)
             raise unauthorized("ADMIN_KEY_INVALID")
         if _ROLE_RANK[admin.role] < _ROLE_RANK[minimum]:
             raise forbidden("ADMIN_ROLE_INSUFFICIENT")

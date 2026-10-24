@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.deps import CustomerDep, DbDep, rate_limit
 from app.errors import bad_request, conflict, not_found
 from app.market import Category, MediaItem, OptionalMediaUrl, Phone, Region, Telegram, movement_out, product_out, shop_out
 from app.models import ListingStatus, MediaUpload, Product, Shop, StockKind, StockMovement
+from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
 
 router = APIRouter(prefix="/v1/market", tags=["market"])
@@ -159,7 +159,7 @@ async def my_shops(current: CustomerDep, db: DbDep) -> dict[str, Any]:
         .order_by(Shop.created_at)
     )
     shops = [shop_out(shop, product_count=n, private=True) for shop, n in rows.all()]
-    settings = get_settings()
+    settings = await load_market_settings(db)
     next_price = settings.extra_shop_price_uzs if len(shops) >= settings.shop_free_limit else 0
     return {"shops": shops, "free_limit": settings.shop_free_limit, "next_shop_price_uzs": next_price}
 
@@ -171,7 +171,7 @@ async def create_shop(body: ShopIn, current: CustomerDep, db: DbDep) -> dict[str
     count = await db.scalar(select(func.count()).select_from(Shop).where(Shop.owner_id == current.id, Shop.status.in_(_OPEN))) or 0
     if count >= MAX_SHOPS_PER_CUSTOMER:
         raise bad_request("SHOP_LIMIT_REACHED")
-    settings = get_settings()
+    settings = await load_market_settings(db)
     paid = count >= settings.shop_free_limit
     shop = Shop(
         owner_id=current.id,

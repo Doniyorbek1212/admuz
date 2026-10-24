@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>UZARO Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="admin.css">
+<script src="admin.js" defer></script>
+</head>
+<body>
+<div id="login" class="login">
+  <form id="login-form" class="login-card" method="post" autocomplete="off">
+    <div class="brand-mark" aria-hidden="true">U</div>
+    <h1>UZARO Admin</h1>
+    <p class="muted">Admin login va parolingizni kiriting.</p>
+    <div id="by-password" class="field-group">
+      <label for="admin-login">Login</label>
+      <input id="admin-login" autocomplete="username" spellcheck="false">
+      <label for="admin-password">Parol</label>
+      <input id="admin-password" type="password" autocomplete="current-password">
+    </div>
+    <div id="by-key" class="field-group" hidden>
+      <label for="admin-key">Admin kaliti</label>
+      <input id="admin-key" type="password" spellcheck="false">
+    </div>
+    <p id="login-error" class="error" role="alert" hidden></p>
+    <button class="btn primary wide" type="submit">Kirish</button>
+    <button class="link-btn" id="switch-mode" type="button">Kalit bilan kirish</button>
+  </form>
+</div>
+
+<div id="app" class="shell" hidden>
+  <aside class="side" id="side">
+    <div class="side-brand"><div class="brand-mark small" aria-hidden="true">U</div><div><b>UZARO</b><span>Admin panel</span></div></div>
+    <nav id="nav" aria-label="Bo'limlar"></nav>
+    <div class="side-foot">
+      <div id="whoami" class="who"></div>
+      <button class="btn ghost wide" id="logout" type="button">Chiqish</button>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="top">
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menyu">☰</button>
+      <h2 id="page-title"></h2>
+      <div class="top-actions" id="top-actions"></div>
+    </header>
+    <section id="page" class="page" aria-live="polite"></section>
+  </main>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head"><h3 id="modal-title"></h3><button class="icon-btn" id="modal-close" type="button" aria-label="Yopish">✕</button></div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -9,11 +9,11 @@ from fastapi import APIRouter, File, UploadFile, status
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import select
 
-from app.config import get_settings
 from app.deps import CustomerDep, DbDep, rate_limit
 from app.errors import bad_request, conflict, not_found
 from app.market import REGIONS, MediaUrl, OptionalHttpsUrl, Region, ad_out
 from app.models import AdCampaign, AdStatus, MediaUpload
+from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
 
 router = APIRouter(prefix="/v1/ads", tags=["ads"])
@@ -22,8 +22,8 @@ MAX_DAYS = 30
 MAX_ACTIVE_ADS_RETURNED = 10
 
 
-def ad_price(regions: int, days: int) -> int:
-    return regions * days * get_settings().ad_price_per_region_day_uzs
+def ad_price(regions: int, days: int, price_per_region_day: int) -> int:
+    return regions * days * price_per_region_day
 
 
 class AdIn(BaseModel):
@@ -37,8 +37,8 @@ class AdIn(BaseModel):
 
 
 @router.get("/config")
-async def ads_config(current: CustomerDep) -> dict[str, Any]:
-    settings = get_settings()
+async def ads_config(current: CustomerDep, db: DbDep) -> dict[str, Any]:
+    settings = await load_market_settings(db)
     return {
         "regions": list(REGIONS),
         "price_per_region_day_uzs": settings.ad_price_per_region_day_uzs,
@@ -85,7 +85,7 @@ async def create_ad(body: AdIn, current: CustomerDep, db: DbDep) -> dict[str, An
         link_url=body.link_url,
         regions=regions,
         days=body.days,
-        price_uzs=ad_price(len(regions), body.days),
+        price_uzs=ad_price(len(regions), body.days, (await load_market_settings(db)).ad_price_per_region_day_uzs),
         status=AdStatus.AWAITING_PAYMENT,
     )
     db.add(ad)
