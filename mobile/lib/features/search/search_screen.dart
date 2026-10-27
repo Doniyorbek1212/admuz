@@ -21,7 +21,10 @@ class _SearchResults {
 }
 
 class SearchScreen extends ConsumerStatefulWidget {
-  const SearchScreen({super.key});
+  const SearchScreen({super.key, this.initialQuery = ''});
+
+  /// Text searched right away, e.g. a tapped #hashtag.
+  final String initialQuery;
 
   @override
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
@@ -33,6 +36,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   bool _loading = false;
   _SearchResults _results = const _SearchResults();
   int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialQuery.isNotEmpty) {
+      _query = widget.initialQuery;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _search());
+    }
+  }
 
   @override
   void dispose() {
@@ -127,8 +139,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ref.watch(chatListProvider('main'));
     return Scaffold(
       appBar: AppBar(
-        title: TextField(
-          autofocus: true,
+        title: TextFormField(
+          initialValue: widget.initialQuery,
+          autofocus: widget.initialQuery.isEmpty,
           style: TextStyle(color: context.onAppBar),
           cursorColor: context.onAppBar,
           decoration: InputDecoration(hintText: s.t('search_hint'), hintStyle: TextStyle(color: context.onAppBarMuted), border: InputBorder.none),

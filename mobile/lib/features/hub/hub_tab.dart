@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_screen.dart';
@@ -15,6 +17,7 @@ import '../settings/settings_screen.dart';
 import 'hub_banners.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
+import 'places_screen.dart';
 
 /// "Hub" tab of the bottom bar: banners, local services, entertainment and tools.
 class HubTab extends ConsumerWidget {
@@ -26,7 +29,7 @@ class HubTab extends ConsumerWidget {
     final region = ref.watch(hubRegionProvider);
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: AppBar(title: Text(s.t('tab_hub'))),
+      appBar: BrandTabBar(title: s.t('tab_hub')),
       body: RefreshIndicator(
         onRefresh: () async => ref.invalidate(activeAdsProvider(region)),
         child: ListView(
@@ -48,7 +51,9 @@ class HubTab extends ConsumerWidget {
                   Icon(Icons.chevron_right_rounded, color: Theme.of(context).hintColor),
                 ],
               ),
-              onHeaderTap: () => _pickRegion(context, ref),
+              onHeaderTap: () => ref.read(sadoApiProvider).configured
+                  ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlacesScreen()))
+                  : _pickRegion(context, ref),
               items: hubLocalItems,
             ),
             _HubSection(
@@ -151,9 +156,14 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
   final label = context.t(item.labelKey);
   void push(Widget screen) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
   switch (item.action) {
-    case HubAction.local:
-      final region = ref.read(hubRegionProvider);
-      push(HubResultsScreen(title: label, query: '${item.query} $region', mapQuery: '${item.mapQuery} $region'));
+    case HubAction.places:
+      if (ref.read(sadoApiProvider).configured) {
+        push(PlacesScreen(initialCategory: item.placeCategory));
+      } else {
+        // No UZARO server in this build: fall back to public Telegram channels and a map search.
+        final region = ref.read(hubRegionProvider);
+        push(HubResultsScreen(title: label, query: '${item.query} $region', mapQuery: '${item.mapQuery} $region'));
+      }
     case HubAction.search:
       push(HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.themes:

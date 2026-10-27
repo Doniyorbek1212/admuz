@@ -4,6 +4,7 @@
     python -m app.cli set-login <name> <login> <password>
     python -m app.cli list-admins
     python -m app.cli release-expired-reservations
+    python -m app.cli import-places [region ...]   (all regions when none given; OpenStreetMap via Overpass)
 """
 
 import asyncio
@@ -12,9 +13,10 @@ import sys
 from sqlalchemy import select
 
 from app.db import SessionFactory
+from app.market import REGIONS
 from app.models import AdminRole, AdminUser
 from app.security import hash_password, new_secret, sha256_hex
-from app.services import credits
+from app.services import credits, osm_import
 from app.services.audit import audit
 
 
@@ -53,6 +55,19 @@ async def release_expired() -> None:
     print(f"released {released} expired reservations")
 
 
+async def import_places(regions: list[str]) -> None:
+    unknown = [r for r in regions if r not in REGIONS]
+    if unknown:
+        print(f"unknown regions: {', '.join(unknown)}")
+        sys.exit(1)
+    for region in regions or REGIONS:
+        async with SessionFactory() as db:
+            count = await osm_import.import_region(db, region)
+        print(f"{region}: {count} places")
+        # Overpass is a shared public service: pause between regions.
+        await asyncio.sleep(5)
+
+
 def main() -> None:
     match sys.argv[1:]:
         case ["create-admin", name, role]:
@@ -63,6 +78,8 @@ def main() -> None:
             asyncio.run(list_admins())
         case ["release-expired-reservations"]:
             asyncio.run(release_expired())
+        case ["import-places", *regions]:
+            asyncio.run(import_places(regions))
         case _:
             print(__doc__)
             sys.exit(2)

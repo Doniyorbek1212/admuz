@@ -7,9 +7,6 @@ import '../../state/settings.dart';
 
 /// What tapping a hub tile does.
 enum HubAction {
-  /// Telegram channels for "[query] [region]", plus a map search.
-  local,
-
   /// Telegram channels and groups for [HubItem.query].
   search,
 
@@ -24,10 +21,13 @@ enum HubAction {
 
   /// Approved online shops of the selected region.
   shops,
+
+  /// The region's directory of places (server), filtered to [HubItem.placeCategory].
+  places,
 }
 
 class HubItem {
-  const HubItem(this.labelKey, this.icon, this.color, {this.action = HubAction.search, this.query, this.mapQuery});
+  const HubItem(this.labelKey, this.icon, this.color, {this.action = HubAction.search, this.query, this.mapQuery, this.placeCategory});
 
   final String labelKey;
   final IconData icon;
@@ -39,17 +39,20 @@ class HubItem {
 
   /// Map search terms; the region is appended.
   final String? mapQuery;
+
+  /// Server category key of the places directory (taxi, pharmacy...).
+  final String? placeCategory;
 }
 
 const hubLocalItems = [
-  HubItem('hub_taxi', Icons.local_taxi_rounded, Color(0xFFFFB020), action: HubAction.local, query: 'taksi', mapQuery: 'taxi'),
-  HubItem('hub_pharmacy', Icons.medical_services_rounded, Color(0xFF2EC27E), action: HubAction.local, query: 'dorixona', mapQuery: 'pharmacy'),
-  HubItem('hub_hotel', Icons.king_bed_rounded, Color(0xFF8B6CFF), action: HubAction.local, query: 'mehmonxona', mapQuery: 'hotel'),
-  HubItem('hub_doctors', Icons.medical_information_rounded, Color(0xFF3D8BFF), action: HubAction.local, query: 'shifokor', mapQuery: 'clinic'),
-  HubItem('hub_workshops', Icons.handyman_rounded, Color(0xFFFF7043), action: HubAction.local, query: 'usta xizmati', mapQuery: 'car repair'),
-  HubItem('hub_banks', Icons.credit_card_rounded, Color(0xFF26C6B0), action: HubAction.local, query: 'bank', mapQuery: 'bank'),
-  HubItem('hub_travel', Icons.map_rounded, Color(0xFFFF5C8A), action: HubAction.local, query: 'sayohat', mapQuery: 'tourist attractions'),
-  HubItem('hub_food', Icons.restaurant_rounded, Color(0xFFFF8A3D), action: HubAction.local, query: 'oshxona', mapQuery: 'restaurant'),
+  HubItem('hub_taxi', Icons.local_taxi_rounded, Color(0xFFFFB020), action: HubAction.places, placeCategory: 'taxi', query: 'taksi', mapQuery: 'taxi'),
+  HubItem('hub_pharmacy', Icons.medical_services_rounded, Color(0xFF2EC27E), action: HubAction.places, placeCategory: 'pharmacy', query: 'dorixona', mapQuery: 'pharmacy'),
+  HubItem('hub_hotel', Icons.king_bed_rounded, Color(0xFF8B6CFF), action: HubAction.places, placeCategory: 'hotel', query: 'mehmonxona', mapQuery: 'hotel'),
+  HubItem('hub_doctors', Icons.medical_information_rounded, Color(0xFF3D8BFF), action: HubAction.places, placeCategory: 'doctor', query: 'shifokor', mapQuery: 'clinic'),
+  HubItem('hub_workshops', Icons.handyman_rounded, Color(0xFFFF7043), action: HubAction.places, placeCategory: 'car_service', query: 'usta xizmati', mapQuery: 'car repair'),
+  HubItem('hub_banks', Icons.credit_card_rounded, Color(0xFF26C6B0), action: HubAction.places, placeCategory: 'bank', query: 'bank', mapQuery: 'bank'),
+  HubItem('hub_travel', Icons.map_rounded, Color(0xFFFF5C8A), action: HubAction.places, placeCategory: 'travel', query: 'sayohat', mapQuery: 'tourist attractions'),
+  HubItem('hub_food', Icons.restaurant_rounded, Color(0xFFFF8A3D), action: HubAction.places, placeCategory: 'food', query: 'oshxona', mapQuery: 'restaurant'),
   HubItem('hub_shops', Icons.storefront_rounded, Color(0xFF3D8BFF), action: HubAction.shops),
 ];
 

@@ -6,6 +6,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../state/telegram.dart';
 import 'call_session.dart';
+import 'group_call_session.dart';
 
 /// Owns the account's calls: turns TDLib call updates into [CallSession]s and exposes the current one.
 /// The UI listens to [current] and shows the call screen while it is set.
@@ -15,6 +16,9 @@ class CallService {
   static final instance = CallService._();
 
   final current = ValueNotifier<CallSession?>(null);
+
+  /// The joined video chat, if any; its screen is opened by whoever joins and can be reopened from the chat.
+  final currentGroup = ValueNotifier<GroupCallSession?>(null);
   final Map<int, CallSession> _sessions = {};
   StreamSubscription<td.Update>? _subscription;
   TelegramAccount? _account;
@@ -35,7 +39,39 @@ class CallService {
     }
     _sessions.clear();
     current.value = null;
+    currentGroup.value?.dispose();
+    currentGroup.value = null;
     _account = null;
+  }
+
+  /// Joins the chat's video chat (or returns the one already joined).
+  Future<GroupCallSession?> joinVideoChat(int chatId, int groupCallId) async {
+    final account = _account;
+    if (account == null) return null;
+    final joined = currentGroup.value;
+    if (joined != null && !joined.ended) {
+      if (joined.id == groupCallId) return joined;
+      await leaveVideoChat();
+    }
+    final groupCall = await account.send<td.GroupCall>(td.GetGroupCall(groupCallId: groupCallId));
+    final session = GroupCallSession(account, chatId, groupCall);
+    currentGroup.value = session;
+    try {
+      await session.join();
+    } on Object {
+      currentGroup.value = null;
+      session.dispose();
+      rethrow;
+    }
+    return session;
+  }
+
+  Future<void> leaveVideoChat({bool endForAll = false}) async {
+    final session = currentGroup.value;
+    if (session == null) return;
+    currentGroup.value = null;
+    await (endForAll ? session.endForAll() : session.leave());
+    session.dispose();
   }
 
   /// Starts a voice or video call; the call screen opens when TDLib reports the new call.
@@ -64,19 +100,34 @@ class CallService {
           current.value = session;
           if (!call.isOutgoing) _startRinging(session);
         }
+        final wasEnded = session.phase == CallPhase.ended;
         await session.onCallUpdate(call);
         if (session.phase != CallPhase.ringing) _stopRinging();
-        if (session.phase == CallPhase.ended) {
+        // TDLib may repeat the final state; schedule the close only on the transition.
+        if (session.phase == CallPhase.ended && !wasEnded) {
           _stopRinging();
           // A rating request keeps the screen open until the user rates or skips (see [close]).
           if (!session.needRating) {
             // Leave the "call ended" state visible for a moment before closing the screen.
             final ended = session;
-            Timer(const Duration(milliseconds: 1500), () => close(ended));
+            // An error message needs a bit longer to read than "call ended".
+            final delay = Duration(milliseconds: session.error == null ? 1500 : 3000);
+            Timer(delay, () => close(ended));
           }
         }
       case td.UpdateNewCallSignalingData(:final callId, :final data):
         await _sessions[callId]?.onSignalingData(data);
+      case td.UpdateGroupCall(:final groupCall):
+        final session = currentGroup.value;
+        if (session?.id != groupCall.id) return;
+        session!.onGroupCall(groupCall);
+        if (session.ended) {
+          currentGroup.value = null;
+          session.dispose();
+        }
+      case td.UpdateGroupCallParticipant(:final groupCallId, :final participant):
+        final session = currentGroup.value;
+        if (session?.id == groupCallId) session!.onParticipant(participant);
       default:
         break;
     }
@@ -84,7 +135,7 @@ class CallService {
 
   /// Drops an ended call and closes its screen.
   void close(CallSession session) {
-    _sessions.remove(session.call.id);
+    if (_sessions.remove(session.call.id) == null) return;
     if (current.value == session) current.value = null;
     session.dispose();
   }

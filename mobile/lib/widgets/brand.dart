@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../core/theme.dart';
 
@@ -97,60 +98,40 @@ class _CornerPainter extends CustomPainter {
   bool shouldRepaint(_CornerPainter old) => old.gradient != gradient || old.top != top;
 }
 
-/// Accent band behind the status bar with a gold hairline under it (white status icons stay readable).
-class BrandStatusBand extends StatelessWidget {
-  const BrandStatusBand({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final top = MediaQuery.paddingOf(context).top;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: Container(
-        height: top + 1.2,
-        decoration: BoxDecoration(
-          gradient: brandGradient(Theme.of(context).colorScheme.primary),
-          border: const Border(bottom: BorderSide(color: brandGold, width: 1.2)),
-        ),
-      ),
-    );
-  }
+/// Ink of the light phone headers: white in dark mode, a deep shade of the accent in light mode.
+Color brandHeaderInk(BuildContext context) {
+  final theme = Theme.of(context);
+  return theme.brightness == Brightness.dark ? Colors.white : Color.lerp(theme.colorScheme.primary, Colors.black, 0.5)!;
 }
 
-/// Floating header capsule (aka-style chat header): accent gradient, gold hairline, soft shadow.
-/// [circle] makes a round button the height of the other pills.
-class BrandPill extends StatelessWidget {
-  const BrandPill({super.key, required this.child, this.onTap, this.circle = false, this.padding = EdgeInsets.zero});
+/// Header of the bottom-bar tabs (To'plam, Contacts, Profile): the same light header as the chat list —
+/// accent band and gold corner wave behind the status bar, a large title in accent ink on the page color.
+class BrandTabBar extends StatelessWidget implements PreferredSizeWidget {
+  const BrandTabBar({super.key, required this.title, this.actions});
 
-  static const height = 52.0;
+  final String title;
+  final List<Widget>? actions;
 
-  final Widget child;
-  final VoidCallback? onTap;
-  final bool circle;
-  final EdgeInsetsGeometry padding;
+  @override
+  Size get preferredSize => const Size.fromHeight(64);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final accent = theme.brightness == Brightness.dark ? Color.lerp(theme.colorScheme.primary, Colors.black, 0.35)! : theme.colorScheme.primary;
-    final shape = circle ? const CircleBorder() : const StadiumBorder();
-    return Container(
-      width: circle ? height : null,
-      height: height,
-      decoration: ShapeDecoration(
-        shape: circle ? const CircleBorder(side: BorderSide(color: brandGold, width: 1)) : const StadiumBorder(side: BorderSide(color: brandGold, width: 1)),
-        gradient: brandGradient(accent),
-        shadows: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
-      child: Material(
-        type: MaterialType.transparency,
-        shape: shape,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(padding: padding, child: Center(widthFactor: circle ? null : 1, child: child)),
-        ),
-      ),
+    final ink = brandHeaderInk(context);
+    return AppBar(
+      toolbarHeight: 64,
+      automaticallyImplyLeading: false,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      foregroundColor: ink,
+      iconTheme: IconThemeData(color: ink),
+      actionsIconTheme: IconThemeData(color: ink),
+      // White status icons sit on the corner wave's accent band in both themes.
+      systemOverlayStyle: SystemUiOverlayStyle.light,
+      flexibleSpace: const BrandCornerWave(),
+      titleSpacing: 20,
+      title: Text(title, style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.3, color: ink)),
+      actions: [...?actions, const SizedBox(width: 8)],
     );
   }
 }
@@ -223,7 +204,7 @@ class BrandLogoBadge extends StatelessWidget {
   );
 }
 
-/// Round accent-gradient action button with a gold rim (the "new message" button).
+/// Round accent-gradient action button (the "new message" button).
 class BrandFab extends StatelessWidget {
   const BrandFab({super.key, required this.icon, required this.tooltip, required this.onPressed, this.busy = false});
 
@@ -240,12 +221,10 @@ class BrandFab extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Container(
-        width: 60,
-        height: 60,
-        padding: const EdgeInsets.all(2.5),
+        width: 58,
+        height: 58,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: brandGoldGradient,
           boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))],
         ),
         child: Material(

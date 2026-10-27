@@ -13,8 +13,13 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
+import '../settings/profile_colors.dart';
+import 'chat_admin_extras.dart';
 import 'event_log_screen.dart';
+import 'invite_link_extras.dart';
+import 'statistics_screen.dart';
 import 'supergroup_settings.dart';
+import 'user_profile_extras.dart';
 
 /// Entry list of admin tools for a group or channel.
 class ManageChatScreen extends ConsumerWidget {
@@ -82,6 +87,25 @@ class ManageChatScreen extends ConsumerWidget {
               onTap: () => push(JoinRequestsScreen(chatId: chatId)),
             ),
           ],
+          if (isCreator || (rights?.canChangeInfo ?? false))
+            ListTile(
+              leading: const Icon(Icons.favorite_border_rounded),
+              title: Text(s.t('reactions')),
+              onTap: () => push(ChatReactionsScreen(chatId: chatId)),
+            ),
+          if (isChannel && (isCreator || (rights?.canChangeInfo ?? false)))
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: Text(s.t('profile_colors')),
+              onTap: () => push(ProfileColorsScreen(chatId: chatId)),
+            ),
+          if (isChannel && isCreator)
+            ListTile(
+              leading: const Icon(Icons.forum_outlined),
+              title: Text(s.t('discussion_group')),
+              subtitle: Text(account.supergroupOf(chat)?.hasLinkedChat == true ? s.t('state_on') : s.t('off')),
+              onTap: () => pickDiscussionGroup(context, account, chatId, linked: account.supergroupOf(chat)?.hasLinkedChat == true),
+            ),
           if (isCreator || (rights?.canChangeInfo ?? false) || (rights?.canDeleteMessages ?? false))
             ListTile(
               leading: const Icon(Icons.timer_outlined),
@@ -91,6 +115,13 @@ class ManageChatScreen extends ConsumerWidget {
                 final value = await _pickSeconds(context, s, const [0, 86400, 604800, 2592000], chat.messageAutoDeleteTime);
                 if (value != null && context.mounted) await guard(context, () => account.setAutoDelete(chatId, value));
               },
+            ),
+          // TDLib reports whether statistics exist (enough members) when the screen asks.
+          if (account.supergroupOf(chat) != null && (isCreator || rights != null))
+            ListTile(
+              leading: const Icon(Icons.insights_rounded),
+              title: Text(s.t('statistics')),
+              onTap: () => push(ChatStatisticsScreen(chatId: chatId)),
             ),
           if (account.supergroupOf(chat) != null && (isCreator || rights != null))
             ListTile(
@@ -264,6 +295,8 @@ class _MembersScreenState extends ConsumerState<MembersScreen> {
               ),
             if (canPromote && isAdmin && status.canBeEdited)
               ListTile(leading: const Icon(Icons.remove_moderator_rounded), title: Text(s.t('dismiss_admin')), onTap: () => Navigator.pop(context, 'dismiss')),
+            if (isCreator && isAdmin)
+              ListTile(leading: const Icon(Icons.key_rounded), title: Text(s.t('transfer_ownership')), onTap: () => Navigator.pop(context, 'transfer')),
             if (canRestrict && !isAdmin && !account.isChannel(chat) && status is! td.ChatMemberStatusBanned)
               ListTile(leading: const Icon(Icons.person_off_rounded), title: Text(s.t('restrict')), onTap: () => Navigator.pop(context, 'restrict')),
             if (canRestrict && (status is td.ChatMemberStatusBanned || status is td.ChatMemberStatusRestricted))
@@ -299,6 +332,9 @@ class _MembersScreenState extends ConsumerState<MembersScreen> {
         await guard(context, () => account.setMemberStatus(widget.chatId, userId, td.ChatMemberStatusAdministrator(canBeEdited: true, rights: rights)));
       case 'dismiss':
         await guard(context, () => account.setMemberStatus(widget.chatId, userId, const td.ChatMemberStatusMember(memberUntilDate: 0)));
+      case 'transfer':
+        final done = await transferOwnership(context, account, widget.chatId, userId);
+        if (done && mounted) showToast(context, s.t('transfer_done'));
       case 'restrict':
         final permissions = await Navigator.of(context).push<td.ChatPermissions>(MaterialPageRoute(
           builder: (_) => PermissionsEditor(title: account.userName(userId), initial: status is td.ChatMemberStatusRestricted ? status.permissions : chat.permissions),
@@ -580,9 +616,12 @@ Future<void> openPermissions(BuildContext context, WidgetRef ref, int chatId) as
 // ------------------------------------------------------------------ invite links
 
 class InviteLinksScreen extends ConsumerStatefulWidget {
-  const InviteLinksScreen({super.key, required this.chatId});
+  const InviteLinksScreen({super.key, required this.chatId, this.creatorUserId});
 
   final int chatId;
+
+  /// Another admin whose links the owner is viewing; null for the user's own links.
+  final int? creatorUserId;
 
   @override
   ConsumerState<InviteLinksScreen> createState() => _InviteLinksScreenState();
@@ -601,7 +640,11 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
   Future<void> _load() async {
     final account = ref.read(accountProvider);
     try {
-      final results = await Future.wait([account.inviteLinks(widget.chatId), account.inviteLinks(widget.chatId, revoked: true)]);
+      final creator = widget.creatorUserId;
+      final results = await Future.wait([
+        account.inviteLinks(widget.chatId, creatorUserId: creator),
+        account.inviteLinks(widget.chatId, revoked: true, creatorUserId: creator),
+      ]);
       if (mounted) {
         setState(() {
           _active = results[0];
@@ -638,13 +681,19 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
           children: [
             ListTile(leading: const Icon(Icons.copy_rounded), title: Text(s.t('copy_link')), onTap: () => Navigator.pop(context, 'copy')),
             ListTile(leading: const Icon(Icons.share_rounded), title: Text(s.t('share')), onTap: () => Navigator.pop(context, 'share')),
-            if (!link.isRevoked)
+            if (link.memberCount > 0)
+              ListTile(leading: const Icon(Icons.group_rounded), title: Text(s.t('link_members')), onTap: () => Navigator.pop(context, 'members')),
+            if (!link.isRevoked && !link.isPrimary)
+              ListTile(leading: const Icon(Icons.edit_rounded), title: Text(s.t('edit')), onTap: () => Navigator.pop(context, 'edit')),
+            if (link.isPrimary && widget.creatorUserId == null)
+              ListTile(leading: const Icon(Icons.autorenew_rounded), title: Text(s.t('link_replace')), onTap: () => Navigator.pop(context, 'replace')),
+            if (!link.isRevoked && !link.isPrimary)
               ListTile(
                 leading: Icon(Icons.link_off_rounded, color: Theme.of(context).colorScheme.error),
                 title: Text(s.t('revoke_link'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 onTap: () => Navigator.pop(context, 'revoke'),
               )
-            else
+            else if (link.isRevoked)
               ListTile(leading: const Icon(Icons.delete_rounded), title: Text(s.t('delete')), onTap: () => Navigator.pop(context, 'delete')),
           ],
         ),
@@ -661,7 +710,38 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
         await guard(context, () => account.revokeInviteLink(widget.chatId, link.inviteLink));
       case 'delete':
         await guard(context, () => account.deleteRevokedInviteLink(widget.chatId, link.inviteLink));
+      case 'members':
+        await showInviteLinkMembers(context, account, widget.chatId, link);
+      case 'replace':
+        final ok = await confirm(context, title: s.t('link_replace'), message: s.t('link_replace_hint'), destructive: true);
+        if (ok && mounted) await guard(context, () => account.send<td.ChatInviteLink>(td.ReplacePrimaryChatInviteLink(chatId: widget.chatId)));
+      case 'edit':
+        final result = await showDialog<(String, int, int, bool)>(context: context, builder: (_) => _NewLinkDialog(initial: link));
+        if (result == null || !mounted) return;
+        await guard(
+          context,
+          () => account.send<td.ChatInviteLink>(td.EditChatInviteLink(
+            chatId: widget.chatId,
+            inviteLink: link.inviteLink,
+            name: result.$1,
+            expirationDate: result.$2,
+            memberLimit: result.$4 ? 0 : result.$3,
+            createsJoinRequest: result.$4,
+          )),
+        );
     }
+    await _load();
+  }
+
+  Future<void> _deleteAllRevoked() async {
+    final s = context.s;
+    final ok = await confirm(context, title: s.t('delete_all_revoked'), destructive: true);
+    if (!ok || !mounted) return;
+    final account = ref.read(accountProvider);
+    await guard(
+      context,
+      () => account.send<td.Ok>(td.DeleteAllRevokedChatInviteLinks(chatId: widget.chatId, creatorUserId: widget.creatorUserId ?? account.myId)),
+    );
     await _load();
   }
 
@@ -684,15 +764,28 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
   Widget build(BuildContext context) {
     final s = context.s;
     final active = _active;
+    final creator = widget.creatorUserId;
     return Scaffold(
-      appBar: AppBar(title: Text(s.t('invite_links'))),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_link_rounded), label: Text(s.t('create_link'))),
+      appBar: AppBar(title: Text(creator == null ? s.t('invite_links') : ref.watch(accountProvider).userName(creator))),
+      floatingActionButton: creator != null
+          ? null
+          : FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_link_rounded), label: Text(s.t('create_link'))),
       body: active == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
                 for (final link in active) _tile(link, s),
-                if (_revoked.isNotEmpty) ...[const Divider(), SectionHeader(s.t('revoked_links')), for (final link in _revoked) _tile(link, s)],
+                if (creator == null) InviteLinkCountsSection(chatId: widget.chatId),
+                if (_revoked.isNotEmpty) ...[
+                  const Divider(),
+                  Row(
+                    children: [
+                      Expanded(child: SectionHeader(s.t('revoked_links'))),
+                      TextButton(onPressed: _deleteAllRevoked, child: Text(s.t('delete_all'))),
+                    ],
+                  ),
+                  for (final link in _revoked) _tile(link, s),
+                ],
                 const SizedBox(height: 80),
               ],
             ),
@@ -701,17 +794,21 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
 }
 
 class _NewLinkDialog extends StatefulWidget {
-  const _NewLinkDialog();
+  const _NewLinkDialog({this.initial});
+
+  /// Link being edited; null when creating a new one.
+  final td.ChatInviteLink? initial;
 
   @override
   State<_NewLinkDialog> createState() => _NewLinkDialogState();
 }
 
 class _NewLinkDialogState extends State<_NewLinkDialog> {
-  final _name = TextEditingController();
-  final _limit = TextEditingController();
-  bool _requests = false;
-  int _expireDays = 0;
+  late final _name = TextEditingController(text: widget.initial?.name ?? '');
+  late final _limit = TextEditingController(text: (widget.initial?.memberLimit ?? 0) > 0 ? '${widget.initial!.memberLimit}' : '');
+  late bool _requests = widget.initial?.createsJoinRequest ?? false;
+  // An edited link keeps its expiry unless a new period is picked (-1).
+  late int _expireDays = (widget.initial?.expirationDate ?? 0) > 0 ? -1 : 0;
 
   @override
   void dispose() {
@@ -724,7 +821,7 @@ class _NewLinkDialogState extends State<_NewLinkDialog> {
   Widget build(BuildContext context) {
     final s = context.s;
     return AlertDialog(
-      title: Text(s.t('create_link')),
+      title: Text(s.t(widget.initial == null ? 'create_link' : 'edit')),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -742,6 +839,8 @@ class _NewLinkDialogState extends State<_NewLinkDialog> {
               initialValue: _expireDays,
               decoration: InputDecoration(labelText: s.t('link_expiry')),
               items: [
+                if ((widget.initial?.expirationDate ?? 0) > 0)
+                  DropdownMenuItem(value: -1, child: Text(formatChatTime(widget.initial!.expirationDate, s.locale))),
                 for (final days in const [0, 1, 7, 30]) DropdownMenuItem(value: days, child: Text(days == 0 ? s.t('never') : s.t('keep_days', {'n': '$days'}))),
               ],
               onChanged: (v) => setState(() => _expireDays = v ?? 0),
@@ -753,11 +852,15 @@ class _NewLinkDialogState extends State<_NewLinkDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel'))),
         TextButton(
           onPressed: () {
-            final expires = _expireDays == 0 ? 0 : DateTime.now().add(Duration(days: _expireDays)).millisecondsSinceEpoch ~/ 1000;
+            final expires = switch (_expireDays) {
+              -1 => widget.initial!.expirationDate,
+              0 => 0,
+              _ => DateTime.now().add(Duration(days: _expireDays)).millisecondsSinceEpoch ~/ 1000,
+            };
             final limit = (int.tryParse(_limit.text.trim()) ?? 0).clamp(0, 99999);
             Navigator.pop(context, (_name.text.trim(), expires, limit, _requests));
           },
-          child: Text(s.t('create')),
+          child: Text(s.t(widget.initial == null ? 'create' : 'save')),
         ),
       ],
     );
@@ -804,7 +907,22 @@ class _JoinRequestsScreenState extends ConsumerState<JoinRequestsScreen> {
     final s = context.s;
     final requests = _requests;
     return Scaffold(
-      appBar: AppBar(title: Text(s.t('join_requests'))),
+      appBar: AppBar(
+        title: Text(s.t('join_requests')),
+        actions: [
+          if (requests != null && requests.length > 1)
+            PopupMenuButton<bool>(
+              onSelected: (approve) async {
+                await guard(context, () => account.send<td.Ok>(td.ProcessChatJoinRequests(chatId: widget.chatId, inviteLink: '', approve: approve)));
+                await _load();
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem(value: true, child: Text(s.t('accept_all'))),
+                PopupMenuItem(value: false, child: Text(s.t('decline_all'))),
+              ],
+            ),
+        ],
+      ),
       body: requests == null
           ? const Center(child: CircularProgressIndicator())
           : requests.isEmpty

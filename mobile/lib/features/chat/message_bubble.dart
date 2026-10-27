@@ -3,14 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/link_safety.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import 'bot_keyboard.dart';
+import 'comments.dart';
 import 'message_content.dart';
 
 /// Replied-to message, fetched on demand.
@@ -40,6 +43,67 @@ class TranslationsNotifier extends Notifier<Map<int, String>> {
 }
 
 final translationsProvider = NotifierProvider<TranslationsNotifier, Map<int, String>>(TranslationsNotifier.new);
+
+/// Messages with dangerous links the user chose to see anyway, this session.
+final _revealedRiskyProvider = NotifierProvider<_RevealedRisky, Set<String>>(_RevealedRisky.new);
+
+class _RevealedRisky extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => const {};
+
+  void reveal(String key) => state = {...state, key};
+}
+
+/// Placeholder for a folded message: why it is hidden and a button to show it.
+class _FoldedRiskyText extends StatelessWidget {
+  const _FoldedRiskyText({required this.onShow});
+
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(context.t('link_hidden_message'), style: TextStyle(color: Theme.of(context).hintColor, fontStyle: FontStyle.italic)),
+          TextButton(onPressed: onShow, child: Text(context.t('link_show_message'))),
+        ]),
+      );
+}
+
+/// Entity text, clamped so a malformed offset can never throw.
+String _slice(String text, td.TextEntity e) {
+  final start = e.offset.clamp(0, text.length);
+  return text.substring(start, (e.offset + e.length).clamp(start, text.length));
+}
+
+/// Red "Dangerous link" label on top of a message whose links phish or hijack accounts.
+class _DangerousLinkChip extends StatelessWidget {
+  const _DangerousLinkChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final danger = Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+          decoration: BoxDecoration(
+            color: danger.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: danger.withValues(alpha: 0.5)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.warning_amber_rounded, size: 15, color: danger),
+            const SizedBox(width: 4),
+            Text(context.t('link_dangerous_label'), style: TextStyle(color: danger, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
 
 class ServiceMessage extends ConsumerWidget {
   const ServiceMessage({super.key, required this.text});
@@ -109,7 +173,17 @@ class MessageBubble extends ConsumerWidget {
           };
     final hasText = text != null && text.text.isNotEmpty;
     // Time sits at the end of the last text line when it fits (Telegram layout).
-    final inlineFooter = hasText && translation == null;
+    final policy = ref.watch(linkPolicyProvider);
+    final linkRisk = text == null
+        ? LinkRisk.safe
+        : worstLinkRisk([
+            for (final e in text.entities)
+              if (e.type case td.TextEntityTypeUrl()) (_slice(text.text, e), null)
+              else if (e.type case td.TextEntityTypeTextUrl(:final url)) (url, _slice(text.text, e)),
+          ], policy: policy);
+    // "Hide messages with dangerous links": the text stays folded until the user asks to see it.
+    final folded = linkRisk.isDangerous && policy.hideMessages && !ref.watch(_revealedRiskyProvider).contains('${message.chatId}:${message.id}');
+    final inlineFooter = hasText && translation == null && !folded;
     // Photos and videos without a caption carry the time on the media itself, edge to edge (Telegram/aka layout).
     final footerOnMedia = isMediaBubble && !hasText && translation == null;
     final textColor = outgoing ? colors.outgoingText : colors.incomingText;
@@ -132,6 +206,7 @@ class MessageBubble extends ConsumerWidget {
     }
 
     final children = <Widget>[
+      if (linkRisk.isDangerous) const _DangerousLinkChip(),
       if (senderLabel != null) Padding(padding: const EdgeInsets.fromLTRB(10, 6, 10, 0), child: senderLabel),
       if (message.forwardInfo != null) _ForwardHeader(info: message.forwardInfo!, outgoing: outgoing),
       if (message.replyTo case final td.MessageReplyToMessage reply)
@@ -156,7 +231,9 @@ class MessageBubble extends ConsumerWidget {
             ),
           ),
         ),
-      if (hasText && inlineFooter)
+      if (hasText && folded)
+        _FoldedRiskyText(onShow: () => ref.read(_revealedRiskyProvider.notifier).reveal('${message.chatId}:${message.id}'))
+      else if (hasText && inlineFooter)
         Padding(
           padding: const EdgeInsets.fromLTRB(10, 6, 8, 5),
           child: Stack(
@@ -202,6 +279,7 @@ class MessageBubble extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
           child: _Reactions(message: message, outgoing: outgoing),
         ),
+      if (message.interactionInfo?.replyInfo case final replyInfo? when isChannel) CommentsBar(message: message, replyInfo: replyInfo),
     ];
 
     final bubble = bareMedia

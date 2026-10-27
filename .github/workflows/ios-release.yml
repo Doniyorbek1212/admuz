@@ -1,0 +1,144 @@
+name: UZARO iOS release
+
+# Builds the signed iOS app on a GitHub macOS runner and uploads it to App Store Connect (TestFlight).
+# Signing is Xcode's automatic (cloud-managed) signing driven by an App Store Connect API key with the
+# Admin role, so no certificate or profile is kept in the repo.
+# Repo secrets: APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_KEY_P8 (the .p8 file's text), TG_API_ID, TG_API_HASH.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload to App Store Connect (off = only build the archive)
+        type: boolean
+        default: true
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.47.7"
+  # Keep in sync with mobile.yml and mobile/tool/build_tdlib_ios.sh.
+  TDLIB_COMMIT: "c15d3f5a5"
+  TEAM_ID: Q3W9P2M682
+  ASC_ISSUER_ID: 60987b8a-7e8f-49dd-abb0-68a245a4ff37
+
+defaults:
+  run:
+    working-directory: mobile
+
+jobs:
+  ios:
+    name: Build, sign and upload
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
+    steps:
+      - name: Check secrets
+        working-directory: .
+        run: |
+          missing=0
+          for name in ASC_KEY_ID ASC_KEY_P8 TG_API_ID TG_API_HASH; do
+            if [ -z "${!name}" ]; then echo "::error::Secret for $name is not set"; missing=1; fi
+          done
+          exit $missing
+
+      - uses: actions/checkout@v4
+
+      # App Store Connect only accepts builds made with a released Xcode and the iOS 26 SDK or later.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache iOS tdjson.xcframework
+        id: tdlib-ios
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios/TDLib/tdjson.xcframework
+          key: tdlib-ios-${{ env.TDLIB_COMMIT }}-v1
+
+      - name: Build tdjson.xcframework
+        if: steps.tdlib-ios.outputs.cache-hit != 'true'
+        run: |
+          brew install gperf cmake coreutils
+          bash tool/build_tdlib_ios.sh "$RUNNER_TEMP/tdlib-ios"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: API key
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Flutter config
+        run: |
+          version=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' pubspec.yaml)
+          echo "BUILD_NAME=$version" >> "$GITHUB_ENV"
+          flutter pub get
+          flutter build ios --release --config-only \
+            --build-name="$version" --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define=SADO_API_URL=https://sado.voxo.uz \
+            --dart-define=TG_API_ID="$TG_API_ID" \
+            --dart-define=TG_API_HASH="$TG_API_HASH"
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic
+
+      - name: Export and upload
+        run: |
+          destination=export
+          if [ "${{ inputs.upload }}" = "true" ]; then destination=upload; fi
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>${destination}</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          if [ "$destination" = upload ]; then
+            echo "::notice::Uploaded $BUILD_NAME ($GITHUB_RUN_NUMBER). It shows in App Store Connect > TestFlight after processing."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.upload }}
+        with:
+          name: uzaro-ios-${{ env.BUILD_NAME }}-${{ github.run_number }}
+          path: ${{ runner.temp }}/export/*.ipa
+          retention-days: 14
+
+      - name: Remove API key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

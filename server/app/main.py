@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import engine
 from app.deps import get_redis
-from app.routers import admin, admin_auth, admin_market, admin_panel, ads, billing, customers, market, media, profile, public
+from app.routers import admin, admin_auth, admin_market, admin_panel, admin_places, ads, billing, customers, market, media, places, profile, public
 from app.security import RedactingFilter
 
 ADMIN_WEB_DIR = Path(__file__).resolve().parent / "admin_web"
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     production = settings.environment == "production"
     app = FastAPI(
-        title="Sado Billing",
+        title="UZARO API",
         version="0.1.0",
         lifespan=lifespan,
         # No docs or public schema in production: don't publish the admin API map.
@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
         openapi_url=None if production else "/openapi.json",
         redoc_url=None,
     )
-    for module in (customers, profile, billing, admin, market, ads, media, admin_market, admin_panel, admin_auth, public):
+    for module in (customers, profile, billing, admin, market, ads, media, places, admin_market, admin_places, admin_panel, admin_auth, public):
         app.include_router(module.router)
     # The web admin panel: static files only; every action goes through the X-Admin-Key API.
     app.mount("/admin", StaticFiles(directory=ADMIN_WEB_DIR, html=True), name="admin")

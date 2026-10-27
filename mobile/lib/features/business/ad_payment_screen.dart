@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/store_rules.dart';
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
@@ -106,6 +107,7 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
   }
 
   Widget _paymentSteps(BuildContext context) {
+    if (storeBlocksExternalPayments) return const SizedBox.shrink();
     final s = context.s;
     final theme = Theme.of(context);
     Widget step(int n, String text, {bool done = false}) => ListTile(

@@ -32,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "uz.sado.app"
+        applicationId = "uz.uzaro.app"
         // TDLib and the audio recorder need API 24+.
         minSdk = maxOf(24, flutter.minSdkVersion)
         targetSdk = flutter.targetSdkVersion
@@ -63,6 +63,11 @@ android {
         jniLibs {
             // Keep libtdjson.so uncompressed and page-aligned so it can be mapped directly.
             useLegacyPackaging = false
+            // Drop ABIs without a built libtdjson.so: plugins still ship libs for them, so Play would
+            // serve those devices a split that crashes on start.
+            listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+                .filterNot { file("src/main/jniLibs/$it/libtdjson.so").exists() }
+                .forEach { excludes += "lib/$it/**" }
         }
     }
 }

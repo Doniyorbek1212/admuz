@@ -25,6 +25,9 @@ import 'premium_extras.dart';
 import 'privacy_screen.dart';
 import 'language_screen.dart';
 import 'storage_usage_screen.dart';
+import '../profile/user_profile_extras.dart';
+import 'profile_colors.dart';
+import 'session_security.dart';
 import 'telegram_services_screens.dart';
 import 'uzaro_settings_screen.dart';
 import 'uzaro_tools.dart';
@@ -114,6 +117,7 @@ class SettingsScreen extends ConsumerWidget {
     return SettingsGroup(
       children: [
         _row(context, Icons.star_rounded, const Color(0xFF8A72EA), 'Telegram Premium', screen: const PremiumInfoScreen()),
+        _row(context, Icons.emoji_emotions_rounded, const Color(0xFF5A9BFF), s.t('emoji_status'), onTap: () => showEmojiStatusPicker(context)),
         _row(context, Icons.stars_rounded, const Color(0xFFF5A623), s.t('telegram_stars'), screen: const StarsScreen()),
         _row(context, Icons.storefront_rounded, const Color(0xFFE5486A), s.t('telegram_business'), screen: const BusinessInfoScreen()),
         _row(context, Icons.card_giftcard_rounded, const Color(0xFFFF8A1F), s.t('send_gift'), onTap: () => sendGiftFlow(context)),
@@ -206,7 +210,7 @@ class SettingsScreen extends ConsumerWidget {
         _row(context, Icons.help_rounded, const Color(0xFF2E9BF0), s.t('telegram_faq'), onTap: () => open('https://telegram.org/faq')),
         // Telegram's own app opens the @TelegramTips channel here.
         _row(context, Icons.lightbulb_rounded, const Color(0xFF7C4DFF), s.t('telegram_features'), onTap: () => openUsername(context, ref, 'TelegramTips')),
-        _row(context, Icons.policy_rounded, const Color(0xFF2EAD5B), s.t('privacy_policy'), onTap: () => open('https://telegram.org/privacy')),
+        _row(context, Icons.policy_rounded, const Color(0xFF2EAD5B), s.t('privacy_policy'), onTap: () => open(AppConfig.apiUrl.isEmpty ? 'https://telegram.org/privacy' : '${AppConfig.apiUrl}/privacy')),
         ListTile(
           leading: TileIcon(Icons.logout_rounded, error),
           title: Text(s.t('log_out'), style: TextStyle(color: error)),
@@ -494,6 +498,22 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
             controller: _username,
             decoration: InputDecoration(labelText: s.t('username'), prefixText: '@', helperText: s.t('username_hint')),
           ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.palette_outlined),
+            title: Text(s.t('profile_colors')),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProfileColorsScreen())),
+          ),
+          if (me?.usernames case final names? when names.activeUsernames.length + names.disabledUsernames.length > 1)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.alternate_email_rounded),
+              title: Text(s.t('usernames')),
+              trailing: Text('${names.activeUsernames.length}'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => UsernamesScreen(account: ref.read(accountProvider), usernames: names)),
+              ),
+            ),
           const SizedBox(height: 10),
           if (me != null)
             ListTile(
@@ -566,8 +586,19 @@ class SessionsScreen extends ConsumerWidget {
           return ListView(
             padding: const EdgeInsets.only(bottom: 16),
             children: [
+              if (canScanQr)
+                SettingsGroup(children: [
+                  ListTile(
+                    leading: Icon(Icons.qr_code_scanner_rounded, color: Theme.of(context).colorScheme.primary),
+                    title: Text(s.t('link_desktop'), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                    onTap: () async {
+                      if (await linkDesktopDevice(context, account)) ref.invalidate(_sessionsProvider);
+                    },
+                  ),
+                ]),
               SettingsGroup(title: s.t('this_device'), children: [
-                for (final session in current) _SessionTile(session: session),
+                for (final session in current)
+                  _SessionTile(session: session, onTap: () => showSessionSheet(context, account, session, onChanged: () => ref.invalidate(_sessionsProvider))),
                 if (others.isNotEmpty)
                   ListTile(
                     leading: Icon(Icons.front_hand_rounded, color: error),
@@ -586,6 +617,7 @@ class SessionsScreen extends ConsumerWidget {
                   for (final session in others)
                     _SessionTile(
                       session: session,
+                      onTap: () => showSessionSheet(context, account, session, onChanged: () => ref.invalidate(_sessionsProvider)),
                       onTerminate: () async {
                         await guard(context, () => account.send<td.Ok>(td.TerminateSession(sessionId: session.id)));
                         ref.invalidate(_sessionsProvider);
@@ -634,10 +666,11 @@ class SessionsScreen extends ConsumerWidget {
 String _ttlLabel(int days, Strings s) => days < 30 ? s.t('ttl_weeks', {'n': '${(days / 7).round()}'}) : s.t('ttl_months_short', {'n': '${(days / 30.5).round()}'});
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.session, this.onTerminate});
+  const _SessionTile({required this.session, this.onTerminate, this.onTap});
 
   final td.Session session;
   final VoidCallback? onTerminate;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -655,7 +688,14 @@ class _SessionTile extends StatelessWidget {
     final lastActive = session.isCurrent ? s.t('online') : formatChatTime(session.lastActiveDate, s.locale);
     return ListTile(
       leading: CircleAvatar(radius: 24, backgroundColor: color, child: Icon(icon, color: Colors.white, size: 26)),
-      title: Text(session.deviceModel, style: const TextStyle(fontWeight: FontWeight.w600)),
+      onTap: onTap,
+      title: Row(children: [
+        Flexible(child: Text(session.deviceModel, style: const TextStyle(fontWeight: FontWeight.w600))),
+        if (session.isUnconfirmed) ...[
+          const SizedBox(width: 6),
+          Icon(Icons.warning_amber_rounded, size: 18, color: Theme.of(context).colorScheme.error),
+        ],
+      ]),
       subtitle: Text.rich(
         TextSpan(children: [
           TextSpan(text: '${session.applicationName} ${session.applicationVersion}\n'),

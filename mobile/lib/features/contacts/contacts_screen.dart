@@ -11,6 +11,7 @@ import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_screen.dart';
@@ -228,19 +229,19 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     final ids = ref.watch(contactsProvider);
     ref.watch(usersRevisionProvider);
     final title = widget.createGroup ? 'new_group' : widget.pickToChat ? 'new_message' : 'contacts';
+    // Opened from the bottom bar (not as a picker): the shared light tab header.
+    final isTab = !widget.createGroup && !widget.pickToChat && !widget.pickUser;
+    final sortAction = [
+      if (!_multi && !widget.pickUser)
+        IconButton(
+          tooltip: s.t(_byName ? 'sort_last_seen' : 'sort_name'),
+          icon: Icon(_byName ? Icons.schedule_rounded : Icons.sort_by_alpha_rounded),
+          onPressed: () => setState(() => _byName = !_byName),
+        ),
+    ];
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: AppBar(
-        title: Text(s.t(title)),
-        actions: [
-          if (!_multi && !widget.pickUser)
-            IconButton(
-              tooltip: s.t(_byName ? 'sort_last_seen' : 'sort_name'),
-              icon: Icon(_byName ? Icons.schedule_rounded : Icons.sort_by_alpha_rounded),
-              onPressed: () => setState(() => _byName = !_byName),
-            ),
-        ],
-      ),
+      appBar: isTab ? BrandTabBar(title: s.t(title), actions: sortAction) : AppBar(title: Text(s.t(title)), actions: sortAction),
       floatingActionButton: _multi && (_selected.isNotEmpty || widget.createGroup)
           ? FloatingActionButton(onPressed: _next, child: const Icon(Icons.arrow_forward_rounded))
           : null,
@@ -270,7 +271,8 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
               ),
           ];
           return ListView.builder(
-            padding: const EdgeInsets.only(bottom: 12),
+            // Clears the shell's floating bottom bar (reported as bottom padding).
+            padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
             itemCount: head.length + users.length,
             itemBuilder: (context, index) {
               if (index < head.length) return head[index];

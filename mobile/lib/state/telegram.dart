@@ -17,6 +17,19 @@ import 'message_archive.dart';
 @visibleForTesting
 int unreadAfterLocalRead(int unreadCount, int? base) => base == null ? unreadCount : max(0, unreadCount - base);
 
+/// Telegram test-server numbers (99966XYYYY, login code = X five times) used by store reviewers.
+bool isTestDcPhone(String phone) => RegExp(r'^\+?99966[1-3]\d{4}$').hasMatch(phone);
+
+const phoneAuthSettings = td.PhoneNumberAuthenticationSettings(
+  allowFlashCall: false,
+  allowMissedCall: false,
+  isCurrentPhoneNumber: false,
+  hasUnknownPhoneNumber: false,
+  allowSmsRetrieverApi: false,
+  firebaseAuthenticationSettings: null,
+  authenticationTokens: [],
+);
+
 String chatListKey(td.ChatList list) => switch (list) {
   td.ChatListMain() => 'main',
   td.ChatListArchive() => 'archive',
@@ -140,7 +153,12 @@ class TelegramAccount {
   /// Forum topic currently open per chat; messages sent to that chat go into the topic.
   final Map<int, int> activeTopics = {};
 
+  /// Comment thread currently open per discussion group; wins over a forum topic.
+  final Map<int, int> activeThreads = {};
+
   td.MessageTopic? topicFor(int chatId) {
+    final thread = activeThreads[chatId];
+    if (thread != null) return td.MessageTopicThread(messageThreadId: thread);
     final topic = activeTopics[chatId];
     return topic == null ? null : td.MessageTopicForum(forumTopicId: topic);
   }
@@ -155,6 +173,24 @@ class TelegramAccount {
 
   /// Writing styles offered by Telegram's AI text composer (updateTextCompositionStyles).
   List<td.TextCompositionStyle> compositionStyles = const [];
+
+  /// Name and profile color palettes (updateAccentColors / updateProfileAccentColors).
+  List<td.AccentColor> accentColors = const [];
+  List<td.ProfileAccentColor> profileAccentColors = const [];
+
+  /// Emoji Telegram allows as reactions (updateActiveEmojiReactions).
+  List<String> activeEmojiReactions = const [];
+
+  /// Newest login Telegram wants the user to confirm ("Is this you?"), or null.
+  final unconfirmedSession = ValueNotifier<td.UnconfirmedSession?>(null);
+
+  /// Per-chat themes Telegram offers (updateEmojiChatThemes).
+  List<td.EmojiChatTheme> emojiChatThemes = const [];
+
+  /// Business quick replies by id, in Telegram's order; filled after LoadQuickReplyShortcuts.
+  final quickReplies = <int, td.QuickReplyShortcut>{};
+  List<int> quickReplyOrder = const [];
+  final quickRepliesRevision = ValueNotifier<int>(0);
 
   final authState = ValueNotifier<td.AuthorizationState?>(null);
   final connectionState = ValueNotifier<td.ConnectionState>(const td.ConnectionStateConnecting());
@@ -176,21 +212,34 @@ class TelegramAccount {
   final Set<int> _dirtyChats = {};
   TelegramCredentials? _credentials;
   String _languageCode = 'en';
+  bool _testDc = false;
+  String? _pendingTestPhone;
 
   static bool _logConfigured = false;
+
+  static Future<String> directoryFor(int slot) async {
+    final support = await getApplicationSupportDirectory();
+    return '${support.path}${Platform.pathSeparator}tdlib${Platform.pathSeparator}account_$slot';
+  }
+
+  /// Marker that makes a slot log in on Telegram's test servers; holds the phone number to submit.
+  static File testDcMarker(String dir) => File('$dir${Platform.pathSeparator}.test_dc');
 
   static Future<TelegramAccount> start(int slot, TelegramCredentials credentials, {String languageCode = 'en'}) async {
     if (!_logConfigured) {
       _logConfigured = true;
       TdClient.executeStatic(const td.SetLogVerbosityLevel(newVerbosityLevel: kDebugMode ? 2 : 1));
     }
-    final support = await getApplicationSupportDirectory();
-    final dir = '${support.path}${Platform.pathSeparator}tdlib${Platform.pathSeparator}account_$slot';
+    final dir = await directoryFor(slot);
     await Directory(dir).create(recursive: true);
+    final marker = testDcMarker(dir);
+    final testPhone = await marker.exists() ? (await marker.readAsString()).trim() : null;
     final client = await TdClient.create();
     final account = TelegramAccount._(slot, client, dir)
       .._credentials = credentials
-      .._languageCode = languageCode;
+      .._languageCode = languageCode
+      .._testDc = testPhone != null
+      .._pendingTestPhone = testPhone;
     await account.archive.load();
     await account.contactChanges.load();
     account._subscription = client.updates.listen(account._onUpdate);
@@ -216,6 +265,8 @@ class TelegramAccount {
 
   bool get isReady => authState.value is td.AuthorizationStateReady;
 
+  bool get usesTestDc => AppConfig.useTestDc || _testDc;
+
   td.User? get me => users[myId];
 
   Stream<td.File> fileUpdates(int fileId) => _fileUpdates.stream.where((f) => f.id == fileId);
@@ -223,7 +274,7 @@ class TelegramAccount {
   /// Message-level updates (new/edited/deleted messages, send results...) for chat history controllers.
   Stream<td.Update> get messageEvents => _messageEvents.stream;
 
-  /// updateCall and updateNewCallSignalingData, for the call service.
+  /// updateCall, updateNewCallSignalingData and group call updates, for the call service.
   Stream<td.Update> get callEvents => _callEvents.stream;
 
   ValueNotifier<int> chatRevision(int chatId) => _chatRevisions.putIfAbsent(chatId, () => ValueNotifier(0));
@@ -434,8 +485,24 @@ class TelegramAccount {
         _updateChat(chatId, (c) => c.copyWith(title: title));
       case td.UpdateChatPhoto(:final chatId, :final photo):
         _updateChat(chatId, (c) => _patch(c, {'photo': photo?.toJson()}));
+      case td.UpdateChatBackground(:final chatId, :final background):
+        _updateChat(chatId, (c) => _patch(c, {'background': background?.toJson()}));
+      case td.UpdateChatTheme(:final chatId, :final theme):
+        _updateChat(chatId, (c) => _patch(c, {'theme': theme?.toJson()}));
+      case td.UpdateEmojiChatThemes(:final chatThemes):
+        emojiChatThemes = chatThemes;
+      case td.UpdateUnconfirmedSession(:final session):
+        unconfirmedSession.value = session;
+      case td.UpdateActiveEmojiReactions(:final emojis):
+        activeEmojiReactions = emojis;
+      case td.UpdateAccentColors(:final colors):
+        accentColors = colors;
+      case td.UpdateProfileAccentColors(:final colors):
+        profileAccentColors = colors;
       case td.UpdateChatPermissions(:final chatId, :final permissions):
         _updateChat(chatId, (c) => c.copyWith(permissions: permissions), affectsList: false);
+      case td.UpdateChatVideoChat(:final chatId, :final videoChat):
+        _updateChat(chatId, (c) => c.copyWith(videoChat: videoChat), affectsList: false);
       case td.UpdateChatLastMessage(:final chatId, :final lastMessage, :final positions):
         _updateChat(chatId, (c) => _patch(c, {'last_message': lastMessage?.toJson()}));
         _setPositions(chatId, positions);
@@ -527,6 +594,15 @@ class TelegramAccount {
         foldersRevision.value++;
       case td.UpdateTextCompositionStyles(:final styles):
         compositionStyles = styles;
+      case td.UpdateQuickReplyShortcut(:final shortcut):
+        quickReplies[shortcut.id] = shortcut;
+        quickRepliesRevision.value++;
+      case td.UpdateQuickReplyShortcuts(:final shortcutIds):
+        quickReplyOrder = shortcutIds;
+        quickRepliesRevision.value++;
+      case td.UpdateQuickReplyShortcutDeleted(:final shortcutId):
+        quickReplies.remove(shortcutId);
+        quickRepliesRevision.value++;
       case td.UpdateNewMessage(:final message):
         _clearAction(message.chatId, senderKey(message.senderId));
         archive.remember(message);
@@ -546,7 +622,9 @@ class TelegramAccount {
         _messageEvents.add(object);
       case td.UpdateMessageSendFailed() || td.UpdateMessageInteractionInfo() || td.UpdateMessageIsPinned() || td.UpdateMessageSendAcknowledged():
         _messageEvents.add(object as td.Update);
-      case td.UpdateCall() || td.UpdateNewCallSignalingData():
+      case td.UpdateSavedMessagesTopic() || td.UpdateSavedMessagesTags() || td.UpdateQuickReplyShortcutMessages():
+        _messageEvents.add(object as td.Update);
+      case td.UpdateCall() || td.UpdateNewCallSignalingData() || td.UpdateGroupCall() || td.UpdateGroupCallParticipant():
         _callEvents.add(object as td.Update);
       default:
         break;
@@ -583,7 +661,7 @@ class TelegramAccount {
         if (_disposed) return;
         await client.send<td.Ok>(
           td.SetTdlibParameters(
-            useTestDc: AppConfig.useTestDc,
+            useTestDc: usesTestDc,
             databaseDirectory: databaseDirectory,
             filesDirectory: '$databaseDirectory${Platform.pathSeparator}files',
             databaseEncryptionKey: databaseKey,
@@ -604,6 +682,15 @@ class TelegramAccount {
       } on FileSystemException catch (error) {
         // Without the key the encrypted database cannot be opened; TDLib stays waiting for parameters.
         if (!_disposed) debugPrint('database key unavailable: ${error.message}');
+      }
+    } else if (state is td.AuthorizationStateWaitPhoneNumber && _pendingTestPhone != null) {
+      // The number was typed before the restart onto the test servers; submit it once.
+      final phone = _pendingTestPhone!;
+      _pendingTestPhone = null;
+      try {
+        await client.send<td.Ok>(td.SetAuthenticationPhoneNumber(phoneNumber: phone, settings: phoneAuthSettings));
+      } on TdException catch (error) {
+        debugPrint('test phone submit failed: $error');
       }
     } else if (state is td.AuthorizationStateReady) {
       unawaited(_afterLogin());

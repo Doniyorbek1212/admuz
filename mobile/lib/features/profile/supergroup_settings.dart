@@ -6,6 +6,7 @@ import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
+import 'user_profile_extras.dart';
 
 /// Group/channel switches stored on the supergroup: signatures, history, joining, anti-spam, forum mode.
 class SupergroupSettingsScreen extends ConsumerStatefulWidget {
@@ -101,6 +102,14 @@ class _SupergroupSettingsScreenState extends ConsumerState<SupergroupSettingsScr
           if (canRestrict && !group.isChannel && (group.hasLinkedChat || (group.usernames?.activeUsernames.isNotEmpty ?? false)))
             tile('join_request', 'approve_new_members', 'approve_new_members_hint', value('join_request', group.joinByRequest),
                 (on) => account.send<td.Ok>(td.ToggleSupergroupJoinByRequest(supergroupId: id, joinByRequest: on, guardBotUserId: 0, applyToInviteLinks: false))),
+          if (group.usernames case final names? when canChangeInfo && names.activeUsernames.length + names.disabledUsernames.length > 1)
+            ListTile(
+              title: Text(s.t('usernames')),
+              trailing: Text('${names.activeUsernames.length}'),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => UsernamesScreen(account: account, usernames: names, supergroupId: id)),
+              ),
+            ),
           if (full == null) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
         ],
       ),

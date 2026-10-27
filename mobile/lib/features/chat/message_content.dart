@@ -14,17 +14,23 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/file_guard.dart';
+import '../../core/link_safety.dart';
 import '../../core/formatters.dart';
 import '../../core/live_location.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/link_policy.dart';
 import '../../state/playback.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart';
 import '../../widgets/map_thumbnail.dart';
+import '../home/home_screen.dart';
+import '../search/search_screen.dart';
 import 'bot_keyboard.dart';
+import 'link_router.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
 import 'message_extras.dart';
@@ -71,9 +77,30 @@ class _FormattedTextViewState extends State<FormattedTextView> {
     return recognizer;
   }
 
-  void _openUrl(String url) {
-    final uri = Uri.tryParse(url.contains('://') ? url : 'https://$url');
-    if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+  void _openUrl(String url, {String? shownText}) => unawaited(openLink(context, url, shownText: shownText));
+
+  /// Risky links are drawn in red behind a warning sign, so the danger is visible before the tap.
+  InlineSpan _linkSpan(String part, String url, TextStyle link, {String? shownText}) {
+    final risk = assessLink(url, shownText: shownText, policy: ProviderScope.containerOf(context, listen: false).read(linkPolicyProvider));
+    final recognizer = _tap(() => _openUrl(url, shownText: shownText));
+    if (!risk.isDangerous) return TextSpan(text: part, style: link, recognizer: recognizer);
+    final danger = Theme.of(context).colorScheme.error;
+    return TextSpan(children: [
+      WidgetSpan(alignment: PlaceholderAlignment.middle, child: Padding(padding: const EdgeInsets.only(right: 2), child: Icon(Icons.gpp_maybe_rounded, size: 16, color: danger))),
+      TextSpan(text: part, style: link.copyWith(color: danger, decorationColor: danger), recognizer: recognizer),
+    ]);
+  }
+
+  void _openMention(String username) {
+    if (widget.onMention != null) return widget.onMention!(username);
+    final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
+    unawaited(openUsernameChat(context, account, username));
+  }
+
+  Future<void> _openUserId(int userId) async {
+    final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
+    final chat = await guard(context, () => account.openPrivateChat(userId));
+    if (chat != null && mounted) openChat(context, chat.id);
   }
 
   @override
@@ -107,9 +134,9 @@ class _FormattedTextViewState extends State<FormattedTextView> {
     final link = TextStyle(color: linkColor, decoration: TextDecoration.underline, decorationColor: linkColor);
     switch (type) {
       case td.TextEntityTypeUrl():
-        return TextSpan(text: part, style: link, recognizer: _tap(() => _openUrl(part)));
+        return _linkSpan(part, part, link);
       case td.TextEntityTypeTextUrl(:final url):
-        return TextSpan(text: part, style: link, recognizer: _tap(() => _openUrl(url)));
+        return _linkSpan(part, url, link, shownText: part);
       case td.TextEntityTypeEmailAddress():
         return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'mailto', path: part))));
       case td.TextEntityTypePhoneNumber():
@@ -118,10 +145,16 @@ class _FormattedTextViewState extends State<FormattedTextView> {
         return TextSpan(
           text: part,
           style: TextStyle(color: linkColor),
-          recognizer: _tap(() => widget.onMention?.call(part.substring(1))),
+          recognizer: _tap(() => _openMention(part.substring(1))),
         );
-      case td.TextEntityTypeMentionName() || td.TextEntityTypeHashtag() || td.TextEntityTypeCashtag():
-        return TextSpan(text: part, style: TextStyle(color: linkColor));
+      case td.TextEntityTypeMentionName(:final userId):
+        return TextSpan(text: part, style: TextStyle(color: linkColor), recognizer: _tap(() => _openUserId(userId)));
+      case td.TextEntityTypeHashtag() || td.TextEntityTypeCashtag():
+        return TextSpan(
+          text: part,
+          style: TextStyle(color: linkColor),
+          recognizer: _tap(() => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SearchScreen(initialQuery: part)))),
+        );
       case td.TextEntityTypeBold():
         return TextSpan(text: part, style: const TextStyle(fontWeight: FontWeight.w700));
       case td.TextEntityTypeItalic():
@@ -136,6 +169,9 @@ class _FormattedTextViewState extends State<FormattedTextView> {
           style: TextStyle(fontFamily: 'monospace', color: linkColor, fontSize: (base.fontSize ?? 15) - 1),
           recognizer: _tap(() => Clipboard.setData(ClipboardData(text: part))),
         );
+      case td.TextEntityTypeCustomEmoji(:final customEmojiId):
+        final size = (base.fontSize ?? 15) * 1.3;
+        return WidgetSpan(alignment: PlaceholderAlignment.middle, child: CustomEmojiView(id: customEmojiId, size: size, fallback: part));
       case td.TextEntityTypeSpoiler():
         final revealed = _revealedSpoilers.contains(index);
         return TextSpan(
@@ -1150,7 +1186,11 @@ class PollView extends ConsumerWidget {
               ),
             ),
           const SizedBox(height: 4),
-          Text(s.count('votes', poll.totalVoterCount), style: TextStyle(fontSize: 12.5, color: Theme.of(context).hintColor)),
+          Row(children: [
+            Expanded(child: Text(s.count('votes', poll.totalVoterCount), style: TextStyle(fontSize: 12.5, color: Theme.of(context).hintColor))),
+            if (poll.canGetVoters && poll.totalVoterCount > 0)
+              TextButton(onPressed: () => showPollVoters(context, account, message, poll), child: Text(s.t('poll_view_votes'))),
+          ]),
         ],
       ),
     );

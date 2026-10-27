@@ -8,8 +8,10 @@ import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart';
 import '../../widgets/settings_group.dart';
 import '../chat/composer_panels.dart';
+import '../contacts/contacts_screen.dart';
 import 'privacy_screen.dart';
 
 /// Limits Telegram raises with Premium, as reported by the server.
@@ -57,7 +59,7 @@ class PremiumServerSection extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.redeem_rounded),
             title: Text(s.t('gift_code_apply')),
-            onTap: () => _applyGiftCode(context, account),
+            onTap: () => applyGiftCode(context, account),
           ),
         ]),
       ],
@@ -68,9 +70,10 @@ class PremiumServerSection extends ConsumerWidget {
 /// Call before sending the user to subscribe, so Telegram can count the button press.
 void premiumSubscribeClicked(TelegramAccount account) => account.send<td.Ok>(const td.ClickPremiumSubscriptionButton()).ignore();
 
-Future<void> _applyGiftCode(BuildContext context, TelegramAccount account) async {
+/// Checks and activates a gift code; asks for it when [link] is null.
+Future<void> applyGiftCode(BuildContext context, TelegramAccount account, [String? link]) async {
   final s = context.s;
-  final input = await promptText(context, title: s.t('gift_code_apply'), label: s.t('gift_code'));
+  final input = link ?? await promptText(context, title: s.t('gift_code_apply'), label: s.t('gift_code'));
   // Accept both a bare code and a t.me/giftcode/... link.
   final code = input?.trim().split('/').last ?? '';
   if (code.isEmpty || !context.mounted) return;
@@ -186,6 +189,18 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
               title: Text(s.t(gift.isSaved ? 'gift_hide' : 'gift_show')),
               onTap: () => Navigator.pop(context, 'save'),
             ),
+            if (gift.isSaved)
+              ListTile(
+                leading: Icon(gift.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded),
+                title: Text(s.t(gift.isPinned ? 'unpin' : 'pin')),
+                onTap: () => Navigator.pop(context, 'pin'),
+              ),
+            if (gift.canBeUpgraded)
+              ListTile(leading: const Icon(Icons.auto_awesome_rounded), title: Text(s.t('gift_upgrade')), onTap: () => Navigator.pop(context, 'upgrade')),
+            if (gift.canBeTransferred)
+              ListTile(leading: const Icon(Icons.send_rounded), title: Text(s.t('gift_transfer')), onTap: () => Navigator.pop(context, 'transfer')),
+            if (gift.gift is td.SentGiftUpgraded)
+              ListTile(leading: const Icon(Icons.sell_rounded), title: Text(s.t('gift_resale')), onTap: () => Navigator.pop(context, 'resale')),
             if (gift.sellStarCount > 0)
               ListTile(
                 leading: const Icon(Icons.star_rounded),
@@ -199,12 +214,67 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
     if (action == null || !mounted) return;
     if (action == 'save') {
       await guard(context, () => account.send<td.Ok>(td.ToggleGiftIsSaved(receivedGiftId: gift.receivedGiftId, isSaved: !gift.isSaved)));
+    } else if (action == 'pin') {
+      final pinned = [for (final g in _gifts?.gifts ?? const <td.ReceivedGift>[]) if (g.isPinned && g.receivedGiftId != gift.receivedGiftId) g.receivedGiftId];
+      final ids = gift.isPinned ? pinned : [gift.receivedGiftId, ...pinned];
+      await guard(context, () => account.send<td.Ok>(td.SetPinnedGifts(ownerId: td.MessageSenderUser(userId: account.myId), receivedGiftIds: ids)));
+    } else if (action == 'upgrade') {
+      await _upgrade(gift);
+    } else if (action == 'transfer') {
+      await _transfer(gift);
+    } else if (action == 'resale') {
+      final price = await promptText(context, title: s.t('gift_resale'), label: s.t('gift_resale_hint'), keyboard: TextInputType.number);
+      if (price == null || !mounted) return;
+      final stars = int.tryParse(price.trim()) ?? 0;
+      await guard(context, () => account.send<td.Ok>(td.SetGiftResalePrice(
+            receivedGiftId: gift.receivedGiftId,
+            price: stars > 0 ? td.GiftResalePriceStar(starCount: stars) : null,
+          )));
     } else {
       final ok = await confirm(context, title: s.t('gift_sell', {'n': '${gift.sellStarCount}'}), message: s.t('gift_sell_hint'), destructive: true);
       if (!ok || !mounted) return;
       await guard(context, () => account.send<td.Ok>(td.SellGift(businessConnectionId: null, receivedGiftId: gift.receivedGiftId)));
     }
     await _load();
+  }
+
+  /// Turns a regular gift into a unique collectible; free when the sender prepaid the upgrade.
+  Future<void> _upgrade(td.ReceivedGift gift) async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final regular = gift.gift;
+    if (regular is! td.SentGiftRegular) return;
+    final cost = gift.prepaidUpgradeStarCount > 0 ? 0 : regular.gift.upgradeStarCount;
+    final preview = await guard(context, () => account.send<td.GiftUpgradePreview>(td.GetGiftUpgradePreview(regularGiftId: regular.gift.id)));
+    if (!mounted) return;
+    final ok = await confirm(
+      context,
+      title: s.t('gift_upgrade'),
+      message: s.t('gift_upgrade_hint', {'n': '${preview?.models.length ?? 0}', 'price': cost == 0 ? s.t('free') : '$cost ⭐'}),
+    );
+    if (!ok || !mounted) return;
+    await guard(context, () => account.send<td.UpgradeGiftResult>(td.UpgradeGift(
+          businessConnectionId: null,
+          receivedGiftId: gift.receivedGiftId,
+          keepOriginalDetails: true,
+          starCount: cost,
+        )));
+  }
+
+  Future<void> _transfer(td.ReceivedGift gift) async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final user = await Navigator.of(context).push<td.User>(MaterialPageRoute(builder: (_) => const ContactsScreen(pickUser: true)));
+    if (user == null || !mounted) return;
+    final price = gift.transferStarCount == 0 ? s.t('free') : '${gift.transferStarCount} ⭐';
+    final ok = await confirm(context, title: s.t('gift_transfer'), message: s.t('gift_transfer_confirm', {'name': user.firstName, 'price': price}));
+    if (!ok || !mounted) return;
+    await guard(context, () => account.send<td.Ok>(td.TransferGift(
+          businessConnectionId: null,
+          receivedGiftId: gift.receivedGiftId,
+          newOwnerId: td.MessageSenderUser(userId: user.id),
+          starCount: gift.transferStarCount,
+        )));
   }
 
   @override
@@ -254,6 +324,89 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
                 ),
     );
   }
+}
+
+/// Premium emoji status next to the user's name: recent and default emoji, with an optional duration.
+Future<void> showEmojiStatusPicker(BuildContext context) async {
+  final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
+  final s = context.s;
+  final lists = await guard(context, () async {
+    final results = await Future.wait([
+      account.send<td.EmojiStatuses>(const td.GetRecentEmojiStatuses()),
+      account.send<td.EmojiStatusCustomEmojis>(const td.GetDefaultEmojiStatuses()),
+    ]);
+    final recent = [
+      for (final status in (results[0] as td.EmojiStatuses).emojiStatuses)
+        if (status.type case td.EmojiStatusTypeCustomEmoji(:final customEmojiId)) customEmojiId,
+    ];
+    final defaults = (results[1] as td.EmojiStatusCustomEmojis).customEmojiIds;
+    return (recent, [for (final id in defaults) if (!recent.contains(id)) id]);
+  });
+  if (lists == null || !context.mounted) return;
+  final picked = await showModalBottomSheet<int>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) {
+      Widget grid(List<int> ids) => GridView.count(
+            crossAxisCount: 7,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            children: [
+              for (final id in ids)
+                InkWell(borderRadius: BorderRadius.circular(8), onTap: () => Navigator.pop(context, id), child: Padding(padding: const EdgeInsets.all(6), child: CustomEmojiView(id: id, size: 32))),
+            ],
+          );
+      return SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+          child: ListView(shrinkWrap: true, children: [
+            if (account.me?.isPremium != true) GroupHint(s.t('emoji_status_premium')),
+            ListTile(leading: const Icon(Icons.block_rounded), title: Text(s.t('emoji_status_remove')), onTap: () => Navigator.pop(context, 0)),
+            if (lists.$1.isNotEmpty) ...[
+              Row(children: [
+                Expanded(child: SectionHeader(s.t('recent'))),
+                TextButton(
+                  onPressed: () {
+                    account.send<td.Ok>(const td.ClearRecentEmojiStatuses()).ignore();
+                    Navigator.pop(context);
+                  },
+                  child: Text(s.t('clear')),
+                ),
+              ]),
+              grid(lists.$1),
+            ],
+            grid(lists.$2),
+            const SizedBox(height: 12),
+          ]),
+        ),
+      );
+    },
+  );
+  if (picked == null || !context.mounted) return;
+  var expires = 0;
+  if (picked != 0) {
+    final hours = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          for (final h in const [0, 1, 2, 8, 48])
+            ListTile(title: Text(h == 0 ? s.t('emoji_status_forever') : s.t('emoji_status_for_hours', {'n': '$h'})), onTap: () => Navigator.pop(context, h)),
+        ]),
+      ),
+    );
+    if (hours == null || !context.mounted) return;
+    if (hours > 0) expires = DateTime.now().add(Duration(hours: hours)).millisecondsSinceEpoch ~/ 1000;
+  }
+  final done = await guard(context, () async {
+    await account.send<td.Ok>(td.SetEmojiStatus(
+      emojiStatus: picked == 0 ? null : td.EmojiStatus(type: td.EmojiStatusTypeCustomEmoji(customEmojiId: picked), expirationDate: expires),
+    ));
+    return true;
+  });
+  if (done == true && context.mounted) showToast(context, s.t('done'));
 }
 
 /// Channel/group boosts: level progress, boosting with the user's free slots, and the boost link.

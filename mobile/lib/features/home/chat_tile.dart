@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -12,7 +13,32 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart';
 import '../profile/chat_info_screen.dart';
+import '../settings/folders_screen.dart';
+
+/// Mini thumbnails of the album the chat's last message belongs to (newest first, at most three).
+/// TDLib's local cache is tried first; only when it lacks the rest of the album is the server asked once.
+final _albumThumbsProvider = FutureProvider.autoDispose.family<List<td.Minithumbnail>, (int, int, int)>((ref, key) async {
+  final (chatId, lastId, albumId) = key;
+  final account = ref.watch(accountProvider);
+  Future<List<td.Minithumbnail>> load({required bool onlyLocal}) async {
+    final page = await account.send<td.Messages>(
+      td.GetChatHistory(chatId: chatId, fromMessageId: lastId, offset: 0, limit: 10, onlyLocal: onlyLocal),
+    );
+    return [
+      for (final m in page.messages ?? const <td.Message?>[])
+        if (m != null && m.mediaAlbumId == albumId) ?ChatTile._miniThumb(m.content),
+    ].take(3).toList();
+  }
+
+  try {
+    final local = await load(onlyLocal: true);
+    return local.length > 1 ? local : await load(onlyLocal: false);
+  } on TdException {
+    return const [];
+  }
+});
 
 class ChatTile extends ConsumerWidget {
   const ChatTile({super.key, required this.chatId, required this.list, required this.onTap, this.selected = false});
@@ -57,18 +83,21 @@ class ChatTile extends ConsumerWidget {
         author = last.isOutgoing ? s.t('you') : account.senderName(last.senderId).split(' ').first;
       }
       final thumb = _miniThumb(last.content);
+      // An album shows up to three of its pictures, as Telegram does; a single picture shows one.
+      final album = last.mediaAlbumId != 0 && thumb != null ? ref.watch(_albumThumbsProvider((chat.id, last.id, last.mediaAlbumId))).value : null;
+      final thumbs = album != null && album.isNotEmpty ? album : [?thumb];
       subtitle = Text.rich(
         TextSpan(children: [
           if (author != null && author.isNotEmpty)
             TextSpan(text: '$author: ', style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.85))),
-          if (thumb != null)
+          for (final (i, t) in thumbs.indexed)
             WidgetSpan(
               alignment: PlaceholderAlignment.middle,
               child: Padding(
-                padding: const EdgeInsets.only(right: 5),
+                padding: EdgeInsets.only(right: i == thumbs.length - 1 ? 5 : 2),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(3),
-                  child: Image.memory(base64Decode(thumb.data), width: 18, height: 18, fit: BoxFit.cover, gaplessPlayback: true),
+                  child: Image.memory(base64Decode(t.data), width: 18, height: 18, fit: BoxFit.cover, gaplessPlayback: true),
                 ),
               ),
             ),
@@ -148,6 +177,7 @@ class ChatTile extends ConsumerWidget {
                                   padding: const EdgeInsets.only(left: 3),
                                   child: Icon(Icons.verified_rounded, size: 16, color: theme.colorScheme.primary),
                                 ),
+                              EmojiStatusBadge(status: chat.emojiStatus, size: 17),
                               if (muted)
                                 Padding(padding: const EdgeInsets.only(left: 4), child: Icon(Icons.volume_off_rounded, size: 15, color: hint)),
                             ],
@@ -263,6 +293,8 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
             title: Text(s.t(archived ? 'unarchive' : 'archive')),
             onTap: () => Navigator.pop(context, 'archive'),
           ),
+          if (account.folders.isNotEmpty)
+            ListTile(leading: const Icon(Icons.create_new_folder_outlined), title: Text(s.t('add_to_folder')), onTap: () => Navigator.pop(context, 'folder')),
           ListTile(
             leading: Icon(hidden ? Icons.visibility_rounded : Icons.visibility_off_rounded),
             title: Text(s.t(hidden ? 'unhide_chat' : 'hide_chat')),
@@ -293,6 +325,8 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
       await guard(context, () => account.setMuted(chat, muted ? 0 : muteForever));
     case 'archive':
       await guard(context, () => account.setArchived(chat, !archived));
+    case 'folder':
+      await addChatToFolder(context, account, chat);
     case 'read' when unread && ref.read(settingsProvider).ghostMode && !chat.isMarkedAsUnread:
       // Ghost mode: read on this phone only, so the sender still sees the message as unread.
       account.markReadLocally(chat.id);
@@ -339,7 +373,7 @@ class _DividerPainter extends BoxPainter {
   }
 }
 
-/// Ring around chat avatars: Telegram's story ring while the chat has stories, the UZARO gold trim otherwise.
+/// Telegram's story ring around chat avatars while the chat has stories; none otherwise.
 class _StoryRing extends ConsumerWidget {
   const _StoryRing({required this.chatId, required this.size, required this.child});
 
@@ -353,16 +387,16 @@ class _StoryRing extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final feed = ref.watch(storyFeedProvider);
     final stories = feed.where((e) => e.chatId == chatId).firstOrNull;
-    final unread = stories != null && stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
+    // No stories: the plain full-size avatar, as in Telegram.
+    if (stories == null) return SizedBox.square(dimension: size, child: child);
+    final unread = stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: unread
-            ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary])
-            : (stories == null ? brandGoldGradient : null),
-        color: stories != null && !unread ? Theme.of(context).dividerColor : null,
+        gradient: unread ? SweepGradient(colors: [primary, const Color(0xFF34C3A8), const Color(0xFF7CD957), primary]) : null,
+        color: unread ? null : Theme.of(context).dividerColor,
       ),
       child: Container(
         padding: const EdgeInsets.all(1.6),

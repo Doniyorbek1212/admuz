@@ -7,6 +7,7 @@ import '../../l10n/strings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../settings/privacy_screen.dart';
+import 'story_archive.dart';
 
 /// Story "⋮" menu. Returns true when the story was deleted and the viewer should move on.
 Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Story story) async {
@@ -22,6 +23,7 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
           children: [
             for (final (icon, key, value) in <(IconData, String, String)>[
               if (story.canGetInteractions) (Icons.visibility_rounded, 'story_viewers', 'viewers'),
+              if (story.canGetStatistics) (Icons.insights_rounded, 'statistics', 'stats'),
               if (story.canBeEdited) (Icons.edit_rounded, 'story_edit_caption', 'caption'),
               if (story.canSetPrivacySettings) (Icons.lock_outline_rounded, 'story_privacy', 'privacy'),
               if (story.canToggleIsPostedToChatPage)
@@ -46,6 +48,8 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
   switch (action) {
     case 'viewers':
       await _showViewers(context, account, story);
+    case 'stats':
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => StoryStatisticsScreen(story: story)));
     case 'caption':
       final text = await promptText(context, title: s.t('story_edit_caption'), label: s.t('caption'), initial: story.caption.text);
       if (text != null && context.mounted) {

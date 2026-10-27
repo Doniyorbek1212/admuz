@@ -120,13 +120,28 @@ class _ProxyScreenState extends ConsumerState<ProxyScreen> {
                       await guard(context, () => account.enableProxy(proxy.id));
                       await _load();
                     },
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline_rounded),
-                      onPressed: () async {
-                        await guard(context, () => account.removeProxy(proxy.id));
-                        await _load();
-                      },
-                    ),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        tooltip: s.t('edit'),
+                        onPressed: () async {
+                          final edited = await showDialog<td.Proxy>(context: context, builder: (_) => _ProxyDialog(initial: proxy.proxy));
+                          if (edited == null || !context.mounted) return;
+                          await guard(
+                            context,
+                            () => account.send<td.AddedProxy>(td.EditProxy(proxyId: proxy.id, proxy: edited, enable: proxy.isEnabled, comment: proxy.comment)),
+                          );
+                          await _load();
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        onPressed: () async {
+                          await guard(context, () => account.removeProxy(proxy.id));
+                          await _load();
+                        },
+                      ),
+                    ]),
                   ),
               ],
             ),
@@ -135,19 +150,35 @@ class _ProxyScreenState extends ConsumerState<ProxyScreen> {
 }
 
 class _ProxyDialog extends StatefulWidget {
-  const _ProxyDialog();
+  const _ProxyDialog({this.initial});
+
+  /// Proxy being edited; null when adding one.
+  final td.Proxy? initial;
 
   @override
   State<_ProxyDialog> createState() => _ProxyDialogState();
 }
 
 class _ProxyDialogState extends State<_ProxyDialog> {
-  String _type = 'mtproto';
-  final _server = TextEditingController();
-  final _port = TextEditingController();
-  final _secret = TextEditingController();
-  final _user = TextEditingController();
-  final _password = TextEditingController();
+  late String _type = switch (widget.initial?.type) {
+    td.ProxyTypeSocks5() => 'socks5',
+    td.ProxyTypeHttp() => 'http',
+    _ => 'mtproto',
+  };
+  late final _server = TextEditingController(text: widget.initial?.server ?? '');
+  late final _port = TextEditingController(text: widget.initial == null ? '' : '${widget.initial!.port}');
+  late final _secret = TextEditingController(text: switch (widget.initial?.type) {
+    td.ProxyTypeMtproto(:final secret) => secret,
+    _ => '',
+  });
+  late final _user = TextEditingController(text: switch (widget.initial?.type) {
+    td.ProxyTypeSocks5(:final username) || td.ProxyTypeHttp(:final username) => username,
+    _ => '',
+  });
+  late final _password = TextEditingController(text: switch (widget.initial?.type) {
+    td.ProxyTypeSocks5(:final password) || td.ProxyTypeHttp(:final password) => password,
+    _ => '',
+  });
 
   @override
   void dispose() {
@@ -161,7 +192,7 @@ class _ProxyDialogState extends State<_ProxyDialog> {
   Widget build(BuildContext context) {
     final s = context.s;
     return AlertDialog(
-      title: Text(s.t('proxy_add')),
+      title: Text(s.t(widget.initial == null ? 'proxy_add' : 'edit')),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -203,7 +234,7 @@ class _ProxyDialogState extends State<_ProxyDialog> {
             };
             Navigator.pop(context, td.Proxy(server: server, port: port, type: type));
           },
-          child: Text(s.t('add')),
+          child: Text(s.t(widget.initial == null ? 'add' : 'save')),
         ),
       ],
     );
@@ -250,6 +281,45 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
     await _load();
   }
 
+  /// Telegram's low/medium/high auto-download presets, saved per network type on the server.
+  Future<void> _pickAutoDownloadPreset(BuildContext context, td.NetworkType type, String title) async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final presets = await guard(context, () => account.send<td.AutoDownloadSettingsPresets>(const td.GetAutoDownloadSettingsPresets()));
+    if (presets == null || !context.mounted) return;
+    String mb(int bytes) => formatFileSize(bytes);
+    final options = <(String, td.AutoDownloadSettings?)>[
+      ('auto_download_off', null),
+      ('auto_download_low', presets.low),
+      ('auto_download_medium', presets.medium),
+      ('auto_download_high', presets.high),
+    ];
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700))),
+          for (final (i, (key, preset)) in options.indexed)
+            ListTile(
+              title: Text(s.t(key)),
+              subtitle: preset == null
+                  ? null
+                  : Text(s.t('auto_download_limits', {'photo': mb(preset.maxPhotoFileSize), 'video': mb(preset.maxVideoFileSize), 'file': mb(preset.maxOtherFileSize)})),
+              onTap: () => Navigator.pop(context, i),
+            ),
+        ]),
+      ),
+    );
+    if (picked == null || !context.mounted) return;
+    final chosen = options[picked].$2 ?? presets.low.copyWith(isAutoDownloadEnabled: false);
+    final done = await guard(context, () async {
+      await account.send<td.Ok>(td.SetAutoDownloadSettings(settings: chosen, type: type));
+      return true;
+    });
+    if (done == true && context.mounted) showToast(context, s.t('done'));
+  }
+
   Future<void> _setGallery(String kind, bool on) async {
     // Ask for gallery access when turning it on, while the user is looking.
     if (on && !await ensureGalleryAccess()) {
@@ -294,6 +364,17 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
               value: settings.autoDownloadPhotos,
               onChanged: notifier.setAutoDownloadPhotos,
             ),
+            for (final (type, key) in const <(td.NetworkType, String)>[
+              (td.NetworkTypeMobile(), 'network_mobile'),
+              (td.NetworkTypeWiFi(), 'network_wifi'),
+              (td.NetworkTypeMobileRoaming(), 'network_roaming'),
+            ])
+              ListTile(
+                title: Text(s.t(key)),
+                subtitle: Text(s.t('auto_download_preset_hint')),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => _pickAutoDownloadPreset(context, type, s.t(key)),
+              ),
           ]),
           SettingsGroup(title: s.t('save_to_gallery'), children: [
             for (final kind in const ['private', 'groups', 'channels'])

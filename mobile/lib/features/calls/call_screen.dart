@@ -45,8 +45,12 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     super.dispose();
   }
 
-  String _status(Strings s) {
+  String _status(Strings s, String name) {
     final session = widget.session;
+    final error = session.error;
+    if (error != null) {
+      return s.t(error.message == 'USER_PRIVACY_RESTRICTED' ? 'call_privacy_restricted' : 'call_failed', {'name': name});
+    }
     return switch (session.phase) {
       CallPhase.ringing => s.t(session.isOutgoing ? 'call_ringing' : (session.call.isVideo ? 'call_incoming_video' : 'call_incoming')),
       CallPhase.connecting => s.t('call_connecting'),
@@ -104,7 +108,10 @@ class _CallScreenState extends ConsumerState<CallScreen> {
                   const SizedBox(height: 16),
                   Text(name, style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),
-                  Text(_status(s), style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(_status(s, user?.firstName ?? ''), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 16)),
+                  ),
                   if (session.remoteMuted && session.phase == CallPhase.active)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),

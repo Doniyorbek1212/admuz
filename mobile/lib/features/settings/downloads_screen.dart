@@ -59,6 +59,24 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         leading: panelCloseButton(context),
         title: Text(s.t('downloads')),
         actions: [
+          if (items != null && items.any((i) => i.completeDate == 0)) ...[
+            IconButton(
+              tooltip: s.t('downloads_pause_all'),
+              icon: const Icon(Icons.pause_circle_outline_rounded),
+              onPressed: () async {
+                await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ToggleAllDownloadsArePaused(arePaused: true)));
+                await _load();
+              },
+            ),
+            IconButton(
+              tooltip: s.t('downloads_resume_all'),
+              icon: const Icon(Icons.play_circle_outline_rounded),
+              onPressed: () async {
+                await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ToggleAllDownloadsArePaused(arePaused: false)));
+                await _load();
+              },
+            ),
+          ],
           if (items != null && items.isNotEmpty)
             IconButton(tooltip: s.t('downloads_clear'), icon: const Icon(Icons.delete_sweep_rounded), onPressed: _clear),
         ],

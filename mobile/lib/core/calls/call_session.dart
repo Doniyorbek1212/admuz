@@ -33,6 +33,9 @@ class CallSession extends ChangeNotifier {
   DateTime? startedAt;
   td.CallDiscardReason? endReason;
 
+  /// Set when the call failed (callStateError), e.g. USER_PRIVACY_RESTRICTED.
+  td.TdError? error;
+
   /// Telegram asks for a 1-5 star rating after some calls.
   bool needRating = false;
 
@@ -84,6 +87,7 @@ class CallSession extends ChangeNotifier {
         await _end();
       case td.CallStateError(:final error):
         debugPrint('call error: ${error.code} ${error.message}');
+        this.error = error;
         await _end();
     }
     _notify();
@@ -371,6 +375,8 @@ class CallSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    // TDLib can repeat the final call state, so closing may be requested more than once.
+    if (_disposed) return;
     _disposed = true;
     unawaited(_end());
     unawaited(localRenderer.dispose());

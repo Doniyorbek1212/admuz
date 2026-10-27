@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../core/config.dart';
@@ -82,6 +81,18 @@ class AccountSlotsNotifier extends Notifier<AccountSlots> {
     return true;
   }
 
+  /// Replaces the active not-yet-logged-in slot with a fresh one on Telegram's test servers that submits [phone].
+  Future<void> restartOnTestDc(String phone) async {
+    final old = state.active;
+    final slot = state.slots.fold(0, (a, b) => a > b ? a : b) + 1;
+    final dir = await TelegramAccount.directoryFor(slot);
+    await Directory(dir).create(recursive: true);
+    await TelegramAccount.testDcMarker(dir).writeAsString(phone);
+    state = state.copyWith(slots: [...state.slots, slot], active: slot);
+    _persist(state);
+    await removeSlot(old);
+  }
+
   void setLabel(int slot, String label) {
     if (state.labels[slot] == label) return;
     ref.read(sharedPreferencesProvider).setString('tg.label.$slot', label);
@@ -100,8 +111,7 @@ class AccountSlotsNotifier extends Notifier<AccountSlots> {
     _persist(state);
     ref.read(sharedPreferencesProvider).remove('tg.label.$slot');
     try {
-      final support = await getApplicationSupportDirectory();
-      final dir = Directory('${support.path}${Platform.pathSeparator}tdlib${Platform.pathSeparator}account_$slot');
+      final dir = Directory(await TelegramAccount.directoryFor(slot));
       if (await dir.exists()) await dir.delete(recursive: true);
     } on FileSystemException catch (error) {
       debugPrint('failed to delete account data: $error');

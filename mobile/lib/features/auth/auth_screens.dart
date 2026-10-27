@@ -12,6 +12,7 @@ import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
+import '../../state/telegram.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 
@@ -303,22 +304,13 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> with _Submitting {
 
   Future<void> _send() => submit(() async {
     final digits = _phone.text.replaceAll(RegExp(r'[^\d+]'), '');
-    await ref
-        .read(accountProvider)
-        .send<td.Ok>(
-          td.SetAuthenticationPhoneNumber(
-            phoneNumber: digits,
-            settings: const td.PhoneNumberAuthenticationSettings(
-              allowFlashCall: false,
-              allowMissedCall: false,
-              isCurrentPhoneNumber: false,
-              hasUnknownPhoneNumber: false,
-              allowSmsRetrieverApi: false,
-              firebaseAuthenticationSettings: null,
-              authenticationTokens: [],
-            ),
-          ),
-        );
+    final account = ref.read(accountProvider);
+    if (isTestDcPhone(digits) && !account.usesTestDc) {
+      // Store review number: restart this login on Telegram's test servers, where it exists.
+      await ref.read(accountSlotsProvider.notifier).restartOnTestDc(digits.replaceAll('+', ''));
+      return;
+    }
+    await account.send<td.Ok>(td.SetAuthenticationPhoneNumber(phoneNumber: digits, settings: phoneAuthSettings));
   });
 
   @override

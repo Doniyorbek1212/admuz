@@ -147,6 +147,12 @@ async def test_release_and_download_follow_the_uploaded_apk(client, session_fact
     assert "&lt;b&gt;" in page.text and "<b>tez orada</b>" not in page.text
 
 
+async def test_privacy_policy_is_public_html(client):
+    page = await client.get("/privacy")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "Privacy Policy" in page.text and "Maxfiylik siyosati" in page.text
+
+
 async def test_admin_panel_is_served_with_strict_headers(client):
     resp = await client.get("/admin/")
     assert resp.status_code == 200

@@ -4,7 +4,7 @@
 ; Output: build\windows\installer\UZARO-Setup-<version>.exe
 
 #define AppName "UZARO"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.1"
 #define AppExe "sado.exe"
 #define BuildDir "..\build\windows\x64\runner\Release"
 

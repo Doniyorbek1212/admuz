@@ -14,7 +14,6 @@ import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
-import '../../core/theme.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../chat/call_options.dart';
@@ -25,11 +24,14 @@ import '../chat/message_content.dart';
 import '../contacts/contacts_screen.dart';
 import '../home/home_screen.dart';
 import 'admin_screens.dart';
+import '../stories/story_archive.dart';
+import 'user_profile_extras.dart';
 
 /// Extra info shown on profiles: bio/description, invite link, member list.
 class _ProfileDetails {
-  const _ProfileDetails({this.about = '', this.inviteLink, this.members = const [], this.birthdate, this.commonGroups = 0});
+  const _ProfileDetails({this.about = '', this.inviteLink, this.members = const [], this.birthdate, this.commonGroups = 0, this.note});
 
+  final td.FormattedText? note;
   final String about;
   final String? inviteLink;
   final List<td.ChatMember> members;
@@ -44,7 +46,7 @@ final _detailsProvider = FutureProvider.autoDispose.family<_ProfileDetails, int>
   if (user != null) {
     final info = await account.send<td.UserFullInfo>(td.GetUserFullInfo(userId: user.id));
     final about = info.bio?.text ?? info.botInfo?.description ?? '';
-    return _ProfileDetails(about: about, birthdate: info.birthdate, commonGroups: info.groupInCommonCount);
+    return _ProfileDetails(about: about, birthdate: info.birthdate, commonGroups: info.groupInCommonCount, note: info.note);
   }
   final supergroup = account.supergroupOf(chat);
   if (supergroup != null) {
@@ -189,6 +191,10 @@ class ChatInfoScreen extends ConsumerWidget {
                       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ManageChatScreen(chatId: chatId))),
                     ),
                   if (user != null && user.id != account.myId) ...[
+                    if (!account.isBot(user))
+                      UserNoteTile(account: account, userId: user.id, note: info?.note, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
+                    if (user.isContact && info != null && info.birthdate == null && !account.isBot(user))
+                      ListTile(leading: const Icon(Icons.cake_outlined), title: Text(s.t('birthday_suggest')), onTap: () => suggestBirthdate(context, account, user.id)),
                     if (user.isContact)
                       ListTile(
                         leading: const Icon(Icons.person_remove_rounded),
@@ -240,6 +246,14 @@ class ChatInfoScreen extends ConsumerWidget {
                       ),
                     ),
                   ],
+                  if ((user != null && !account.isBot(user) && !account.isSavedMessages(chat)) || account.isChannel(chat))
+                    ListTile(
+                      leading: const Icon(Icons.motion_photos_on_outlined),
+                      title: Text(s.t('stories')),
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => ChatStoriesScreen(chatId: chatId, canManage: user?.id == account.myId || (user == null && account.isAdmin(chat))),
+                      )),
+                    ),
                   if (info != null && info.commonGroups > 0 && user != null)
                     ListTile(
                       leading: const Icon(Icons.groups_rounded),
@@ -497,7 +511,7 @@ class _ActionTile extends StatelessWidget {
           color: tint.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.1),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
-            side: BorderSide(color: brandGold.withValues(alpha: 0.35)),
+            side: BorderSide(color: tint.withValues(alpha: 0.18)),
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -542,7 +556,7 @@ class _ProfileCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: brandGold.withValues(alpha: 0.3)),
+            border: Border.all(color: Theme.of(context).dividerColor),
             boxShadow: [BoxShadow(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 4))],
           ),
           child: Column(children: children),
@@ -631,15 +645,25 @@ class _MemberTile extends ConsumerWidget {
   }
 }
 
+td.SearchMessagesFilter _mediaFilter(String tab) => switch (tab) {
+      'files' => const td.SearchMessagesFilterDocument(),
+      'links' => const td.SearchMessagesFilterUrl(),
+      'voice' => const td.SearchMessagesFilterVoiceNote(),
+      'music' => const td.SearchMessagesFilterAudio(),
+      _ => const td.SearchMessagesFilterPhotoAndVideo(),
+    };
+
+/// Server count of a shared-media tab, shown on its chip.
+final _sharedCountProvider = FutureProvider.autoDispose.family<int, (int, String)>((ref, key) async {
+  final count = await ref.watch(accountProvider).send<td.Count>(
+        td.GetChatMessageCount(chatId: key.$1, topicId: null, filter: _mediaFilter(key.$2), returnLocal: false),
+      );
+  return count.count;
+});
+
 final _sharedMediaProvider = FutureProvider.autoDispose.family<List<td.Message>, (int, String)>((ref, key) async {
   final account = ref.watch(accountProvider);
-  final filter = switch (key.$2) {
-    'files' => const td.SearchMessagesFilterDocument() as td.SearchMessagesFilter,
-    'links' => const td.SearchMessagesFilterUrl(),
-    'voice' => const td.SearchMessagesFilterVoiceNote(),
-    'music' => const td.SearchMessagesFilterAudio(),
-    _ => const td.SearchMessagesFilterPhotoAndVideo(),
-  };
+  final filter = _mediaFilter(key.$2);
   final result = await account.send<td.FoundChatMessages>(
     td.SearchChatMessages(chatId: key.$1, topicId: null, query: '', senderId: null, fromMessageId: 0, offset: 0, limit: 60, filter: filter),
   );
@@ -673,7 +697,14 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
               for (final tab in const ['media', 'files', 'links', 'voice', 'music'])
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(label: Text(s.t('shared_$tab')), selected: _tab == tab, onSelected: (_) => setState(() => _tab = tab)),
+                  child: ChoiceChip(
+                    label: Text(switch (ref.watch(_sharedCountProvider((widget.chatId, tab))).value) {
+                      final n? when n > 0 => '${s.t('shared_$tab')} $n',
+                      _ => s.t('shared_$tab'),
+                    }),
+                    selected: _tab == tab,
+                    onSelected: (_) => setState(() => _tab = tab),
+                  ),
                 ),
             ],
           ),

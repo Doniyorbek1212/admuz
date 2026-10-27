@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
+import '../../core/store_rules.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
@@ -71,9 +72,9 @@ class _BusinessScreenState extends ConsumerState<BusinessScreen> {
             child: ListView(
               padding: const EdgeInsets.only(bottom: 16),
               children: [
-                _AdCta(onTap: () => _open(const AdCreateScreen())),
+                if (!storeBlocksExternalPayments) _AdCta(onTap: () => _open(const AdCreateScreen())),
                 _shopsSection(context, shops),
-                _adsSection(context, ads),
+                if (!storeBlocksExternalPayments || ads.isNotEmpty) _adsSection(context, ads),
               ],
             ),
           );
@@ -113,7 +114,8 @@ class _BusinessScreenState extends ConsumerState<BusinessScreen> {
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
         child: FilledButton.icon(
-          onPressed: _newShop,
+          // iOS: further shops are paid outside the App Store, so only the free ones can be opened there.
+          onPressed: storeBlocksExternalPayments && my.nextShopPriceUzs > 0 ? null : _newShop,
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
           icon: const Icon(Icons.add_business_rounded),
           label: Text(s.t(my.shops.isEmpty ? 'biz_open_shop' : 'biz_new_shop')),

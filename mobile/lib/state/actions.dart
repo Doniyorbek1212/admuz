@@ -482,14 +482,12 @@ extension BotActions on TelegramAccount {
   Future<void> sendWebAppData(int botUserId, String buttonText, String data) =>
       send<td.Ok>(td.SendWebAppData(botUserId: botUserId, buttonText: buttonText, data: data));
 
-  Future<td.PaymentForm> paymentForm(td.Message message, td.ThemeParameters theme) => send<td.PaymentForm>(td.GetPaymentForm(
-        inputInvoice: td.InputInvoiceMessage(chatId: message.chatId, messageId: message.id),
-        theme: theme,
-      ));
+  Future<td.PaymentForm> paymentForm(td.InputInvoice invoice, td.ThemeParameters theme) =>
+      send<td.PaymentForm>(td.GetPaymentForm(inputInvoice: invoice, theme: theme));
 
   /// Pays an invoice in Telegram Stars (no card data involved; Telegram debits the user's Star balance).
-  Future<td.PaymentResult> payWithStars(td.Message message, int paymentFormId) => send<td.PaymentResult>(td.SendPaymentForm(
-        inputInvoice: td.InputInvoiceMessage(chatId: message.chatId, messageId: message.id),
+  Future<td.PaymentResult> payWithStars(td.InputInvoice invoice, int paymentFormId) => send<td.PaymentResult>(td.SendPaymentForm(
+        inputInvoice: invoice,
         paymentFormId: paymentFormId,
         orderInfoId: '',
         shippingOptionId: '',
@@ -977,9 +975,9 @@ extension AdminActions on TelegramAccount {
   Future<td.SupergroupFullInfo> supergroupInfo(int supergroupId) =>
       send<td.SupergroupFullInfo>(td.GetSupergroupFullInfo(supergroupId: supergroupId));
 
-  Future<List<td.ChatInviteLink>> inviteLinks(int chatId, {bool revoked = false}) async => (await send<td.ChatInviteLinks>(td.GetChatInviteLinks(
+  Future<List<td.ChatInviteLink>> inviteLinks(int chatId, {bool revoked = false, int? creatorUserId}) async => (await send<td.ChatInviteLinks>(td.GetChatInviteLinks(
         chatId: chatId,
-        creatorUserId: myId,
+        creatorUserId: creatorUserId ?? myId,
         isRevoked: revoked,
         offsetDate: 0,
         offsetInviteLink: '',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/store_rules.dart';
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
@@ -117,7 +118,7 @@ class _MyShopScreenState extends ConsumerState<MyShopScreen> {
               padding: const EdgeInsets.only(bottom: 90),
               children: [
                 _header(context, shop),
-                if (needsPayment)
+                if (needsPayment && !storeBlocksExternalPayments)
                   SettingsGroup(title: s.t('shop_pay_title'), children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),

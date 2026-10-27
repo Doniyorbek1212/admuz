@@ -8,6 +8,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import 'composer_panels.dart';
+import 'sticker_creator.dart';
 
 /// Preview of a whole sticker set with Add/Remove, opened from a sticker in chat or a set list.
 Future<void> showStickerSetSheet(BuildContext context, int setId) => showModalBottomSheet<void>(
@@ -172,6 +173,13 @@ class _StickerSetsScreenState extends ConsumerState<StickerSetsScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(s.t('stickers')),
+          actions: [
+            IconButton(
+              tooltip: s.t('sticker_packs_mine'),
+              icon: const Icon(Icons.brush_rounded),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MyStickerPacksScreen())),
+            ),
+          ],
           bottom: TabBar(tabs: [Tab(text: s.t('sticker_sets_mine')), Tab(text: s.t('sticker_sets_trending')), Tab(text: s.t('sticker_sets_archived'))]),
         ),
         body: installed == null

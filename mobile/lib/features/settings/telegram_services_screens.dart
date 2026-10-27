@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/store_rules.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -10,6 +11,7 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../contacts/contacts_screen.dart';
 import '../home/home_screen.dart';
+import 'business_settings.dart';
 import 'premium_extras.dart';
 
 /// Opens a public chat by @username inside the app (PremiumBot, TelegramTips…).
@@ -144,7 +146,7 @@ class PremiumInfoScreen extends ConsumerWidget {
           const PremiumServerSection(),
         ],
       ),
-      bottomNavigationBar: isPremium
+      bottomNavigationBar: isPremium || storeBlocksExternalPayments
           ? null
           : _BuyButton(
               label: s.t('premium_subscribe'),
@@ -197,15 +199,17 @@ class StarsScreen extends ConsumerWidget {
               ]),
             ),
             Center(child: Text(s.t('stars_balance'), style: TextStyle(color: Theme.of(context).hintColor))),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: FilledButton(onPressed: () => openUsername(context, ref, 'PremiumBot'), child: Text(s.t('stars_buy'))),
-            ),
-            TextButton.icon(
-              icon: const Icon(Icons.group_rounded),
-              label: Text(s.t('stars_gift')),
-              onPressed: () => openUsername(context, ref, 'PremiumBot'),
-            ),
+            if (!storeBlocksExternalPayments) ...[
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: FilledButton(onPressed: () => openUsername(context, ref, 'PremiumBot'), child: Text(s.t('stars_buy'))),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.group_rounded),
+                label: Text(s.t('stars_gift')),
+                onPressed: () => openUsername(context, ref, 'PremiumBot'),
+              ),
+            ],
             const SizedBox(height: 8),
           ]),
           const StarSubscriptionsSection(),
@@ -245,6 +249,7 @@ class BusinessInfoScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = context.s;
+    final isPremium = ref.watch(meProvider)?.isPremium ?? false;
     return Scaffold(
       backgroundColor: groupedBackground(context),
       appBar: AppBar(title: Text(s.t('telegram_business'))),
@@ -256,7 +261,14 @@ class BusinessInfoScreen extends ConsumerWidget {
           GroupHint(s.t('business_more')),
         ],
       ),
-      bottomNavigationBar: _BuyButton(label: s.t('premium_subscribe'), onPressed: () => openUsername(context, ref, 'PremiumBot')),
+      bottomNavigationBar: isPremium
+          ? _BuyButton(
+              label: s.t('biz_setup'),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const BusinessSettingsScreen())),
+            )
+          : storeBlocksExternalPayments
+              ? null
+              : _BuyButton(label: s.t('premium_subscribe'), onPressed: () => openUsername(context, ref, 'PremiumBot')),
     );
   }
 }

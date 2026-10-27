@@ -7,13 +7,18 @@ import 'package:geolocator/geolocator.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/link_safety.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/link_policy.dart';
 import '../../state/providers.dart';
+import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../contacts/contacts_screen.dart';
 import '../webapp/web_app_screen.dart';
 import 'forward_picker.dart';
+import 'link_router.dart';
 import 'message_content.dart';
 
 /// Called when a button wants text placed in the composer ("@bot query" for switch-inline buttons).
@@ -22,7 +27,11 @@ typedef InsertText = void Function(String text);
 Future<void> _openUrl(BuildContext context, String url, {bool ask = true}) async {
   final uri = Uri.tryParse(url.contains('://') ? url : 'https://$url');
   if (uri == null) return;
-  if (ask && !(uri.host == 't.me' || uri.host == 'telegram.me' || uri.scheme == 'tg')) {
+  if (uri.host == 't.me' || uri.host == 'telegram.me' || uri.scheme == 'tg') return openLink(context, url);
+  final risk = assessLink(url, policy: ProviderScope.containerOf(context, listen: false).read(linkPolicyProvider));
+  if (risk.warns) {
+    if (!await confirmRiskyLink(context, url, risk)) return;
+  } else if (ask) {
     final ok = await confirm(context, title: context.t('open_link'), message: url);
     if (!ok) return;
   }
@@ -283,11 +292,14 @@ class _InlineButtonState extends ConsumerState<_InlineButton> {
 
 /// Pays an invoice. Telegram Stars invoices are paid in-app; card invoices need the payment
 /// provider's own form, which is opened in the official flow via the invoice link.
-Future<void> payInvoice(BuildContext context, WidgetRef ref, td.Message message) async {
-  final account = ref.read(accountProvider);
+Future<void> payInvoice(BuildContext context, WidgetRef ref, td.Message message) =>
+    payInputInvoice(context, ref.read(accountProvider), td.InputInvoiceMessage(chatId: message.chatId, messageId: message.id));
+
+/// Pays any invoice (message or t.me/invoice slug). Returns the Mini App status: paid, cancelled, pending or failed.
+Future<String> payInputInvoice(BuildContext context, TelegramAccount account, td.InputInvoice invoice) async {
   final s = context.s;
-  final form = await guard(context, () => account.paymentForm(message, themeParametersOf(context)));
-  if (form == null || !context.mounted) return;
+  final form = await guard(context, () => account.paymentForm(invoice, themeParametersOf(context)));
+  if (form == null || !context.mounted) return 'failed';
   switch (form.type) {
     case td.PaymentFormTypeStars(:final starCount):
       final ok = await confirm(
@@ -295,16 +307,18 @@ Future<void> payInvoice(BuildContext context, WidgetRef ref, td.Message message)
         title: form.productInfo.title,
         message: s.t('stars_pay_confirm', {'count': '$starCount', 'bot': account.userName(form.sellerBotUserId)}),
       );
-      if (!ok || !context.mounted) return;
-      final result = await guard(context, () => account.payWithStars(message, form.id));
-      if (result == null || !context.mounted) return;
+      if (!ok || !context.mounted) return 'cancelled';
+      final result = await guard(context, () => account.payWithStars(invoice, form.id));
+      if (result == null || !context.mounted) return 'failed';
       if (result.verificationUrl.isNotEmpty) {
         await launchUrl(Uri.parse(result.verificationUrl), mode: LaunchMode.externalApplication);
-      } else if (result.success) {
-        showToast(context, s.t('payment_done'));
+        return 'pending';
       }
+      if (result.success) showToast(context, s.t('payment_done'));
+      return result.success ? 'paid' : 'failed';
     default:
       showToast(context, s.t('payment_card_unsupported'));
+      return 'failed';
   }
 }
 
@@ -339,8 +353,32 @@ class ReplyKeyboardPanel extends ConsumerWidget {
         if (context.mounted) await guard(context, () => account.sendLocation(chat.id, position.latitude, position.longitude));
       case td.KeyboardButtonTypeWebApp(:final url):
         await openKeyboardWebApp(context, ref, botUserId: account.botUserIdOf(markupMessage), url: url, buttonText: button.text);
+      case td.KeyboardButtonTypeRequestUsers(:final id):
+        final user = await Navigator.of(context).push<td.User>(MaterialPageRoute(builder: (_) => const ContactsScreen(pickUser: true)));
+        if (user == null || !context.mounted) return;
+        await guard(
+          context,
+          () => account.send<td.Ok>(td.ShareUsersWithBot(
+            source: td.KeyboardButtonSourceMessage(chatId: chat.id, messageId: markupMessage.id),
+            buttonId: id,
+            sharedUserIds: [user.id],
+            onlyCheck: false,
+          )),
+        );
+      case td.KeyboardButtonTypeRequestChat(:final id):
+        final picked = await Navigator.of(context).push<Object>(MaterialPageRoute(builder: (_) => const ForwardPickerScreen()));
+        if (picked is! int || !context.mounted) return;
+        await guard(
+          context,
+          () => account.send<td.Ok>(td.ShareChatWithBot(
+            source: td.KeyboardButtonSourceMessage(chatId: chat.id, messageId: markupMessage.id),
+            buttonId: id,
+            sharedChatId: picked,
+            onlyCheck: false,
+          )),
+        );
       default:
-        // Poll/user/chat pickers: send the label so the bot can fall back to text handling.
+        // Poll picker: send the label so the bot can fall back to text handling.
         await onSendText(button.text);
     }
     if (keyboard.oneTime) onHide();

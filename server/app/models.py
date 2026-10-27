@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -437,3 +438,53 @@ class AdCampaign(Base):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlaceCategory(StrEnum):
+    """Kinds of places in the hub's "Region" directory; the app translates these keys."""
+
+    TAXI = "taxi"
+    PHARMACY = "pharmacy"
+    HOTEL = "hotel"
+    DOCTOR = "doctor"
+    CAR_SERVICE = "car_service"
+    BANK = "bank"
+    TRAVEL = "travel"
+    FOOD = "food"
+
+
+class Place(Base):
+    """A local service (taxi, pharmacy, clinic...) in the "Region" directory: imported from OpenStreetMap or added by an admin."""
+
+    __tablename__ = "places"
+    __table_args__ = (
+        Index("ix_places_region_category_active", "region", "category", "active"),
+        Index("ix_places_region_district", "region", "district"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category: Mapped[PlaceCategory] = mapped_column(_enum(PlaceCategory, "place_category"))
+    region: Mapped[str] = mapped_column(String(40))
+    # Null: serves the whole region (shown in every district of it).
+    district: Mapped[str | None] = mapped_column(String(80))
+    name: Mapped[str] = mapped_column(String(200))
+    subcategory: Mapped[str] = mapped_column(String(80), default="")
+    description: Mapped[str] = mapped_column(String(3000), default="")
+    address: Mapped[str] = mapped_column(String(300), default="")
+    landmark: Mapped[str] = mapped_column(String(200), default="")
+    phones: Mapped[list] = mapped_column(JSONB, default=list)
+    telegram: Mapped[str] = mapped_column(String(64), default="")
+    instagram: Mapped[str] = mapped_column(String(64), default="")
+    website: Mapped[str] = mapped_column(String(300), default="")
+    working_hours: Mapped[str] = mapped_column(String(200), default="")
+    is_24h: Mapped[bool] = mapped_column(Boolean, default=False)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # "osm:node/123" for imported places, so a re-import updates instead of duplicating; null for manual ones.
+    source_ref: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

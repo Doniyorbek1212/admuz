@@ -6,12 +6,14 @@ import '../../core/app_lock.dart';
 import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../contacts/contacts_screen.dart';
 import 'advanced_settings.dart';
+import 'link_safety_screen.dart';
 import 'privacy_extra_screens.dart';
 import 'privacy_rules_screen.dart';
 import 'settings_screen.dart';
@@ -103,6 +105,12 @@ class PrivacyScreen extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: 16),
         children: [
           SettingsGroup(title: s.t('security'), children: [
+            ListTile(
+              leading: const Icon(Icons.shield_outlined),
+              title: Text(s.t('link_safety')),
+              trailing: value(ref.watch(linkPolicyProvider).enabled ? s.t('state_on') : s.t('state_off')),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LinkSafetyScreen())),
+            ),
             ListTile(
               leading: const Icon(Icons.verified_user_outlined),
               title: Text(s.t('two_step')),

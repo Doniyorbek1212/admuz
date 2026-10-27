@@ -1,6 +1,8 @@
 # Flutter
 mobile/.dart_tool/
 mobile/build/
+mobile/android/build/
+hs_err_pid*.log
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/android/.gradle/

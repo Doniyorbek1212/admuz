@@ -9,6 +9,79 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import 'message_content.dart';
+
+/// Receipt of a completed payment, opened from its "You paid …" service message.
+Future<void> showPaymentReceipt(BuildContext context, TelegramAccount account, td.Message message) async {
+  final receipt = await guard(context, () => account.send<td.PaymentReceipt>(td.GetPaymentReceipt(chatId: message.chatId, messageId: message.id)));
+  if (receipt == null || !context.mounted) return;
+  final s = context.s;
+  final total = switch (receipt.type) {
+    td.PaymentReceiptTypeStars(:final starCount) => '$starCount ⭐',
+    td.PaymentReceiptTypeRegular(:final invoice, :final tipAmount) =>
+      formatInvoiceAmount(invoice.priceParts.fold<int>(0, (sum, p) => sum + p.amount) + tipAmount, invoice.currency),
+    _ => '',
+  };
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+          title: Text(receipt.productInfo.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: receipt.productInfo.description.text.isEmpty ? null : Text(receipt.productInfo.description.text),
+        ),
+        ListTile(dense: true, title: Text(s.t('receipt_total')), trailing: Text(total, style: const TextStyle(fontWeight: FontWeight.w700))),
+        ListTile(dense: true, title: Text(s.t('receipt_seller')), trailing: Text(account.userName(receipt.sellerBotUserId))),
+        ListTile(dense: true, title: Text(s.t('date')), trailing: Text(formatChatTime(receipt.date, s.locale))),
+        if (receipt.type case td.PaymentReceiptTypeStars(:final transactionId))
+          ListTile(dense: true, title: Text(s.t('receipt_transaction')), subtitle: SelectableText(transactionId)),
+      ]),
+    ),
+  );
+}
+
+/// Who voted for each option of a public poll.
+Future<void> showPollVoters(BuildContext context, TelegramAccount account, td.Message message, td.Poll poll) async {
+  final results = await guard(
+    context,
+    () => Future.wait([
+      for (var i = 0; i < poll.options.length; i++)
+        poll.options[i].voterCount == 0
+            ? Future.value(const td.PollVoters(totalCount: 0, voters: []))
+            : account.send<td.PollVoters>(td.GetPollVoters(chatId: message.chatId, messageId: message.id, optionId: i, offset: 0, limit: 50)),
+    ]),
+  );
+  if (results == null || !context.mounted) return;
+  final s = context.s;
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
+        child: ListView(shrinkWrap: true, children: [
+          for (var i = 0; i < poll.options.length; i++)
+            if (results[i].voters.isNotEmpty) ...[
+              SectionHeader('${poll.options[i].text.text} — ${s.count('votes', results[i].totalCount)}'),
+              for (final voter in results[i].voters)
+                ListTile(
+                  dense: true,
+                  leading: switch (voter.voterId) {
+                    td.MessageSenderUser(:final userId) => UserAvatar(userId: userId, size: 34, showOnline: false),
+                    td.MessageSenderChat(:final chatId) => ChatAvatar(chatId: chatId, size: 34, showOnline: false),
+                    _ => const SizedBox.square(dimension: 34),
+                  },
+                  title: Text(account.senderName(voter.voterId)),
+                  trailing: Text(formatChatTime(voter.date, s.locale), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+                ),
+            ],
+        ]),
+      ),
+    ),
+  );
+}
 
 /// Walks the server-driven report flow (reason → optional details) for a chat or some of its messages.
 Future<void> reportChat(BuildContext context, TelegramAccount account, int chatId, {List<int> messageIds = const []}) async {

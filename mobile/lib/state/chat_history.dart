@@ -8,7 +8,7 @@ import 'telegram.dart';
 
 /// Message list of one open chat. Messages are kept newest-first (for a reversed ListView).
 class ChatHistory extends ChangeNotifier {
-  ChatHistory(this.account, this.chatId, {required this.ghostMode, this.topicId}) {
+  ChatHistory(this.account, this.chatId, {required this.ghostMode, this.topicId, this.threadId, this.threadRoots = const []}) {
     _subscription = account.messageEvents.listen(_onEvent);
     unawaited(account.send<td.Ok>(td.OpenChat(chatId: chatId)).catchError((Object _) => const td.Ok()));
   }
@@ -18,7 +18,13 @@ class ChatHistory extends ChangeNotifier {
 
   /// Forum topic shown by this history; null for the whole chat.
   final int? topicId;
+
+  /// Comment thread of a channel post shown by this history, and the post itself (drawn at the top).
+  final int? threadId;
+  final List<td.Message> threadRoots;
   bool ghostMode;
+
+  bool get _wholeChat => topicId == null && threadId == null;
 
   final List<td.Message> messages = [];
   bool loading = false;
@@ -48,7 +54,7 @@ class ChatHistory extends ChangeNotifier {
     final chat = account.chats[chatId];
     loading = true;
     try {
-      if (topicId == null && chat != null && chat.unreadCount > 0 && chat.lastReadInboxMessageId > 0) {
+      if (_wholeChat && chat != null && chat.unreadCount > 0 && chat.lastReadInboxMessageId > 0) {
         // Open at the first unread message, like Telegram.
         final page = await _fetch(chat.lastReadInboxMessageId, -_pageSize ~/ 2, _pageSize);
         _replaceAll(page);
@@ -59,6 +65,8 @@ class ChatHistory extends ChangeNotifier {
         _replaceAll(await _fetchLatest());
       }
       hasOlder = messages.isNotEmpty;
+      // The whole thread fitted in one page: its start, so the post goes on top.
+      if (threadId != null && messages.length < 30) _addRoots();
       error = null;
     } on TdException catch (e) {
       error = e.message;
@@ -72,7 +80,7 @@ class ChatHistory extends ChangeNotifier {
 
   Future<void> loadSponsored() async {
     final chat = account.chats[chatId];
-    final eligible = chat != null && topicId == null && (account.isChannel(chat) || account.isBot(account.privateUser(chat)));
+    final eligible = chat != null && _wholeChat && (account.isChannel(chat) || account.isBot(account.privateUser(chat)));
     if (!eligible) return;
     try {
       final result = await account.send<td.SponsoredMessages>(td.GetChatSponsoredMessages(chatId: chatId));
@@ -112,10 +120,13 @@ class ChatHistory extends ChangeNotifier {
 
   Future<List<td.Message>> _fetch(int fromMessageId, int offset, int limit) async {
     final topic = topicId;
+    final thread = threadId;
     final result = await account.send<td.Messages>(
-      topic != null
-          ? td.GetForumTopicHistory(chatId: chatId, forumTopicId: topic, fromMessageId: fromMessageId, offset: offset, limit: limit)
-          : td.GetChatHistory(chatId: chatId, fromMessageId: fromMessageId, offset: offset, limit: limit, onlyLocal: false),
+      thread != null
+          ? td.GetMessageThreadHistory(chatId: chatId, messageId: thread, fromMessageId: fromMessageId, offset: offset, limit: limit)
+          : topic != null
+              ? td.GetForumTopicHistory(chatId: chatId, forumTopicId: topic, fromMessageId: fromMessageId, offset: offset, limit: limit)
+              : td.GetChatHistory(chatId: chatId, fromMessageId: fromMessageId, offset: offset, limit: limit, onlyLocal: false),
     );
     final list = (result.messages ?? const <td.Message>[]).toList()..sort((a, b) => b.id.compareTo(a.id));
     account.archive.rememberAll(list);
@@ -158,6 +169,7 @@ class ChatHistory extends ChangeNotifier {
       final fresh = page.where((m) => !known.contains(m.id)).toList();
       messages.addAll(fresh);
       hasOlder = fresh.isNotEmpty;
+      if (!hasOlder) _addRoots();
     } on TdException catch (e) {
       error = e.message;
     } finally {
@@ -252,7 +264,17 @@ class ChatHistory extends ChangeNotifier {
     _notify();
   }
 
+  void _addRoots() {
+    final known = messages.map((m) => m.id).toSet();
+    messages.addAll(threadRoots.where((m) => !known.contains(m.id)).toList()..sort((a, b) => b.id.compareTo(a.id)));
+  }
+
   bool _inTopic(td.Message message) {
+    final thread = threadId;
+    if (thread != null) {
+      final messageTopic = message.topicId;
+      return messageTopic is td.MessageTopicThread && messageTopic.messageThreadId == thread;
+    }
     final topic = topicId;
     if (topic == null) return true;
     final messageTopic = message.topicId;

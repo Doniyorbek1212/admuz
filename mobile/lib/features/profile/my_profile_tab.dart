@@ -7,6 +7,7 @@ import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../chat/marked_messages_screen.dart';
@@ -14,6 +15,7 @@ import '../chat/media_viewers.dart';
 import '../home/home_screen.dart';
 import '../settings/downloads_screen.dart';
 import '../settings/settings_screen.dart';
+import '../stories/story_archive.dart';
 
 /// Bio and birthday of the signed-in user; refreshed after editing the profile.
 final _myFullInfoProvider = FutureProvider.autoDispose<td.UserFullInfo?>((ref) async {
@@ -34,11 +36,12 @@ class MyProfileTab extends ConsumerWidget {
     final me = ref.watch(meProvider);
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: AppBar(title: Text(context.t('tab_profile'))),
+      appBar: BrandTabBar(title: context.t('tab_profile')),
       body: me == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.only(bottom: 12),
+              // Clears the shell's floating bottom bar (reported as bottom padding).
+              padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
               children: [
                 _header(context, me),
                 _actions(context, ref),
@@ -53,15 +56,20 @@ class MyProfileTab extends ConsumerWidget {
     final theme = Theme.of(context);
     final online = isOnline(me);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 22, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
         children: [
           GestureDetector(
             onTap: me.profilePhoto == null ? null : () => openPhotoViewer(context, me.profilePhoto!.big, me.profilePhoto!.minithumbnail),
-            child: UserAvatar(userId: me.id, size: 112, showOnline: false),
+            // The profile photo is the one avatar that keeps the brand's gold ring.
+            child: GoldRing(width: 2.2, child: UserAvatar(userId: me.id, size: 104, showOnline: false)),
           ),
-          const SizedBox(height: 12),
-          Text('${me.firstName} ${me.lastName}'.trim(), textAlign: TextAlign.center, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 14),
+          Text(
+            '${me.firstName} ${me.lastName}'.trim(),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+          ),
           const SizedBox(height: 3),
           Text(
             formatUserStatus(me, context.s),
@@ -118,19 +126,22 @@ class MyProfileTab extends ConsumerWidget {
     final bio = info?.bio?.text ?? '';
     final birthdate = info?.birthdate;
     final username = me.usernames?.activeUsernames.firstOrNull;
-    Widget row(String value, String label) => ListTile(
-          title: Text(value, style: const TextStyle(fontSize: 16.5)),
-          subtitle: Text(label),
+    final hint = Theme.of(context).hintColor;
+    Widget row(IconData icon, String value, String label) => ListTile(
+          visualDensity: const VisualDensity(vertical: -2),
+          leading: Icon(icon, color: Theme.of(context).colorScheme.primary, size: 22),
+          title: Text(value, style: const TextStyle(fontSize: 16, height: 1.25)),
+          subtitle: Text(label, style: TextStyle(fontSize: 13, color: hint)),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: value));
             showToast(context, s.t('copied'));
           },
         );
     return SettingsGroup(children: [
-      row('+${me.phoneNumber}', s.t('mobile')),
-      if (bio.isNotEmpty) row(bio, s.t('bio')),
-      if (username != null) row('@$username', s.t('username')),
-      if (birthdate != null) row(_formatBirthdate(birthdate, s), s.t('birthday')),
+      row(Icons.phone_outlined, '+${me.phoneNumber}', s.t('mobile')),
+      if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio')),
+      if (username != null) row(Icons.alternate_email_rounded, '@$username', s.t('username')),
+      if (birthdate != null) row(Icons.cake_outlined, _formatBirthdate(birthdate, s), s.t('birthday')),
     ]);
   }
 
@@ -144,6 +155,11 @@ class MyProfileTab extends ConsumerWidget {
           final chat = await guard(context, ref.read(accountProvider).savedMessages);
           if (chat != null && context.mounted) openChat(context, chat.id);
         },
+      ),
+      ListTile(
+        leading: const TileIcon(Icons.motion_photos_on_rounded, Color(0xFFE5486A)),
+        title: Text(s.t('my_stories')),
+        onTap: () => _push(context, ChatStoriesScreen(chatId: ref.read(accountProvider).myId, canManage: true)),
       ),
       ListTile(
         leading: const TileIcon(Icons.star_rounded, Color(0xFFF5A623)),

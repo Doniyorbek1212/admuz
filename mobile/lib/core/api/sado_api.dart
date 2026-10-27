@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../config.dart';
 import 'market_models.dart';
+import 'place_models.dart';
 
 /// Error from the Sado server, with its stable code (e.g. AD_NOT_FOUND) for localized messages.
 class ApiException implements Exception {
@@ -179,6 +180,31 @@ class SadoApi {
       ];
 
   Future<ShopStats> shopStats(String shopId) async => ShopStats.fromJson(await _get('/v1/market/me/shops/$shopId/stats') as Map<String, dynamic>);
+
+  // ------------------------------------------------------------------ region directory
+
+  Future<List<PlaceRegion>> placeRegions() async =>
+      [for (final r in await _get('/v1/places/regions') as List) PlaceRegion.fromJson(r as Map<String, dynamic>)];
+
+  /// Count of places per category key in a region (or one district of it).
+  Future<Map<String, int>> placeCounts(String region, {String? district}) async {
+    final body = await _get('/v1/places/summary', query: {'region': region, 'district': ?district}) as Map<String, dynamic>;
+    return (body['counts'] as Map).map((k, v) => MapEntry(k as String, v as int));
+  }
+
+  /// One page of places; with [lat]/[lon] the nearest come first and carry their distance.
+  Future<PlacePage> places(String region, {String? district, String? category, String query = '', double? lat, double? lon, int offset = 0}) async =>
+      PlacePage.fromJson(await _get('/v1/places', query: {
+        'region': region,
+        'district': ?district,
+        'category': ?category,
+        if (query.isNotEmpty) 'q': query,
+        'lat': ?lat,
+        'lon': ?lon,
+        'offset': offset,
+      }) as Map<String, dynamic>);
+
+  Future<Place> place(String id) async => Place.fromJson(await _get('/v1/places/$id') as Map<String, dynamic>);
 
   // ------------------------------------------------------------------ ads
 

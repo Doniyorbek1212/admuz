@@ -28,6 +28,8 @@ import '../webapp/web_app_screen.dart';
 import 'article_editor.dart';
 import 'attach_sheet.dart';
 import 'checklist_creator.dart';
+import '../settings/business_quick_replies.dart';
+import '../settings/business_settings.dart';
 import 'composer_panels.dart';
 import 'contact_picker.dart';
 import 'location_picker.dart';
@@ -131,6 +133,8 @@ class ComposerState extends ConsumerState<Composer> {
       unawaited(_account.botInfo(bot!.id).then((info) {
         if (mounted) setState(() => _botInfo = info);
       }));
+    } else if (bot != null && _account.me?.isPremium == true && _account.quickReplies.isEmpty) {
+      _account.send<td.Ok>(const td.LoadQuickReplyShortcuts()).ignore();
     }
     _focus.addListener(() {
       if (_focus.hasFocus && _showEmoji) setState(() => _showEmoji = false);
@@ -234,7 +238,7 @@ class ComposerState extends ConsumerState<Composer> {
   void _scheduleSuggestions() {
     _suggestTimer?.cancel();
     final text = _controller.text;
-    final commands = _botInfo?.commands ?? const <td.BotCommand>[];
+    final commands = _botInfo?.commands ?? _quickReplyCommands();
     final commandQuery = RegExp(r'^/(\w*)$').firstMatch(text);
     final matches = commandQuery == null
         ? const <td.BotCommand>[]
@@ -332,10 +336,25 @@ class ComposerState extends ConsumerState<Composer> {
     await guard(context, () => _account.sendInlineResult(widget.chat.id, queryId, resultId, replyToId: replyId));
   }
 
+  /// Business quick replies offered as "/name" in chats with people (Telegram allows them only there).
+  List<td.BotCommand> _quickReplyCommands() {
+    final user = _account.privateUser(widget.chat);
+    if (user == null || _account.isBot(user) || _account.isSavedMessages(widget.chat)) return const [];
+    return [
+      for (final q in _account.quickReplies.values)
+        if (q.name != greetingShortcut && q.name != awayShortcut) td.BotCommand(command: q.name, description: quickReplyPreview(q.firstMessage, context.s), isEphemeral: false),
+    ];
+  }
+
   Future<void> _sendCommand(td.BotCommand command) async {
     _controller.clear();
     setState(() => _commandMatches = const []);
     widget.onSent();
+    final quickReply = _botInfo == null ? _account.quickReplies.values.where((q) => q.name == command.command).firstOrNull : null;
+    if (quickReply != null) {
+      await guard(context, () => _account.send<td.Messages>(td.SendQuickReplyShortcutMessages(chatId: widget.chat.id, shortcutId: quickReply.id, sendingId: 0)));
+      return;
+    }
     await guard(context, () => _account.sendText(widget.chat.id, '/${command.command}'));
   }
 
@@ -1172,7 +1191,7 @@ class ComposerState extends ConsumerState<Composer> {
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surface,
                     borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: brandGold.withValues(alpha: 0.35)),
+                    border: Border.all(color: theme.dividerColor),
                     boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
                   ),
                   child: fields,
@@ -1328,7 +1347,6 @@ class ComposerState extends ConsumerState<Composer> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           gradient: _recording || !isDesktop ? brandGradient(primary, vertical: true) : null,
-          border: isDesktop ? null : Border.all(color: brandGold.withValues(alpha: 0.7)),
           boxShadow: [
             if (_recording) BoxShadow(color: primary.withValues(alpha: 0.28), spreadRadius: 6 + 14 * pulse),
             if (_recording || !isDesktop)
@@ -1418,7 +1436,6 @@ class _RoundButton extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: brandGradient(primary, vertical: true),
-        border: Border.all(color: brandGold.withValues(alpha: 0.7)),
         boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Material(
@@ -1526,7 +1543,7 @@ class _RecordingOverlayState extends State<_RecordingOverlay> {
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: brandGold.withValues(alpha: 0.5)),
+                  border: Border.all(color: Theme.of(context).dividerColor),
                   boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 3))],
                 ),
                 child: Column(

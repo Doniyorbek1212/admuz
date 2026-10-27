@@ -2,15 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/qr_scan_screen.dart';
+import '../chat/bot_keyboard.dart';
+import '../chat/forward_picker.dart';
+import '../chat/link_router.dart';
+import '../home/home_screen.dart';
 
 int _rgb(Color color) => color.toARGB32() & 0xFFFFFF;
 
@@ -150,7 +157,7 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
         onNavigationRequest: (request) {
           final uri = Uri.tryParse(request.url);
           if (uri != null && (uri.scheme == 'tg' || uri.host == 't.me')) {
-            unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+            if (mounted) unawaited(openLink(context, request.url));
             return NavigationDecision.prevent;
           }
           return NavigationDecision.navigate;
@@ -231,7 +238,28 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
         }
       case 'web_app_open_tg_link':
         final path = data['path_full'] as String? ?? '';
-        if (path.startsWith('/')) await launchUrl(Uri.parse('https://t.me$path'), mode: LaunchMode.externalApplication);
+        if (path.startsWith('/') && mounted) await openLink(context, 'https://t.me$path');
+      case 'web_app_open_invoice':
+        final slug = data['slug'] as String? ?? '';
+        if (slug.isEmpty || !mounted) return;
+        final status = await payInputInvoice(context, account, td.InputInvoiceName(name: slug));
+        _emit('invoice_closed', {'slug': slug, 'status': status});
+      case 'web_app_request_phone':
+        await _requestPhone();
+      case 'web_app_request_write_access':
+        await _requestWriteAccess();
+      case 'web_app_open_scan_qr_popup':
+        final text = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => QrScanScreen(hint: data['text'] as String?)));
+        if (text != null) _emit('qr_text_received', {'data': text});
+        _emit('scan_qr_popup_closed');
+      case 'web_app_close_scan_qr_popup':
+        break;
+      case 'web_app_switch_inline_query':
+        await _switchInline(data);
+      case 'web_app_invoke_custom_method':
+        await _customMethod(data);
+      case 'web_app_trigger_haptic_feedback':
+        unawaited(HapticFeedback.selectionClick());
       case 'web_app_data_send':
         final buttonText = widget.keyboardButtonText;
         final payload = data['data'] as String? ?? '';
@@ -242,9 +270,90 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
       case 'web_app_open_popup':
         await _showPopup(data);
       case 'web_app_read_text_from_clipboard':
-        _emit('clipboard_text_received', {'req_id': data['req_id']});
+        // Only answered with text after the user agrees: pages must not read the clipboard silently.
+        final allowed = mounted && await confirm(context, title: _title, message: context.t('webapp_clipboard_confirm'));
+        final text = allowed ? (await Clipboard.getData(Clipboard.kTextPlain))?.text : null;
+        _emit('clipboard_text_received', {'req_id': data['req_id'], 'data': ?text});
       default:
         break;
+    }
+  }
+
+  /// Shares the user's own contact card with the bot after confirmation.
+  Future<void> _requestPhone() async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final me = account.me;
+    final ok = me != null && await confirm(context, title: s.t('share_phone_title'), message: s.t('share_phone_text', {'bot': _title}));
+    if (!ok || !mounted) {
+      _emit('phone_requested', {'status': 'cancelled'});
+      return;
+    }
+    final sent = await guard(context, () async {
+      final chat = await account.openPrivateChat(widget.botUserId);
+      await account.sendContactCard(chat.id, me);
+      return true;
+    });
+    _emit('phone_requested', {'status': sent == true ? 'sent' : 'cancelled'});
+  }
+
+  /// Lets the bot message the user; skipped when it already may.
+  Future<void> _requestWriteAccess() async {
+    final account = ref.read(accountProvider);
+    try {
+      await account.send<td.Ok>(td.CanBotSendMessages(botUserId: widget.botUserId));
+      _emit('write_access_requested', {'status': 'allowed'});
+      return;
+    } on TdException {
+      // Not allowed yet: ask.
+    }
+    if (!mounted) return;
+    final ok = await confirm(context, title: _title, message: context.t('webapp_write_access', {'bot': _title}));
+    if (ok && mounted) {
+      final done = await guard(context, () async {
+        await account.send<td.Ok>(td.AllowBotToSendMessages(botUserId: widget.botUserId));
+        return true;
+      });
+      _emit('write_access_requested', {'status': done == true ? 'allowed' : 'cancelled'});
+    } else {
+      _emit('write_access_requested', {'status': 'cancelled'});
+    }
+  }
+
+  /// Puts "@bot query" into a chat's draft and opens that chat (current bot chat when no types are given).
+  Future<void> _switchInline(Map<String, dynamic> data) async {
+    final account = ref.read(accountProvider);
+    final username = account.users[widget.botUserId]?.usernames?.activeUsernames.firstOrNull;
+    if (username == null) return;
+    final query = data['query'] as String? ?? '';
+    final chatTypes = (data['chat_types'] as List?) ?? const [];
+    int? chatId;
+    if (chatTypes.isEmpty) {
+      chatId = (await guard(context, () => account.openPrivateChat(widget.botUserId)))?.id;
+    } else {
+      final picked = await Navigator.of(context).push<Object>(MaterialPageRoute(builder: (_) => const ForwardPickerScreen()));
+      chatId = picked is int ? picked : null;
+    }
+    if (chatId == null || !mounted) return;
+    await account.saveDraft(chatId, '@$username $query');
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    openChat(context, chatId);
+  }
+
+  Future<void> _customMethod(Map<String, dynamic> data) async {
+    final reqId = data['req_id'];
+    try {
+      final result = await ref.read(accountProvider).send<td.CustomRequestResult>(td.SendWebAppCustomRequest(
+        botUserId: widget.botUserId,
+        method: data['method'] as String? ?? '',
+        parameters: jsonEncode(data['params'] ?? const {}),
+      ));
+      _emit('custom_method_invoked', {'req_id': reqId, 'result': jsonDecode(result.result)});
+    } on TdException catch (error) {
+      _emit('custom_method_invoked', {'req_id': reqId, 'error': error.message});
+    } on FormatException {
+      _emit('custom_method_invoked', {'req_id': reqId, 'error': 'BAD_RESULT'});
     }
   }
 

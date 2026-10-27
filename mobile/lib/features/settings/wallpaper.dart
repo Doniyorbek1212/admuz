@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
+import '../../state/providers.dart';
 import '../../state/settings.dart';
+import '../../state/telegram.dart';
 import '../../widgets/chat_pattern.dart';
+import '../../widgets/common.dart';
 
 const _gradients = <List<Color>>[
   [Color(0xFFDCE8F5), Color(0xFFB7D3F0)],
@@ -28,14 +32,57 @@ const _solids = <Color>[
   Color(0xFF101418),
 ];
 
-/// Chat background chosen in Appearance → Chat background.
+Color _argb(int rgb) => Color(0xFF000000 | rgb);
+
+/// Decoration for a Telegram fill; freeform gradients are drawn with their first two colors.
+BoxDecoration _fillDecoration(td.BackgroundFill fill) => switch (fill) {
+      td.BackgroundFillSolid(:final color) => BoxDecoration(color: _argb(color)),
+      td.BackgroundFillGradient(:final topColor, :final bottomColor) =>
+        BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [_argb(topColor), _argb(bottomColor)])),
+      td.BackgroundFillFreeformGradient(:final colors) when colors.length >= 2 =>
+        BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [for (final c in colors) _argb(c)])),
+      _ => const BoxDecoration(),
+    };
+
+/// The chat's own Telegram background, or its emoji theme's one; null when it has neither.
+td.Background? telegramBackground(TelegramAccount account, td.Chat chat, {required bool dark}) {
+  if (chat.background?.background case final background?) return background;
+  if (chat.theme case td.ChatThemeEmoji(:final name)) {
+    final theme = account.emojiChatThemes.where((t) => t.name == name).firstOrNull;
+    return (dark ? theme?.darkSettings : theme?.lightSettings)?.background;
+  }
+  return null;
+}
+
+/// Chat background: the chat's Telegram background when set, else the one chosen in Appearance.
 class ChatBackground extends ConsumerWidget {
-  const ChatBackground({super.key, required this.child});
+  const ChatBackground({super.key, required this.child, this.chatId});
 
   final Widget child;
+  final int? chatId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final chat = chatId == null ? null : ref.watch(chatProvider(chatId!));
+    final background = chat == null ? null : telegramBackground(ref.watch(accountProvider), chat, dark: dark);
+    if (background != null) {
+      final dim = dark ? (chat?.background?.darkThemeDimming ?? 0) / 100 : 0.0;
+      final fill = switch (background.type) {
+        td.BackgroundTypeFill(:final fill) || td.BackgroundTypePattern(:final fill) => _fillDecoration(fill),
+        _ => BoxDecoration(color: context.chatColors.chatBackground),
+      };
+      final document = background.document;
+      // shortcut: pattern backgrounds show only their fill (the pattern is a TGV/SVG file); render it if users ask.
+      return DecoratedBox(
+        decoration: fill,
+        child: Stack(fit: StackFit.expand, children: [
+          if (background.type is td.BackgroundTypeWallpaper && document != null) TdImage(file: document.document, fit: BoxFit.cover),
+          if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim)),
+          child,
+        ]),
+      );
+    }
     final wallpaper = ref.watch(settingsProvider.select((s) => s.wallpaper));
     final fallback = context.chatColors.chatBackground;
     BoxDecoration decoration;
@@ -45,7 +92,6 @@ class ChatBackground extends ConsumerWidget {
       final index = (int.tryParse(wallpaper.substring(9)) ?? 0).clamp(0, _gradients.length - 1);
       decoration = BoxDecoration(gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: _gradients[index]));
     } else if (wallpaper.startsWith('file:') && File(wallpaper.substring(5)).existsSync()) {
-      final dark = Theme.of(context).brightness == Brightness.dark;
       decoration = BoxDecoration(
         color: fallback,
         image: DecorationImage(
@@ -59,7 +105,6 @@ class ChatBackground extends ConsumerWidget {
       decoration = BoxDecoration(color: fallback);
     }
     final pattern = ref.watch(settingsProvider.select((s) => s.wallpaperPattern)) && !wallpaper.startsWith('file:');
-    final dark = Theme.of(context).brightness == Brightness.dark;
     return DecoratedBox(
       decoration: decoration,
       child: pattern
@@ -77,12 +122,40 @@ class ChatBackground extends ConsumerWidget {
   }
 }
 
+/// Appearance → Chat background for every chat, or (with [chatId]) the Telegram background and theme of one chat.
 class WallpaperScreen extends ConsumerWidget {
-  const WallpaperScreen({super.key});
+  const WallpaperScreen({super.key, this.chatId});
+
+  final int? chatId;
+
+  /// Sets this chat's background on Telegram; only for the user unless it is a group/channel the user manages.
+  Future<void> _setChat(BuildContext context, WidgetRef ref, {td.InputBackground? input, td.BackgroundType? type}) async {
+    final account = ref.read(accountProvider);
+    final chat = account.chats[chatId];
+    await guard(
+      context,
+      () => account.send<td.Ok>(td.SetChatBackground(
+        chatId: chatId!,
+        background: input,
+        type: type,
+        darkThemeDimming: 0,
+        onlyForSelf: chat != null && account.privateUser(chat) != null,
+      )),
+    );
+  }
 
   Future<void> _pickPhoto(BuildContext context, WidgetRef ref) async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 2000);
     if (picked == null) return;
+    if (chatId != null) {
+      if (!context.mounted) return;
+      return _setChat(
+        context,
+        ref,
+        input: td.InputBackgroundLocal(background: td.InputFileLocal(path: picked.path)),
+        type: const td.BackgroundTypeWallpaper(isBlurred: false, isMoving: false),
+      );
+    }
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}${Platform.pathSeparator}wallpaper_${DateTime.now().millisecondsSinceEpoch}.jpg');
     await File(picked.path).copy(target.path);
@@ -100,13 +173,33 @@ class WallpaperScreen extends ConsumerWidget {
     final current = ref.watch(settingsProvider.select((st) => st.wallpaper));
     final notifier = ref.read(settingsProvider.notifier);
     final primary = Theme.of(context).colorScheme.primary;
+    final chatId = this.chatId;
+    final account = ref.watch(accountProvider);
+    final chat = chatId == null ? null : ref.watch(chatProvider(chatId));
+    final themeName = switch (chat?.theme) {
+      td.ChatThemeEmoji(:final name) => name,
+      _ => '',
+    };
+    // Per chat, a swatch becomes a Telegram fill of the same colors.
+    void pick(String value) {
+      if (chatId == null) return notifier.setWallpaper(value);
+      final td.BackgroundFill fill;
+      if (value.startsWith('gradient:')) {
+        final colors = _gradients[int.parse(value.substring(9))];
+        fill = td.BackgroundFillGradient(topColor: colors[0].toARGB32() & 0xFFFFFF, bottomColor: colors[1].toARGB32() & 0xFFFFFF, rotationAngle: 0);
+      } else {
+        fill = td.BackgroundFillSolid(color: (int.tryParse(value.substring(6), radix: 16) ?? 0) & 0xFFFFFF);
+      }
+      _setChat(context, ref, type: td.BackgroundTypeFill(fill: fill));
+    }
+
     Widget swatch(String value, Decoration decoration, {Widget? child}) => GestureDetector(
-          onTap: () => notifier.setWallpaper(value),
+          onTap: () => pick(value),
           child: Container(
             decoration: decoration,
             foregroundDecoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: current == value ? primary : Colors.transparent, width: 3),
+              border: Border.all(color: chatId == null && current == value ? primary : Colors.transparent, width: 3),
             ),
             child: child,
           ),
@@ -121,6 +214,7 @@ class WallpaperScreen extends ConsumerWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(16),
               child: ChatBackground(
+                chatId: chatId,
                 child: Center(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -144,19 +238,42 @@ class WallpaperScreen extends ConsumerWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => notifier.setWallpaper(''),
+                  onPressed: chatId == null
+                      ? () => notifier.setWallpaper('')
+                      : () => guard(context, () => account.send<td.Ok>(td.DeleteChatBackground(chatId: chatId, restorePrevious: false))),
                   icon: const Icon(Icons.restart_alt_rounded),
                   label: Text(s.t('wallpaper_reset')),
                 ),
               ),
             ],
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(s.t('wallpaper_pattern')),
-            value: ref.watch(settingsProvider.select((st) => st.wallpaperPattern)),
-            onChanged: notifier.setWallpaperPattern,
-          ),
+          if (chatId == null)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(s.t('wallpaper_pattern')),
+              value: ref.watch(settingsProvider.select((st) => st.wallpaperPattern)),
+              onChanged: notifier.setWallpaperPattern,
+            )
+          else if (account.emojiChatThemes.isNotEmpty) ...[
+            Padding(padding: const EdgeInsets.fromLTRB(4, 12, 4, 6), child: Text(s.t('chat_theme'), style: TextStyle(color: primary, fontWeight: FontWeight.w600))),
+            SizedBox(
+              height: 64,
+              child: ListView(scrollDirection: Axis.horizontal, children: [
+                for (final theme in [null, ...account.emojiChatThemes])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(theme == null ? '✖' : theme.name, style: const TextStyle(fontSize: 22)),
+                      selected: (theme?.name ?? '') == themeName,
+                      onSelected: (_) => guard(
+                        context,
+                        () => account.send<td.Ok>(td.SetChatTheme(chatId: chatId, theme: theme == null ? null : td.InputChatThemeEmoji(name: theme.name))),
+                      ),
+                    ),
+                  ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 8),
           GridView.count(
             crossAxisCount: 3,

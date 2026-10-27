@@ -19,6 +19,8 @@ import '../chat/chat_screen.dart';
 import '../chat/topics_screen.dart';
 import '../contacts/contacts_screen.dart';
 import '../search/search_screen.dart';
+import '../settings/folders_screen.dart';
+import '../settings/session_security.dart';
 import '../stories/stories.dart';
 import 'chat_tile.dart';
 import 'ghost_mode_button.dart';
@@ -227,7 +229,6 @@ class _RoundAction extends StatelessWidget {
     decoration: BoxDecoration(
       shape: BoxShape.circle,
       color: Theme.of(context).colorScheme.surface,
-      border: Border.all(color: brandGold.withValues(alpha: 0.5)),
       boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
     ),
     child: child,
@@ -251,23 +252,24 @@ class _PillTabBar extends StatelessWidget implements PreferredSizeWidget {
     return TabBar(
       isScrollable: true,
       tabAlignment: TabAlignment.start,
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
-      labelPadding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 16),
       indicatorSize: TabBarIndicatorSize.tab,
       indicator: BoxDecoration(
-        gradient: brandGradient(accent),
+        color: theme.brightness == Brightness.dark ? Color.lerp(accent, Colors.black, 0.2) : accent,
         borderRadius: radius,
-        border: Border.all(color: brandGold, width: 1.2),
-        boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.22), blurRadius: 8, offset: const Offset(0, 3))],
       ),
       splashBorderRadius: radius,
       labelColor: Colors.white,
-      unselectedLabelColor: theme.brightness == Brightness.dark ? Colors.white60 : Color.lerp(accent, const Color(0xFF6B7C85), 0.4),
+      labelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      unselectedLabelStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+      unselectedLabelColor: theme.brightness == Brightness.dark ? Colors.white60 : Color.lerp(accent, const Color(0xFF5E6E78), 0.55),
       dividerColor: Colors.transparent,
       tabs: [
         for (final tab in tabs)
           Tab(
-            height: 44,
+            height: 38,
             child: _FolderTabLabel(listKey: tab.$1, title: tab.$2),
           ),
       ],
@@ -307,22 +309,25 @@ class _FolderTabLabel extends ConsumerWidget {
     final unread = ref.watch(unreadCountProvider(listKey));
     // Follows the tab's animated label color: white on the selected pill, muted ink elsewhere.
     final color = DefaultTextStyle.of(context).style.color ?? context.onAppBar;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(title),
-        if (unread > 0) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
-            child: Text(
-              formatCount(unread),
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+    return GestureDetector(
+      onLongPress: () => showFolderMenu(context, ref.read(accountProvider), listKey, title),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(title),
+          if (unread > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
+              child: Text(
+                formatCount(unread),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -619,6 +624,8 @@ class _ChatListViewState extends ConsumerState<ChatListView> with AutomaticKeepA
         return false;
       },
       child: ListView.builder(
+        // The last chats scroll clear of the floating bottom bar instead of hiding under it.
+        padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 8),
         itemCount: chats.length + archiveRow,
         itemExtent: isDesktop ? 66 : 76,
         itemBuilder: (context, index) {
@@ -638,6 +645,7 @@ class _ChatListViewState extends ConsumerState<ChatListView> with AutomaticKeepA
           alignment: Alignment.topCenter,
           child: storiesOpen ? const StoriesBar() : const SizedBox(width: double.infinity),
         ),
+        const UnconfirmedSessionBanner(),
         Expanded(child: list),
       ],
     );
@@ -674,14 +682,11 @@ class _ArchiveTile extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
         child: Row(
           children: [
-            GoldRing(
-              width: 1.6,
-              child: Container(
-                width: 49.8,
-                height: 49.8,
-                decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(accent, vertical: true)),
-                child: const Icon(Icons.archive_rounded, color: Colors.white),
-              ),
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withValues(alpha: 0.12)),
+              child: Icon(Icons.archive_rounded, color: accent),
             ),
             const SizedBox(width: 12),
             Expanded(

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/formatters.dart';
-import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
@@ -101,10 +100,10 @@ class _BottomBar extends ConsumerWidget {
         height: 68,
         padding: const EdgeInsets.all(5),
         decoration: BoxDecoration(
-          color: dark ? const Color(0xF21E2A36) : const Color(0xF5FFFFFF),
+          color: dark ? const Color(0xF21E2A36) : const Color(0xF7FFFFFF),
           borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: brandGold.withValues(alpha: dark ? 0.3 : 0.45), width: 0.8),
-          boxShadow: [BoxShadow(color: theme.colorScheme.primary.withValues(alpha: dark ? 0.25 : 0.14), blurRadius: 20, offset: const Offset(0, 6))],
+          border: Border.all(color: dark ? Colors.white10 : Colors.black.withValues(alpha: 0.06), width: 0.8),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.35 : 0.1), blurRadius: 22, offset: const Offset(0, 8))],
         ),
         child: Row(
           children: [
@@ -172,26 +171,27 @@ class _BarItem extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              icon(color),
+              // Soft accent pill behind the selected tab's icon.
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+                decoration: BoxDecoration(
+                  color: selected ? accent.withValues(alpha: 0.14) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: icon(color),
+              ),
               const SizedBox(height: 3),
               Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: selected && theme.brightness == Brightness.light ? Color.lerp(accent, Colors.black, 0.45) : color,
+                  color: selected && theme.brightness == Brightness.light ? Color.lerp(accent, Colors.black, 0.4) : color,
                   fontSize: 11.5,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                 ),
-              ),
-              const SizedBox(height: 3),
-              // Accent underline under the selected tab.
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                width: selected ? 26 : 0,
-                height: 3,
-                decoration: BoxDecoration(gradient: brandGradient(accent), borderRadius: BorderRadius.circular(2)),
               ),
             ],
           ),

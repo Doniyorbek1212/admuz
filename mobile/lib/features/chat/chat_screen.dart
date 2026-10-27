@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/link_safety.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
@@ -25,11 +26,14 @@ import '../home/home_screen.dart';
 import '../profile/chat_info_screen.dart';
 import '../settings/wallpaper.dart';
 import 'bot_keyboard.dart';
+import '../calls/video_chat_screen.dart';
 import 'call_options.dart';
 import 'chat_search_screen.dart';
 import 'composer.dart';
 import 'forward_picker.dart';
+import 'link_router.dart';
 import 'marked_messages_screen.dart';
+import 'saved_topics_screen.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
 import 'message_bubble.dart';
@@ -42,7 +46,16 @@ import 'sponsored_bubble.dart';
 typedef _MenuEntry = (IconData, String, String);
 
 class ChatScreen extends ConsumerStatefulWidget {
-  const ChatScreen({super.key, required this.chatId, this.initialMessageId, this.topicId, this.topicName, this.debugHistory});
+  const ChatScreen({
+    super.key,
+    required this.chatId,
+    this.initialMessageId,
+    this.topicId,
+    this.topicName,
+    this.threadId,
+    this.threadRoots = const [],
+    this.debugHistory,
+  });
 
   final int chatId;
   final int? initialMessageId;
@@ -50,6 +63,10 @@ class ChatScreen extends ConsumerStatefulWidget {
   /// Forum topic to show instead of the whole chat.
   final int? topicId;
   final String? topicName;
+
+  /// Comment thread of a channel post (in its discussion group) and the post copies shown on top.
+  final int? threadId;
+  final List<td.Message> threadRoots;
 
   /// Pre-filled history for screenshot tests; skips loading from TDLib.
   @visibleForTesting
@@ -84,8 +101,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     openChatFromContent = (context, chatId) => openChat(context, chatId);
     final topicId = widget.topicId;
     if (topicId != null) _account.activeTopics[widget.chatId] = topicId;
+    if (widget.threadId case final threadId?) _account.activeThreads[widget.chatId] = threadId;
     _history = widget.debugHistory ??
-        ChatHistory(_account, widget.chatId, ghostMode: ref.read(settingsProvider).ghostMode, topicId: topicId);
+        ChatHistory(
+          _account,
+          widget.chatId,
+          ghostMode: ref.read(settingsProvider).ghostMode,
+          topicId: topicId,
+          threadId: widget.threadId,
+          threadRoots: widget.threadRoots,
+        );
     _history.addListener(_onHistory);
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _openChat.set(widget.chatId));
@@ -145,6 +170,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void dispose() {
     if (widget.topicId != null && _account.activeTopics[widget.chatId] == widget.topicId) {
       _account.activeTopics.remove(widget.chatId);
+    }
+    if (widget.threadId != null && _account.activeThreads[widget.chatId] == widget.threadId) {
+      _account.activeThreads.remove(widget.chatId);
     }
     _openChat.close(widget.chatId);
     _history
@@ -360,6 +388,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           _replyTo = message;
         });
       case 'copy':
+        if (await _blockLoginCodeShare([message]) || !mounted) return;
         await Clipboard.setData(ClipboardData(text: messageText(message)));
         if (mounted) showToast(context, s.t('copied'));
       case 'translate':
@@ -495,7 +524,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return _history.messages.where((m) => m.mediaAlbumId == message.mediaAlbumId).toList()..sort((a, b) => a.id.compareTo(b.id));
   }
 
+  /// Messages from Telegram's service account carry login codes; passing one on hands over the account.
+  bool _isLoginCodeSource(td.Message message) => switch (message.senderId) {
+        td.MessageSenderUser(:final userId) => userId == telegramServiceUserId,
+        _ => false,
+      };
+
+  Future<bool> _blockLoginCodeShare(Iterable<td.Message> messages) async {
+    if (!messages.any(_isLoginCodeSource)) return false;
+    await confirmRiskyLink(context, context.t('login_code_chat'), const LinkRisk(LinkRiskLevel.blocked, 'link_risk_login_code'));
+    return true;
+  }
+
   Future<void> _forward(List<td.Message> messages) async {
+    if (await _blockLoginCodeShare(messages) || !mounted) return;
     final single = messages.length == 1 && messages.first.content is td.MessageText ? messageText(messages.first) : null;
     final request = await Navigator.of(context).push<ForwardRequest>(MaterialPageRoute(
       builder: (_) => ForwardPickerScreen(
@@ -602,9 +644,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         body: Column(
           children: [
             const PlaybackBar(),
+            if (chat.videoChat.groupCallId != 0) VideoChatBar(chat: chat),
             if (_pinned != null) _PinnedBar(message: _pinned!, onTap: () => _jumpTo(_pinned!.id), onClose: () => setState(() => _pinned = null)),
             Expanded(
               child: ChatBackground(
+                chatId: chat.id,
                 child: Stack(
                   children: [
                     _messageList(chat),
@@ -697,8 +741,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final account = _account;
     final action = chatActionText(chat, account, s);
     final subtitle = widget.topicName != null ? chatTitle(chat, account, s) : (action ?? chatSubtitle(chat, account, s));
-    // Accent bars (phones, dark mode) get floating branded pills; desktop's light bars stay classic.
-    if (context.onAppBar == Colors.white) return _pillBar(chat, s, action, subtitle);
+    // Accent bars (phones, dark mode) get the branded gradient bar; desktop's light bars stay classic.
+    if (context.onAppBar == Colors.white) return _brandBar(chat, s, action, subtitle);
     return AppBar(
       // No back button when the chat is the split-view pane's root page.
       titleSpacing: Navigator.canPop(context) ? 0 : 12,
@@ -748,80 +792,57 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return user;
   }
 
-  /// Phone header: an accent band behind the status bar and three floating pills with open space
-  /// between them (back · avatar and name · call and menu), over the chat wallpaper.
-  PreferredSizeWidget _pillBar(td.Chat chat, Strings s, String? action, String subtitle) {
+  /// Phone header: one accent-gradient bar (the gold swoosh along its bottom edge is the only gold),
+  /// back · avatar with name and status · call and menu.
+  PreferredSizeWidget _brandBar(td.Chat chat, Strings s, String? action, String subtitle) {
     final account = _account;
-    final canPop = Navigator.canPop(context);
     final user = _callableUser(chat);
     return AppBar(
-      automaticallyImplyLeading: false,
-      backgroundColor: Colors.transparent,
-      toolbarHeight: 66,
-      titleSpacing: 8,
+      toolbarHeight: 60,
+      titleSpacing: Navigator.canPop(context) ? 0 : 12,
       systemOverlayStyle: SystemUiOverlayStyle.light,
-      flexibleSpace: const BrandStatusBand(),
-      title: Row(
-        children: [
-          if (canPop) ...[
-            BrandPill(
-              circle: true,
-              onTap: () => Navigator.maybePop(context),
-              child: Icon(Icons.arrow_back_rounded, color: Colors.white, semanticLabel: MaterialLocalizations.of(context).backButtonTooltip),
-            ),
-            const SizedBox(width: 6),
-          ],
-          Expanded(
-            child: BrandPill(
-              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
-              padding: const EdgeInsets.fromLTRB(4, 4, 14, 4),
-              child: Row(
-                children: [
-                  GoldRing(width: 1.5, child: ChatAvatar(chatId: chat.id, size: 38, showOnline: false)),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.topicName ?? chatTitle(chat, account, s),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600, color: Colors.white),
-                        ),
-                        if (subtitle.isNotEmpty)
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            // Typing/recording status stands out in bright green.
-                            style: TextStyle(fontSize: 12.5, color: action == null ? Colors.white70 : Colors.lightGreenAccent),
-                          ),
-                      ],
+      flexibleSpace: const BrandBarBackground(),
+      backgroundColor: Colors.transparent,
+      title: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          child: Row(
+            children: [
+              ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.topicName ?? chatTitle(chat, account, s),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white, height: 1.2),
                     ),
-                  ),
-                ],
+                    if (subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        // Typing/recording status stands out in bright green.
+                        style: TextStyle(fontSize: 13, color: action == null ? Colors.white.withValues(alpha: 0.75) : Colors.lightGreenAccent, height: 1.25),
+                      ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 6),
-          BrandPill(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: IconTheme.merge(
-              data: const IconThemeData(color: Colors.white),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (user != null)
-                    IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
-                  _chatMenu(chat, s),
-                ],
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
+      actions: [
+        if (user != null) IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
+        _chatMenu(chat, s),
+        const SizedBox(width: 4),
+      ],
     );
   }
 
@@ -849,7 +870,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         item('mute', muted ? Icons.volume_up_rounded : Icons.volume_off_rounded, s.t(muted ? 'unmute' : 'mute'), chevron: !muted),
         const PopupMenuDivider(),
         if (user != null) item('video', Icons.videocam_outlined, s.t('video_call')),
+        if (chat.videoChat.groupCallId == 0 && canManageVideoChats(account, chat)) item('video_chat', Icons.graphic_eq_rounded, s.t('video_chat_start')),
         item('search', Icons.search_rounded, s.t('search')),
+        if (account.isSavedMessages(chat)) item('saved_topics', Icons.folder_shared_outlined, s.t('saved_by_chat')),
         item('marked', Icons.star_outline_rounded, s.t('find_marked')),
         item('first', Icons.vertical_align_top_rounded, s.t('go_to_first')),
         item('date', Icons.calendar_month_rounded, s.t('go_to_date')),
@@ -877,11 +900,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'video':
         final user = _callableUser(chat);
         if (user != null) await startTelegramCall(context, user.id, video: true);
+      case 'video_chat':
+        await startVideoChat(context, account, chat);
       case 'search':
         final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => ChatSearchScreen(chatId: chat.id)));
         if (id != null && mounted) await _jumpTo(id);
       case 'marked':
         final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => MarkedMessagesScreen(chatId: chat.id)));
+        if (id != null && mounted) await _jumpTo(id);
+      case 'saved_topics':
+        final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => const SavedTopicsScreen()));
         if (id != null && mounted) await _jumpTo(id);
       case 'first':
         await _jumpToFirst(chat);
@@ -906,8 +934,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'scheduled':
         await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ScheduledMessagesScreen(chatId: chat.id)));
       case 'wallpaper':
-        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WallpaperScreen()));
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WallpaperScreen(chatId: chat.id)));
       case 'clear':
+        // Telegram can delete a date range only in private chats and basic groups.
+        final byDate = (account.privateUser(chat) != null || account.basicGroupOf(chat) != null) &&
+            await showModalBottomSheet<bool>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (context) => SafeArea(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      ListTile(leading: const Icon(Icons.delete_sweep_rounded), title: Text(s.t('clear_history')), onTap: () => Navigator.pop(context, false)),
+                      ListTile(leading: const Icon(Icons.date_range_rounded), title: Text(s.t('clear_by_date')), onTap: () => Navigator.pop(context, true)),
+                    ]),
+                  ),
+                ) ==
+                true;
+        if (!mounted) return;
+        if (byDate) {
+          final now = DateTime.now();
+          final range = await showDateRangePicker(
+            context: context,
+            firstDate: DateTime(2013, 8),
+            lastDate: now,
+            helpText: s.t('clear_by_date'),
+            saveText: s.t('delete'),
+          );
+          if (range == null || !mounted) return;
+          final ok = await confirm(context, title: s.t('clear_by_date'), message: s.t('clear_history_confirm'), destructive: true);
+          if (!ok || !mounted) return;
+          await guard(context, () => account.send<td.Ok>(td.DeleteChatMessagesByDate(
+                chatId: chat.id,
+                minDate: range.start.millisecondsSinceEpoch ~/ 1000,
+                maxDate: DateTime(range.end.year, range.end.month, range.end.day, 23, 59, 59).millisecondsSinceEpoch ~/ 1000,
+                revoke: false,
+              )));
+          return;
+        }
         final ok = await confirm(context, title: s.t('clear_history'), message: s.t('clear_history_confirm'), destructive: true);
         if (ok && mounted) await guard(context, () => account.clearHistory(chat));
       case 'delete':
@@ -1037,7 +1099,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         Widget item;
         final service = serviceMessageText(message, _account, s);
         if (service != null) {
-          item = ServiceMessage(text: service);
+          item = message.content is td.MessagePaymentSuccessful
+              ? GestureDetector(onTap: () => showPaymentReceipt(context, _account, message), child: ServiceMessage(text: service))
+              : ServiceMessage(text: service);
         } else {
           item = MessageBubble(
             message: message,
