@@ -294,11 +294,13 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> with _Submitting {
 
   Future<void> _guessCountryCode() async {
     try {
-      final country = await ref.read(accountProvider).send<td.Text>(const td.GetCountryCode());
+      final account = ref.read(accountProvider);
+      final country = await account.send<td.Text>(const td.GetCountryCode());
+      // Telegram's own country list, so a reviewer anywhere (US, EU, India...) gets their calling code.
+      final countries = await account.send<td.Countries>(const td.GetCountries());
       if (!mounted || _phone.text.replaceAll(' ', '') != '+998') return;
-      const prefixes = {'UZ': '+998', 'RU': '+7', 'KZ': '+7', 'KG': '+996', 'TJ': '+992', 'TM': '+993', 'TR': '+90', 'US': '+1'};
-      final prefix = prefixes[country.text];
-      if (prefix != null) _phone.text = prefix;
+      final match = countries.countries.where((c) => c.countryCode == country.text && c.callingCodes.isNotEmpty).firstOrNull;
+      if (match != null) _phone.text = '+${match.callingCodes.first}';
       _updateCountry();
     } on TdException {
       // Keep the default prefix.
