@@ -84,7 +84,11 @@ def create(bundle_id: str, work: str) -> None:
         {
             "data": {
                 "type": "profiles",
-                "attributes": {"name": f"UZARO CI {os.environ.get('GITHUB_RUN_ID', int(time.time()))}", "profileType": "IOS_APP_STORE"},
+                "attributes": {
+                    # No spaces: ids.env is sourced by bash and appended to GITHUB_ENV.
+                    "name": f"UZARO_CI_{os.environ.get('GITHUB_RUN_ID', int(time.time()))}",
+                    "profileType": "IOS_APP_STORE",
+                },
                 "relationships": {
                     "bundleId": {"data": {"type": "bundleIds", "id": bundle["id"]}},
                     "certificates": {"data": [{"type": "certificates", "id": cert["id"]}]},
