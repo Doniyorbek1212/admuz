@@ -85,7 +85,13 @@ jobs:
       - name: API key
         run: |
           mkdir -p "$RUNNER_TEMP/asc"
-          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          key="$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8"
+          # Secrets pasted on Windows carry \r, which CryptoKit rejects as an invalid PEM document.
+          printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' > "$key"
+          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$key" || ! grep -q -- '-----END PRIVATE KEY-----' "$key"; then
+            echo "::error::APP_STORE_CONNECT_KEY_P8 must be the full text of AuthKey_${ASC_KEY_ID}.p8, from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----"
+            exit 1
+          fi
 
       - name: Flutter config
         run: |
