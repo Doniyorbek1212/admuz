@@ -105,19 +105,48 @@ jobs:
             --dart-define=TG_API_ID="$TG_API_ID" \
             --dart-define=TG_API_HASH="$TG_API_HASH"
 
+      # Automatic signing needs a development profile for archiving, which needs a registered device.
+      # Instead a throwaway distribution certificate + App Store profile is created through the API and
+      # removed again in "Remove signing assets".
+      - name: Signing assets
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+        run: |
+          work="$RUNNER_TEMP/signing"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyjwt cryptography
+          "$RUNNER_TEMP/venv/bin/python" tool/ios_ci_signing.py create uz.uzaro.app "$work"
+          cat "$work/ids.env" >> "$GITHUB_ENV"
+          source "$work/ids.env"
+
+          p12_pass=$(openssl rand -hex 16)
+          openssl x509 -inform DER -in "$work/cert.cer" -out "$work/cert.pem"
+          openssl pkcs12 -export -legacy -inkey "$work/key.pem" -in "$work/cert.pem" -out "$work/cert.p12" -passout pass:"$p12_pass" 2>/dev/null \
+            || openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" -out "$work/cert.p12" -passout pass:"$p12_pass"
+          kc="$RUNNER_TEMP/ci.keychain-db"
+          kc_pass=$(openssl rand -hex 16)
+          security create-keychain -p "$kc_pass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_pass" "$kc"
+          security import "$work/cert.p12" -P "$p12_pass" -A -t cert -f pkcs12 -k "$kc"
+          security set-key-partition-list -S apple-tool:,apple: -k "$kc_pass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$work/profile.mobileprovision" "$dir/$PROFILE_UUID.mobileprovision"
+          done
+
+          # Manual signing on the Runner target only; Pods and Swift packages stay unsigned frameworks.
+          perl -0pi -e "s/(PRODUCT_BUNDLE_IDENTIFIER = uz\.uzaro\.app;)/\$1\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tDEVELOPMENT_TEAM = $TEAM_ID;\n\t\t\t\tCODE_SIGN_IDENTITY = \"Apple Distribution\";\n\t\t\t\t\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"$PROFILE_NAME\";/g" ios/Runner.xcodeproj/project.pbxproj
+          grep -c 'PROVISIONING_PROFILE_SPECIFIER = "UZARO CI' ios/Runner.xcodeproj/project.pbxproj
+
       - name: Archive
         run: |
           xcodebuild archive \
             -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
-            CODE_SIGN_IDENTITY="Apple Distribution"
-          # Distribution identity: a development profile would need a registered device, which the team has none of.
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive"
 
       - name: Export and upload
         run: |
@@ -131,7 +160,10 @@ jobs:
             <key>method</key><string>app-store-connect</string>
             <key>destination</key><string>${destination}</string>
             <key>teamID</key><string>${TEAM_ID}</string>
-            <key>signingStyle</key><string>automatic</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict><key>uz.uzaro.app</key><string>${PROFILE_NAME}</string></dict>
             <key>uploadSymbols</key><true/>
             <key>manageAppVersionAndBuildNumber</key><false/>
           </dict>
@@ -141,7 +173,6 @@ jobs:
             -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-            -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_${ASC_KEY_ID}.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
@@ -156,6 +187,13 @@ jobs:
           path: ${{ runner.temp }}/export/*.ipa
           retention-days: 14
 
-      - name: Remove API key
+      - name: Remove signing assets
         if: always()
-        run: rm -rf "$RUNNER_TEMP/asc"
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+        run: |
+          if [ -f "$RUNNER_TEMP/signing/ids.env" ] && [ -x "$RUNNER_TEMP/venv/bin/python" ]; then
+            "$RUNNER_TEMP/venv/bin/python" tool/ios_ci_signing.py cleanup "$RUNNER_TEMP/signing" || true
+          fi
+          security delete-keychain "$RUNNER_TEMP/ci.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/signing"
