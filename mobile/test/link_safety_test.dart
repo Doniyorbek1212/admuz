@@ -26,6 +26,22 @@ void main() {
     expect(assessLink('https://kun.uz/news', shownText: 'Batafsil o\'qish').level, LinkRiskLevel.safe);
   });
 
+  test('flags app downloads, fake payment brands, shorteners and throwaway zones', () {
+    expect(assessLink('https://payme-bonus.site/Payme.apk').level, LinkRiskLevel.danger);
+    expect(assessLink('https://files.example.com/update.APK?v=2').level, LinkRiskLevel.danger);
+    expect(assessLink('https://payme-uz.com/login').level, LinkRiskLevel.danger);
+    expect(assessLink('https://my-click-uz.net').level, LinkRiskLevel.danger);
+    expect(assessLink('https://humo-cashback.info').level, LinkRiskLevel.danger);
+    expect(assessLink('https://payme.uz').level, LinkRiskLevel.safe);
+    expect(assessLink('https://my.click.uz/services').level, LinkRiskLevel.safe);
+    expect(assessLink('https://clickup.com').level, LinkRiskLevel.safe);
+    expect(assessLink('https://paymentwall.com').level, LinkRiskLevel.safe);
+    expect(assessLink('https://humor.uz').level, LinkRiskLevel.safe);
+    expect(assessLink('https://bit.ly/3xYz').level, LinkRiskLevel.caution);
+    expect(assessLink('https://win-prize.top').level, LinkRiskLevel.caution);
+    expect(assessLink('https://kun.uz').level, LinkRiskLevel.safe);
+  });
+
   test('user policy: blocked and trusted domains, strict mode, off switch, ask for external links', () {
     final policy = LinkPolicy(blockedDomains: {'scam.example'}, trustedDomains: {'telegram-gift.org'});
     expect(assessLink('https://pay.scam.example/x', policy: policy).level, LinkRiskLevel.blocked);

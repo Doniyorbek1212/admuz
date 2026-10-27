@@ -57,6 +57,7 @@ class _AuthScaffold extends ConsumerWidget {
   Widget _scaffold(BuildContext context, WidgetRef ref, ThemeData theme, AccountSlots slots, bool canCancelAdding) {
     final dark = theme.brightness == Brightness.dark;
     final accent = theme.colorScheme.primary;
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -71,25 +72,25 @@ class _AuthScaffold extends ConsumerWidget {
           if (canCancelAdding) TextButton(onPressed: () => ref.read(accountSlotsProvider.notifier).removeSlot(slots.active), child: Text(context.t('cancel'))),
         ],
       ),
-      floatingActionButton: onSubmit == null ? null : BrandFab(icon: Icons.arrow_forward_rounded, tooltip: context.t('next'), onPressed: onSubmit, busy: busy),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 104),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
           children: [
+            // Smaller header while the keyboard is up so the form, not the logo, stays on screen (small iPhones).
             Center(
               child: logo
-                  ? const BrandLogoBadge()
+                  ? BrandLogoBadge(size: keyboardOpen ? 72 : 132)
                   : GoldRing(
                       width: 2.5,
                       child: Container(
-                        width: 88,
-                        height: 88,
+                        width: keyboardOpen ? 64 : 88,
+                        height: keyboardOpen ? 64 : 88,
                         decoration: BoxDecoration(gradient: brandGradient(accent, vertical: true), shape: BoxShape.circle),
-                        child: Icon(icon, color: Colors.white, size: 40),
+                        child: Icon(icon, color: Colors.white, size: keyboardOpen ? 30 : 40),
                       ),
                     ),
             ),
-            if (logo) ...[
+            if (logo && !keyboardOpen) ...[
               const SizedBox(height: 14),
               Center(child: BrandWordmark(size: 34, onDark: dark)),
               const SizedBox(height: 4),
@@ -99,7 +100,7 @@ class _AuthScaffold extends ConsumerWidget {
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
               ),
             ],
-            const SizedBox(height: 24),
+            SizedBox(height: keyboardOpen ? 12 : 24),
             // Form card lifted off the tinted page, gold hairline like the rest of the brand.
             Container(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
@@ -131,6 +132,20 @@ class _AuthScaffold extends ConsumerWidget {
                   ),
                   const SizedBox(height: 24),
                   ...children,
+                  // In-card button instead of a FAB: a floating button covered the input above the keyboard.
+                  if (onSubmit != null) ...[
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed: busy ? null : onSubmit,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: busy
+                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                          : Text(context.t('next'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
                 ],
               ),
             ),

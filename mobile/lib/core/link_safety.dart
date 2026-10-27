@@ -30,6 +30,30 @@ final _telegramLookalike = RegExp(r'te[l1i]e?[gq]r[a@4]m|t-me|tme-|fragment|tgra
 /// Bot usernames that pose as gift, airdrop or Premium give-aways.
 final _baitBot = RegExp(r'(gift|premium|airdrop|free|bonus|prize|reward|stars?claim|nft|fragment|wallet|verify|support)', caseSensitive: false);
 
+/// Uzbek payment and bank brands that scam sites put into their domains ("payme-bonus.site", "my-click-uz.net").
+final _paymentBrand = RegExp(
+  // Lookaheads keep "payment…" and "humor…" sites out.
+  r'payme(?!nt)|click[-.]?uz|my-?click|uzcard|humo(?![a-z])|humocard|kapital-?bank|ipak-?yuli|agrobank|hamkor-?bank|anor-?bank|uzum|paynet|apelsin|xazna|tbc-?bank|davr-?bank|aloqa-?bank|sqb',
+);
+
+/// The real sites of those brands; a domain also covers its subdomains.
+const _paymentHosts = {
+  'payme.uz', 'click.uz', 'uzcard.uz', 'humocard.uz', 'humo.uz', 'kapitalbank.uz', 'ipakyulibank.uz', 'agrobank.uz',
+  'hamkorbank.uz', 'anorbank.uz', 'uzum.uz', 'uzumbank.uz', 'paynet.uz', 'apelsin.uz', 'xazna.uz', 'tbcbank.uz',
+  'davrbank.uz', 'aloqabank.uz', 'sqb.uz',
+};
+
+/// Installable programs: fake "Payme"/"Click" APKs are the most common account and card theft in Uzbekistan.
+final _installerFile = RegExp(r'\.(apk|apks|xapk|exe|msi|scr|bat)$', caseSensitive: false);
+
+/// Short-link services hide where a link really goes.
+const _shorteners = {
+  'bit.ly', 'tinyurl.com', 'cutt.ly', 'is.gd', 'goo.su', 'clck.ru', 'rb.gy', 'shorturl.at', 'tiny.cc', 'ow.ly', 't.ly', 'v.gd', 'u.to',
+};
+
+/// Free or near-free zones that prize and "bonus" scams favour.
+final _throwawayZone = RegExp(r'\.(top|xyz|click|site|online|icu|buzz|monster|rest|cfd|sbs|cyou|live|shop|info|win|vip|loan|bond)$');
+
 /// Text of a link that itself looks like an address ("t.me/x", "https://bank.uz", "bank.uz/login").
 final _addressLike = RegExp(r'^(https?://)?([a-z0-9-]+\.)+[a-z]{2,}(/\S*)?$', caseSensitive: false);
 
@@ -125,7 +149,14 @@ LinkRisk _baseRisk(String url, String? shownText) {
       return const LinkRisk(LinkRiskLevel.danger, 'link_risk_mismatch');
     }
   }
+  if (_installerFile.hasMatch(uri.path)) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_installer');
+  final bare = _bareHost(host);
+  if (_paymentBrand.hasMatch(bare) && !_inDomains(bare, _paymentHosts)) {
+    return const LinkRisk(LinkRiskLevel.danger, 'link_risk_fake_bank');
+  }
   if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host)) return const LinkRisk(LinkRiskLevel.caution, 'link_risk_ip');
+  if (_shorteners.contains(bare)) return const LinkRisk(LinkRiskLevel.caution, 'link_risk_shortener');
+  if (_throwawayZone.hasMatch(bare)) return const LinkRisk(LinkRiskLevel.caution, 'link_risk_zone');
   return LinkRisk.safe;
 }
 

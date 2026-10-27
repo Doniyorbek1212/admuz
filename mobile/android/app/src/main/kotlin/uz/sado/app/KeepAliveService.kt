@@ -72,7 +72,7 @@ class KeepAliveService : Service() {
         private const val KEY = "flutter.keepAlive"
 
         fun isEnabled(context: Context): Boolean =
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY, true)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY, false)
 
         fun setEnabled(context: Context, enabled: Boolean) {
             if (enabled) start(context) else context.stopService(Intent(context, KeepAliveService::class.java))

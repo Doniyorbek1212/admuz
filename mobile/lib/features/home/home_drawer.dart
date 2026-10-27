@@ -7,6 +7,7 @@ import '../../core/app_lock.dart';
 import '../../core/config.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
@@ -85,14 +86,27 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
     final settings = ref.watch(settingsProvider);
     final s = context.s;
     final theme = Theme.of(context);
+    // Material's fixed 304 pt is too narrow for Russian/Uzbek labels beside a switch on iPhones.
+    final width = (MediaQuery.sizeOf(context).width * 0.86).clamp(280.0, 380.0);
     return Drawer(
+      width: width,
       backgroundColor: groupedBackground(context),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.horizontal(right: Radius.circular(24))),
       clipBehavior: Clip.antiAlias,
-      child: ListView(
-        padding: EdgeInsets.zero,
+      // Header pinned above the list so scrolled rows never slide under the status bar / notch.
+      child: Column(
         children: [
           _DrawerHeader(expanded: _showAccounts, onToggleAccounts: () => setState(() => _showAccounts = !_showAccounts)),
+          Expanded(child: _menu(context, settings, s, theme)),
+        ],
+      ),
+    );
+  }
+
+  Widget _menu(BuildContext context, AppSettings settings, Strings s, ThemeData theme) {
+    return ListView(
+        padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
+        children: [
           if (_showAccounts) _accounts(context),
           const SizedBox(height: 6),
           SettingsGroup(children: [
@@ -114,6 +128,13 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
                 ref.read(settingsProvider.notifier).setGhostMode(value);
                 ref.read(accountProvider).setOnline(!value);
               },
+            ),
+            SwitchListTile(
+              secondary: const TileIcon(Icons.shield_rounded, Color(0xFF2EAD5B)),
+              title: Text(s.t('drawer_link_filter'), style: const TextStyle(fontWeight: FontWeight.w500)),
+              subtitle: Text(s.t('drawer_link_filter_hint'), maxLines: 2),
+              value: ref.watch(linkPolicyProvider).enabled,
+              onChanged: ref.read(linkPolicyProvider.notifier).setEnabled,
             ),
             SwitchListTile(
               secondary: const TileIcon(Icons.dark_mode_rounded, Color(0xFF5A6B7F)),
@@ -140,7 +161,6 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
             ),
           ),
         ],
-      ),
     );
   }
 

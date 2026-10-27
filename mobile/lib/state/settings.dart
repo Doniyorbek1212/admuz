@@ -31,7 +31,7 @@ class AppSettings {
     this.translateTo = 'uz',
     this.notificationsEnabled = true,
     this.messagePreview = true,
-    this.keepAlive = true,
+    this.keepAlive = false,
     this.bubbleRadius = 18,
     this.showTranslateButton = true,
     this.chatTypeTabs = false,
@@ -240,7 +240,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       translateTo: _prefs.getString('translateTo') ?? _prefs.getString('locale') ?? _defaultLocale(),
       notificationsEnabled: _prefs.getBool('notifications') ?? true,
       messagePreview: _prefs.getBool('messagePreview') ?? true,
-      keepAlive: _prefs.getBool('keepAlive') ?? true,
+      // Off by default: Telegram pushes via FCM like the official app; the persistent connection is opt-in.
+      keepAlive: _prefs.getBool('keepAlive') ?? false,
       bubbleRadius: _prefs.getDouble('bubbleRadius') ?? 18,
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
       chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,

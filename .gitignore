@@ -13,6 +13,8 @@ mobile/ios/.symlinks/
 mobile/ios/Flutter/Generated.xcconfig
 mobile/ios/Flutter/flutter_export_environment.sh
 mobile/android/key.properties
+# Firebase config (shared Firebase project); kept local like the signing key.
+mobile/android/app/google-services.json
 *.jks
 *.keystore
 
