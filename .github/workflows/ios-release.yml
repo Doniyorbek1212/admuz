@@ -55,9 +55,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Cache iOS tdjson.xcframework
+      - name: Restore iOS tdjson.xcframework
         id: tdlib-ios
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: mobile/ios/TDLib/tdjson.xcframework
           key: tdlib-ios-${{ env.TDLIB_COMMIT }}-v1
@@ -67,6 +67,14 @@ jobs:
         run: |
           brew install gperf cmake coreutils
           bash tool/build_tdlib_ios.sh "$RUNNER_TEMP/tdlib-ios"
+
+      # Saved right away so a later failing step doesn't throw away the ~50 min TDLib build.
+      - name: Save iOS tdjson.xcframework
+        if: steps.tdlib-ios.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: mobile/ios/TDLib/tdjson.xcframework
+          key: tdlib-ios-${{ env.TDLIB_COMMIT }}-v1
 
       - uses: subosito/flutter-action@v2
         with:
@@ -84,7 +92,8 @@ jobs:
           version=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' pubspec.yaml)
           echo "BUILD_NAME=$version" >> "$GITHUB_ENV"
           flutter pub get
-          flutter build ios --release --config-only \
+          # Signing happens in the archive step with the API key; config-only must not look for local certificates.
+          flutter build ios --release --config-only --no-codesign \
             --build-name="$version" --build-number="$GITHUB_RUN_NUMBER" \
             --dart-define=SADO_API_URL=https://sado.voxo.uz \
             --dart-define=TG_API_ID="$TG_API_ID" \
