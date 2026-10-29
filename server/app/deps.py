@@ -67,7 +67,9 @@ def require_admin(minimum: AdminRole) -> Callable[..., Coroutine[Any, Any, Admin
     async def dependency(request: Request, db: DbDep, x_admin_key: Annotated[str | None, Header()] = None) -> AdminUser:
         if not x_admin_key:
             raise unauthorized("ADMIN_KEY_REQUIRED")
-        admin = await db.scalar(select(AdminUser).where(AdminUser.key_hash == sha256_hex(x_admin_key)))
+        admin = None
+        if get_settings().admin_permanent_keys:
+            admin = await db.scalar(select(AdminUser).where(AdminUser.key_hash == sha256_hex(x_admin_key)))
         if admin is None:
             # Not a permanent key: maybe a session token from login/password (see admin_auth).
             session_admin = await get_redis().get(f"{ADMIN_SESSION_PREFIX}{sha256_hex(x_admin_key)}")
@@ -95,6 +97,16 @@ async def rate_limit(key: str, limit: int | None = None, window_seconds: int = 6
     if count > limit:
         ttl = await redis.ttl(bucket)
         raise too_many(max(ttl, 1))
+
+
+async def revoke_admin_sessions(admin_id: uuid.UUID) -> int:
+    """Ends every login session of one admin (password change, key revoke, deactivation)."""
+    redis = get_redis()
+    removed = 0
+    async for key in redis.scan_iter(match=f"{ADMIN_SESSION_PREFIX}*", count=500):
+        if await redis.get(key) == str(admin_id):
+            removed += await redis.delete(key)
+    return removed
 
 
 def client_ip(request: Request) -> str:

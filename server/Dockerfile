@@ -9,6 +9,7 @@ COPY alembic ./alembic
 COPY app ./app
 USER sado
 EXPOSE 8080
-# Trusted proxy list for --proxy-headers: uvicorn reads FORWARDED_ALLOW_IPS (default 127.0.0.1).
+# Trusted proxy list for --proxy-headers: uvicorn reads FORWARDED_ALLOW_IPS (the reverse proxy's address or
+# subnet). Staging/production refuse to start without it, so per-IP rate limits see real clients.
 # Migrations run as a separate release step: `python -m alembic upgrade head`.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--no-server-header"]

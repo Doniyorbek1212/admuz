@@ -1,8 +1,11 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://sado:sado@localhost:5432/sado_billing"
+DEFAULT_REDIS_URL = "redis://localhost:6379/2"
 
 
 class Settings(BaseSettings):
@@ -11,8 +14,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SADO_BILLING_", env_file=".env", extra="ignore")
 
     environment: Literal["development", "test", "staging", "production"] = "development"
-    database_url: str = "postgresql+asyncpg://sado:sado@localhost:5432/sado_billing"
-    redis_url: str = "redis://localhost:6379/2"
+    database_url: str = DEFAULT_DATABASE_URL
+    redis_url: str = DEFAULT_REDIS_URL
+
+    # Reverse proxies whose X-Forwarded-For uvicorn trusts (--proxy-headers). Read from uvicorn's own
+    # FORWARDED_ALLOW_IPS so the app can refuse to start when it is missing in staging/production.
+    forwarded_allow_ips: str = Field(default="", validation_alias=AliasChoices("FORWARDED_ALLOW_IPS", "forwarded_allow_ips"))
+
+    # Permanent X-Admin-Key keys (CLI-created) alongside login sessions. Set false once every admin
+    # signs in with login/password: then logout and session expiry end all panel access.
+    admin_permanent_keys: bool = True
+
+    # Whole request body cap, checked before multipart parsing; above the biggest upload plus form overhead.
+    max_request_bytes: int = 32 * 1024 * 1024
 
     jwt_secret: str = Field(min_length=32)
     access_token_ttl_seconds: int = 60 * 30
@@ -61,6 +75,31 @@ class Settings(BaseSettings):
         if self.environment in ("staging", "production") and "mock" in self.enabled_providers:
             raise ValueError("the mock billing provider must never be enabled in staging or production")
         return self
+
+    @model_validator(mode="after")
+    def _safe_outside_development(self) -> "Settings":
+        """Fail fast on a staging/production deploy that still runs with development defaults."""
+        if self.environment not in ("staging", "production"):
+            return self
+        problems = []
+        if self.database_url == DEFAULT_DATABASE_URL or "://sado:sado@" in self.database_url:
+            problems.append("SADO_BILLING_DATABASE_URL still uses the development default credentials")
+        if self.redis_url == DEFAULT_REDIS_URL:
+            problems.append("SADO_BILLING_REDIS_URL is the development default")
+        proxies = self.forwarded_allow_ips.strip()
+        if not proxies:
+            problems.append("FORWARDED_ALLOW_IPS must list the reverse proxy addresses, or per-IP rate limits see only the proxy")
+        elif "*" in proxies:
+            problems.append("FORWARDED_ALLOW_IPS='*' lets any client forge X-Forwarded-For")
+        if self.max_request_bytes < max(self.max_image_bytes, self.max_video_bytes):
+            problems.append("SADO_BILLING_MAX_REQUEST_BYTES is smaller than the biggest allowed upload")
+        if problems:
+            raise ValueError("unsafe staging/production configuration: " + "; ".join(problems))
+        return self
+
+    @property
+    def docs_enabled(self) -> bool:
+        return self.environment in ("development", "test")
 
     @property
     def mock_allowed(self) -> bool:

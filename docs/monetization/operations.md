@@ -23,7 +23,12 @@ only its sha256 is stored. Send it as `X-Admin-Key`.
 All settings are in [`server/.env.example`](../../server/.env.example). Production rules:
 
 - Secrets come from the platform's secret manager, never from the image or the repo.
-- `SADO_BILLING_ENVIRONMENT=production` disables `/docs` and refuses the mock provider at startup.
+- `SADO_BILLING_ENVIRONMENT=staging|production` disables `/docs` and refuses to start with the mock provider, the
+  development database/Redis defaults (`sado:sado`), a missing or `*` `FORWARDED_ALLOW_IPS`, or a request body cap
+  smaller than the biggest upload.
+- `SADO_BILLING_ADMIN_PERMANENT_KEYS=false` turns off CLI-created `X-Admin-Key` keys; then only login sessions work.
+  Keys: `python -m app.cli rotate-key|revoke-key <name>`; `create-admin`/`rotate-key` take `--key-file PATH` (mode 0600)
+  so the key never lands in terminal logs. `set-login` ends the admin's open sessions.
 - `SADO_BILLING_PAYMENTS_ENABLED=false` until phase B passes sandbox testing.
 
 ## Google Play Console (phase B)

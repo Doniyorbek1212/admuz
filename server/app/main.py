@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import engine
 from app.deps import get_redis
+from app.limits import BodySizeLimit
 from app.routers import admin, admin_auth, admin_market, admin_panel, admin_places, ads, billing, customers, market, media, places, profile, public
 from app.security import RedactingFilter
 
@@ -33,14 +34,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    production = settings.environment == "production"
     app = FastAPI(
         title="UZARO API",
         version="0.1.0",
         lifespan=lifespan,
-        # No docs or public schema in production: don't publish the admin API map.
-        docs_url=None if production else "/docs",
-        openapi_url=None if production else "/openapi.json",
+        # Docs and the schema only in development/test: staging and production don't publish the admin API map.
+        docs_url="/docs" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
         redoc_url=None,
     )
     for module in (customers, profile, billing, admin, market, ads, media, places, admin_market, admin_places, admin_panel, admin_auth, public):
@@ -57,6 +57,9 @@ def create_app() -> FastAPI:
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["Cache-Control"] = "no-cache"
         return response
+
+    # Outermost: oversized bodies are refused before the multipart parser buffers them.
+    app.add_middleware(BodySizeLimit, max_bytes=settings.max_request_bytes)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
