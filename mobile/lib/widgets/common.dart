@@ -3,7 +3,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
@@ -382,4 +384,15 @@ class TileIcon extends StatelessWidget {
         ),
         child: Icon(icon, size: 19, color: Colors.white),
       );
+}
+
+/// One gallery photo, or null when cancelled. A second tap while the picker is still opening
+/// (PlatformException "already_active") is ignored instead of crashing.
+Future<String?> pickGalleryImage({int maxWidth = 1280}) async {
+  try {
+    return (await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: maxWidth.toDouble()))?.path;
+  } on PlatformException catch (error) {
+    if (error.code != 'already_active') rethrow;
+    return null;
+  }
 }

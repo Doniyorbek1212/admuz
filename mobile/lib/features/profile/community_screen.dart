@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
@@ -67,9 +66,9 @@ class _CommunityScreenState extends ConsumerState<CommunityScreen> {
   Future<void> _photo({required bool remove}) async {
     td.InputChatPhoto? photo;
     if (!remove) {
-      final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280);
-      if (file == null || !mounted) return;
-      photo = td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path));
+      final path = await pickGalleryImage();
+      if (path == null || !mounted) return;
+      photo = td.InputChatPhotoStatic(photo: td.InputFileLocal(path: path));
     }
     await guard(context, () => _account.send<td.Ok>(td.SetCommunityPhoto(communityId: widget.communityId, photo: photo)));
     await _load();

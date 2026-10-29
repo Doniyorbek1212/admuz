@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
@@ -248,7 +249,14 @@ Future<void> openBusinessChatLink(BuildContext context, TelegramAccount account,
 
 /// Adds 2–10 photos as one album message to a quick reply shortcut.
 Future<void> addQuickReplyAlbum(BuildContext context, TelegramAccount account, String shortcutName) async {
-  final files = await ImagePicker().pickMultiImage(imageQuality: 90, maxWidth: 2560, limit: 10);
+  List<XFile> files;
+  try {
+    files = await ImagePicker().pickMultiImage(imageQuality: 90, maxWidth: 2560, limit: 10);
+  } on PlatformException catch (error) {
+    // A second tap while the picker opens; the first one carries on.
+    if (error.code == 'already_active') return;
+    rethrow;
+  }
   if (files.isEmpty || !context.mounted) return;
   if (files.length < 2) {
     showToast(context, context.t('biz_album_min'));

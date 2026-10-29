@@ -2,7 +2,6 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/tdlib/td_client.dart';
@@ -155,7 +154,7 @@ Future<String?> pickPhotoSource(BuildContext context, TelegramAccount account, {
     await pickEmojiPhoto(context, account, chatId: chatId);
     return null;
   }
-  return (await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280))?.path;
+  return pickGalleryImage();
 }
 
 // ------------------------------------------------------------------ name/profile background emoji

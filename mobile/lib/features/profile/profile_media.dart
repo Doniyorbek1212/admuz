@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -153,9 +152,9 @@ class _ProfileAudiosScreenState extends ConsumerState<ProfileAudiosScreen> {
 Future<void> setPersonalContactPhoto(BuildContext context, TelegramAccount account, int userId, {required bool remove}) async {
   td.InputChatPhoto? photo;
   if (!remove) {
-    final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280);
-    if (file == null || !context.mounted) return;
-    photo = td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path));
+    final path = await pickGalleryImage();
+    if (path == null || !context.mounted) return;
+    photo = td.InputChatPhotoStatic(photo: td.InputFileLocal(path: path));
   }
   final done = await guard(context, () async {
     await account.send<td.Ok>(td.SetUserPersonalProfilePhoto(userId: userId, photo: photo));
@@ -166,10 +165,10 @@ Future<void> setPersonalContactPhoto(BuildContext context, TelegramAccount accou
 
 /// Offers a photo to another user as their new profile photo; they see it in the chat and can accept.
 Future<void> suggestProfilePhoto(BuildContext context, TelegramAccount account, int userId) async {
-  final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280);
-  if (file == null || !context.mounted) return;
+  final path = await pickGalleryImage();
+  if (path == null || !context.mounted) return;
   final done = await guard(context, () async {
-    await account.send<td.Ok>(td.SuggestUserProfilePhoto(userId: userId, photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path))));
+    await account.send<td.Ok>(td.SuggestUserProfilePhoto(userId: userId, photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: path))));
     return true;
   });
   if (done == true && context.mounted) showToast(context, context.t('photo_suggested'));

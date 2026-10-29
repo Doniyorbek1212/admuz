@@ -646,13 +646,15 @@ class _ProfileCard extends StatelessWidget {
       : Container(
           margin: const EdgeInsets.fromLTRB(14, 16, 14, 0),
           padding: const EdgeInsets.symmetric(vertical: 6),
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(22),
             border: Border.all(color: Theme.of(context).dividerColor),
             boxShadow: [BoxShadow(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 4))],
           ),
-          child: Column(children: children),
+          // ListTile ink paints on the nearest Material; without this the card's colour hides it.
+          child: Material(type: MaterialType.transparency, child: Column(children: children)),
         );
 }
 

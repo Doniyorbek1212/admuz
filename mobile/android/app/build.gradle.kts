@@ -55,6 +55,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // With the release key present, `flutter run` updates the installed release app in place
+            // (same signature) instead of uninstalling it and wiping its Telegram session.
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
         release {
             signingConfig = signingConfigs.findByName("release")
                 ?: if (project.hasProperty("allowDebugSigning")) signingConfigs.getByName("debug") else null
