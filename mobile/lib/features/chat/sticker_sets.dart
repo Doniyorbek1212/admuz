@@ -237,3 +237,31 @@ class _StickerSetsScreenState extends ConsumerState<StickerSetsScreen> {
     );
   }
 }
+
+/// Installed packs of [type] to choose from, plus "none" (0). Null when cancelled.
+Future<int?> pickInstalledStickerSet(BuildContext context, td.StickerType type) async {
+  final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
+  final sets = await guard(context, () => account.send<td.StickerSets>(td.GetInstalledStickerSets(stickerType: type)));
+  if (sets == null || !context.mounted) return null;
+  final s = context.s;
+  return showModalBottomSheet<int>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+        child: ListView(shrinkWrap: true, children: [
+          ListTile(leading: const Icon(Icons.block_rounded), title: Text(s.t('none')), onTap: () => Navigator.pop(context, 0)),
+          for (final set in sets.sets)
+            ListTile(
+              leading: SizedBox.square(dimension: 40, child: set.covers.isEmpty ? const Icon(Icons.emoji_emotions_outlined) : StickerThumb(sticker: set.covers.first)),
+              title: Text(set.title),
+              subtitle: Text(s.count('stickers_count', set.size)),
+              onTap: () => Navigator.pop(context, set.id),
+            ),
+        ]),
+      ),
+    ),
+  );
+}

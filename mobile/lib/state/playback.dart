@@ -172,6 +172,13 @@ class Playback {
   }
 
   Future<void> _onCompleted() async {
+    // Music listened to the end counts for the track (Telegram uses it for profile audio statistics).
+    final playing = nowPlaying.value;
+    if (playing != null && playing.message.content is td.MessageAudio) {
+      unawaited(_account
+          ?.send<td.Ok>(td.ListenToAudio(audioFileId: playing.fileId, duration: player.duration?.inSeconds ?? 0))
+          .catchError((Object _) => const td.Ok()));
+    }
     if (await _skip(newer: true)) return;
     await player.pause();
     await player.seek(Duration.zero);

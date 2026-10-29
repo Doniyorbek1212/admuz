@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,7 +18,9 @@ import '../../widgets/qr_scan_screen.dart';
 import '../chat/bot_keyboard.dart';
 import '../chat/forward_picker.dart';
 import '../chat/link_router.dart';
+import '../chat/sticker_extras.dart' show outlinePath;
 import '../home/home_screen.dart';
+import 'bot_extras.dart';
 
 int _rgb(Color color) => color.toARGB32() & 0xFFFFFF;
 
@@ -113,6 +116,31 @@ class _MainButton {
   final bool progress;
 }
 
+/// "https://host[:port]" of an HTTPS URL, or null for anything else (http, file, data, javascript…).
+@visibleForTesting
+String? webAppOrigin(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
+  return uri.hasPort ? 'https://${uri.host.toLowerCase()}:${uri.port}' : 'https://${uri.host.toLowerCase()}';
+}
+
+class _PlaceholderPainter extends CustomPainter {
+  _PlaceholderPainter(this.path, this.color);
+
+  final Path path;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // TDLib outlines use a 512×512 box.
+    canvas.scale(size.width / 512, size.height / 512);
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_PlaceholderPainter old) => old.path != path || old.color != color;
+}
+
 Color? _parseColor(Object? value) {
   if (value is! String || !value.startsWith('#') || value.length != 7) return null;
   final rgb = int.tryParse(value.substring(1), radix: 16);
@@ -128,12 +156,26 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
   String _title = '';
   Color? _headerColor;
 
-  static const _bridge = '''
+  /// Origin the Mini App was opened at; the bridge only answers pages from it.
+  late final String? _origin = webAppOrigin(widget.url);
+
+  /// Per-screen secret the injected bridge adds to every event. Android exposes JavaScript channels to
+  /// every frame, so an embedded third-party iframe could post events; it never sees this token.
+  final String _bridgeToken = _newBridgeToken();
+
+  static String _newBridgeToken() {
+    final random = Random.secure();
+    return base64Url.encode(List<int>.generate(24, (_) => random.nextInt(256)));
+  }
+
+  // Injected into the main frame only (runJavaScript); the token stays inside the closure.
+  String get _bridge => '''
 (function() {
   if (window.TelegramWebviewProxy) return;
+  var token = ${jsonEncode(_bridgeToken)};
   window.TelegramWebviewProxy = {
     postEvent: function(eventType, eventData) {
-      SadoWebAppBridge.postMessage(JSON.stringify({type: eventType, data: eventData || ''}));
+      SadoWebAppBridge.postMessage(JSON.stringify({type: eventType, data: eventData || '', token: token}));
     }
   };
 })();
@@ -144,6 +186,14 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
     super.initState();
     final account = ref.read(accountProvider);
     _title = account.userName(widget.botUserId);
+    if (_origin == null) {
+      // Mini Apps are served over HTTPS; anything else is not opened with the native bridge.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showToast(context, context.t('webapp_insecure'));
+        Navigator.of(context).pop();
+      });
+    }
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel('SadoWebAppBridge', onMessageReceived: (message) => _onBridgeMessage(message.message))
@@ -160,10 +210,15 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
             if (mounted) unawaited(openLink(context, request.url));
             return NavigationDecision.prevent;
           }
+          // The page may only move within its own origin; other sites open outside, through the link checks.
+          if (request.isMainFrame && webAppOrigin(request.url) != _origin) {
+            if (mounted && uri != null && (uri.scheme == 'https' || uri.scheme == 'http')) unawaited(openLink(context, request.url));
+            return NavigationDecision.prevent;
+          }
           return NavigationDecision.navigate;
         },
-      ))
-      ..loadRequest(Uri.parse(widget.url));
+      ));
+    if (_origin != null) unawaited(_controller.loadRequest(Uri.parse(widget.url)));
   }
 
   @override
@@ -206,6 +261,10 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
     } on Object {
       return;
     }
+    // Only our injected bridge (token) on the Mini App's own origin may drive native actions;
+    // a redirect that slipped past the navigation check, or a foreign iframe, is ignored.
+    if (event['token'] != _bridgeToken) return;
+    if (webAppOrigin(await _controller.currentUrl() ?? '') != _origin || !mounted) return;
     final type = event['type'] as String? ?? '';
     final data = _decodeData(event['data']);
     final account = ref.read(accountProvider);
@@ -215,7 +274,17 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
       case 'web_app_ready' || 'web_app_expand' || 'web_app_request_viewport':
         _sendViewport();
       case 'web_app_request_theme':
-        _emit('theme_changed', {'theme_params': _themeJson(themeParametersOf(context))});
+        final theme = themeParametersOf(context);
+        // TDLib writes the same JSON official apps send; the local map is the fallback.
+        Object params = _themeJson(theme);
+        try {
+          params = jsonDecode((await account.send<td.Text>(td.GetThemeParametersJsonString(theme: theme))).text) as Object;
+        } on TdException catch (error) {
+          debugPrint('theme json failed: $error');
+        } on FormatException catch (error) {
+          debugPrint('theme json unreadable: $error');
+        }
+        _emit('theme_changed', {'theme_params': params});
       case 'web_app_setup_main_button':
         setState(() => _mainButton = _MainButton(
               visible: data['is_visible'] == true && (data['text'] as String? ?? '').trim().isNotEmpty,
@@ -269,6 +338,26 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
         }
       case 'web_app_open_popup':
         await _showPopup(data);
+      case 'web_app_send_prepared_message':
+        final id = data['id'] as String? ?? '';
+        if (id.isEmpty || !mounted) return;
+        final sent = await sendPreparedInlineMessage(context, account, widget.botUserId, id, () async {
+          final picked = await Navigator.of(context).push<Object>(MaterialPageRoute(builder: (_) => const ForwardPickerScreen()));
+          return picked is int ? picked : null;
+        });
+        _emit(sent ? 'prepared_message_sent' : 'prepared_message_failed', sent ? null : {'error': 'USER_DECLINED'});
+      case 'web_app_request_chat':
+        // The bot prepared a "pick a user/chat" button; the pick is shared with the bot like a keyboard button.
+        final reqId = data['req_id'] as String? ?? '';
+        if (reqId.isEmpty || !mounted) return;
+        final shared = await sharePreparedButton(context, account, widget.botUserId, reqId);
+        _emit('requested_chat', {'req_id': reqId, 'status': shared ? 'shared' : 'cancelled'});
+      case 'web_app_request_file_download':
+        final url = data['url'] as String? ?? '';
+        final name = data['file_name'] as String? ?? '';
+        if (url.isEmpty || name.isEmpty || !mounted) return;
+        final ok = await downloadWebAppFile(context, account, widget.botUserId, name, url, (uri) => launchUrl(uri, mode: LaunchMode.externalApplication));
+        _emit('file_download_requested', {'status': ok ? 'downloading' : 'cancelled'});
       case 'web_app_read_text_from_clipboard':
         // Only answered with text after the user agrees: pages must not read the clipboard silently.
         final allowed = mounted && await confirm(context, title: _title, message: context.t('webapp_clipboard_confirm'));
@@ -436,7 +525,17 @@ class _WebAppScreenState extends ConsumerState<WebAppScreen> {
         body: Stack(
           children: [
             WebViewWidget(controller: _controller),
-            if (_loading) const LinearProgressIndicator(minHeight: 2),
+            if (_loading) ...[
+              // The bot's own loading silhouette, as Telegram shows it before the page paints.
+              if (ref.watch(webAppPlaceholderProvider(widget.botUserId)).value case final outline?)
+                Center(
+                  child: SizedBox.square(
+                    dimension: 120,
+                    child: CustomPaint(painter: _PlaceholderPainter(outlinePath(outline), Theme.of(context).hintColor.withValues(alpha: 0.3))),
+                  ),
+                ),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
           ],
         ),
         bottomNavigationBar: button.visible

@@ -4,10 +4,13 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../core/config.dart';
+import '../core/keep_alive.dart';
 import '../core/tdlib/td_client.dart';
 import 'contact_changes.dart';
 import 'message_archive.dart';
@@ -133,6 +136,33 @@ class TelegramAccount {
   final Map<int, int> onlineMemberCounts = {};
   final Map<String, bool> _listFullyLoaded = {};
   List<td.ChatFolderInfo> folders = const [];
+
+  /// Topics (one per user) of channel direct messages groups the user administers, by chat then topic id.
+  final directTopics = <int, Map<int, td.DirectMessagesChatTopic>>{};
+  final directTopicsRevision = ValueNotifier<int>(0);
+
+  /// Where links open: in-app browser or external, with per-site exceptions (updateWebBrowserSettings).
+  td.WebBrowserSettings? webBrowserSettings;
+  final webBrowserRevision = ValueNotifier<int>(0);
+
+  /// New terms of service waiting for the user's acceptance (updateTermsOfService).
+  final pendingTerms = ValueNotifier<td.UpdateTermsOfService?>(null);
+
+  /// Telegram's suggestions for this account (set a birthday, check the phone number…).
+  final suggestedActions = ValueNotifier<List<td.SuggestedAction>>(const []);
+
+  /// Communities (groups of chats) the user can see, by id (updateCommunity).
+  final communities = <int, td.Community>{};
+  final communitiesRevision = ValueNotifier<int>(0);
+
+  /// Telegram's "save to gallery" rules (GetAutosaveSettings, refreshed on updateAutosaveSettings).
+  td.AutosaveSettings? autosaveSettings;
+
+  /// Contacts whose birthday is today or soon (updateContactCloseBirthdays); emptied when the user hides the banner.
+  List<td.CloseBirthdayUser> closeBirthdays = const [];
+
+  /// Premium: folder name tags shown on chat list rows (updateChatFolders.are_tags_enabled).
+  bool folderTagsEnabled = false;
   final Map<String, int> unreadCounts = {};
 
   /// Active stories per poster chat (updateChatActiveStories).
@@ -173,6 +203,7 @@ class TelegramAccount {
 
   /// Writing styles offered by Telegram's AI text composer (updateTextCompositionStyles).
   List<td.TextCompositionStyle> compositionStyles = const [];
+  final compositionStylesRevision = ValueNotifier<int>(0);
 
   /// Name and profile color palettes (updateAccentColors / updateProfileAccentColors).
   List<td.AccentColor> accentColors = const [];
@@ -191,6 +222,14 @@ class TelegramAccount {
   final quickReplies = <int, td.QuickReplyShortcut>{};
   List<int> quickReplyOrder = const [];
   final quickRepliesRevision = ValueNotifier<int>(0);
+
+  /// A bot's answer still being generated in a chat (streamed draft); cleared when the bot finishes or stops.
+  final pendingBotMessages = <int, td.UpdatePendingMessage>{};
+  final pendingBotMessagesRevision = ValueNotifier<int>(0);
+
+  /// Welcome messages per chat, shown to people who join; filled after LoadChatWelcomeMessages.
+  final welcomeMessages = <int, List<td.WelcomeMessage>>{};
+  final welcomeMessagesRevision = ValueNotifier<int>(0);
 
   final authState = ValueNotifier<td.AuthorizationState?>(null);
   final connectionState = ValueNotifier<td.ConnectionState>(const td.ConnectionStateConnecting());
@@ -478,6 +517,24 @@ class TelegramAccount {
         attachmentMenuBots = bots;
       case td.UpdateConnectionState(:final state):
         connectionState.value = state;
+        // Reconnecting usually means the network changed (Wi-Fi <-> mobile).
+        if (state is td.ConnectionStateReady) unawaited(reportNetworkType());
+      case td.UpdateWebBrowserSettings(:final settings):
+        webBrowserSettings = settings;
+        webBrowserRevision.value++;
+      case td.UpdateTermsOfService():
+        pendingTerms.value = object;
+      case td.UpdateSuggestedActions(:final addedActions, :final removedActions):
+        final removed = {for (final a in removedActions) jsonEncode(a.toJson())};
+        suggestedActions.value = [
+          for (final a in suggestedActions.value) if (!removed.contains(jsonEncode(a.toJson()))) a,
+          ...addedActions,
+        ];
+      case td.UpdateCommunity(:final community):
+        communities[community.id] = community;
+        communitiesRevision.value++;
+      case td.UpdateAutosaveSettings():
+        unawaited(loadAutosaveSettings());
       case td.UpdateNewChat(:final chat):
         chats[chat.id] = chat;
         _markChat(chat.id);
@@ -489,6 +546,10 @@ class TelegramAccount {
         _updateChat(chatId, (c) => _patch(c, {'background': background?.toJson()}));
       case td.UpdateChatTheme(:final chatId, :final theme):
         _updateChat(chatId, (c) => _patch(c, {'theme': theme?.toJson()}));
+      case td.UpdateChatBusinessBotManageBar(:final chatId, :final businessBotManageBar):
+        _updateChat(chatId, (c) => _patch(c, {'business_bot_manage_bar': businessBotManageBar?.toJson()}), affectsList: false);
+      case td.UpdateChatActionBar(:final chatId, :final actionBar):
+        _updateChat(chatId, (c) => _patch(c, {'action_bar': actionBar?.toJson()}), affectsList: false);
       case td.UpdateEmojiChatThemes(:final chatThemes):
         emojiChatThemes = chatThemes;
       case td.UpdateUnconfirmedSession(:final session):
@@ -531,6 +592,8 @@ class TelegramAccount {
         _updateChat(chatId, (c) => c.copyWith(unreadMentionCount: unreadMentionCount));
       case td.UpdateChatUnreadReactionCount(:final chatId, :final unreadReactionCount):
         _updateChat(chatId, (c) => c.copyWith(unreadReactionCount: unreadReactionCount));
+      case td.UpdateChatUnreadPollVoteCount(:final chatId, :final unreadPollVoteCount):
+        _updateChat(chatId, (c) => c.copyWith(unreadPollVoteCount: unreadPollVoteCount));
       case td.UpdateChatNotificationSettings(:final chatId, :final notificationSettings):
         _updateChat(chatId, (c) => c.copyWith(notificationSettings: notificationSettings));
       case td.UpdateScopeNotificationSettings(:final scope, :final notificationSettings):
@@ -544,6 +607,13 @@ class TelegramAccount {
         _updateChat(chatId, (c) => c.copyWith(hasScheduledMessages: hasScheduledMessages), affectsList: false);
       case td.UpdateChatIsMarkedAsUnread(:final chatId, :final isMarkedAsUnread):
         _updateChat(chatId, (c) => c.copyWith(isMarkedAsUnread: isMarkedAsUnread));
+      case td.UpdateChatViewAsTopics(:final chatId, :final viewAsTopics):
+        _updateChat(chatId, (c) => c.copyWith(viewAsTopics: viewAsTopics), affectsList: false);
+      case td.UpdateDirectMessagesChatTopic(:final topic):
+        (directTopics[topic.chatId] ??= {})[topic.id] = topic;
+        directTopicsRevision.value++;
+      case td.UpdateChatIsTranslatable(:final chatId, :final isTranslatable):
+        _updateChat(chatId, (c) => c.copyWith(isTranslatable: isTranslatable), affectsList: false);
       case td.UpdateChatOnlineMemberCount(:final chatId, :final onlineMemberCount):
         onlineMemberCounts[chatId] = onlineMemberCount;
         _markChat(chatId, affectsList: false);
@@ -586,14 +656,22 @@ class TelegramAccount {
       case td.UpdateFile(:final file):
         files[file.id] = file;
         _fileUpdates.add(file);
-      case td.UpdateChatFolders(:final chatFolders):
+      case td.UpdateContactCloseBirthdays(:final closeBirthdayUsers):
+        closeBirthdays = closeBirthdayUsers;
+        _markUsers();
+      case td.UpdateChatFolders(:final chatFolders, :final areTagsEnabled):
         folders = chatFolders;
+        folderTagsEnabled = areTagsEnabled;
         foldersRevision.value++;
       case td.UpdateUnreadMessageCount(:final chatList, :final unreadCount):
         unreadCounts[chatListKey(chatList)] = unreadCount;
         foldersRevision.value++;
       case td.UpdateTextCompositionStyles(:final styles):
         compositionStyles = styles;
+        compositionStylesRevision.value++;
+      case td.UpdateChatWelcomeMessages(:final chatId, :final messages):
+        welcomeMessages[chatId] = messages;
+        welcomeMessagesRevision.value++;
       case td.UpdateQuickReplyShortcut(:final shortcut):
         quickReplies[shortcut.id] = shortcut;
         quickRepliesRevision.value++;
@@ -624,8 +702,19 @@ class TelegramAccount {
         _messageEvents.add(object as td.Update);
       case td.UpdateSavedMessagesTopic() || td.UpdateSavedMessagesTags() || td.UpdateQuickReplyShortcutMessages():
         _messageEvents.add(object as td.Update);
-      case td.UpdateCall() || td.UpdateNewCallSignalingData() || td.UpdateGroupCall() || td.UpdateGroupCallParticipant():
+      case td.UpdateCall() ||
+            td.UpdateNewCallSignalingData() ||
+            td.UpdateGroupCall() ||
+            td.UpdateGroupCallParticipant() ||
+            td.UpdateNewGroupCallMessage() ||
+            td.UpdateGroupCallMessagesDeleted():
         _callEvents.add(object as td.Update);
+      case td.UpdatePendingMessage(:final chatId):
+        pendingBotMessages[chatId] = object;
+        pendingBotMessagesRevision.value++;
+      case td.UpdateStopMessageDraft(:final chatId, :final draftId):
+        if (pendingBotMessages[chatId]?.draftId == draftId) pendingBotMessages.remove(chatId);
+        pendingBotMessagesRevision.value++;
       default:
         break;
     }
@@ -697,14 +786,53 @@ class TelegramAccount {
     }
   }
 
+  // Android Keystore / iOS Keychain. first_unlock_this_device: push handling can open the database in the
+  // background, and the key never travels to another device in a backup.
+  static const _keyStorage = FlutterSecureStorage(iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device));
+
+  static String _keyName(int slot) => 'sado.tdlib.dbkey.$slot';
+
+  /// Forgets the database key of a removed account slot.
+  static Future<void> forgetDatabaseKey(int slot) async {
+    try {
+      await _keyStorage.delete(key: _keyName(slot));
+    } on PlatformException catch (error) {
+      debugPrint('database key not removed: $error');
+    } on MissingPluginException {
+      // No keystore here (tests); nothing was stored.
+    }
+  }
+
+  /// The random per-account key the TDLib database is encrypted with. It lives in the platform keystore,
+  /// not next to the database; a key file left by older builds is moved there and deleted.
   Future<String> _databaseKey() async {
-    // The database is encrypted with a random per-account key kept next to it in app-private storage.
     final file = File('$databaseDirectory${Platform.pathSeparator}.key');
+    final name = _keyName(slot);
+    try {
+      final stored = await _keyStorage.read(key: name);
+      if (stored != null && stored.isNotEmpty) {
+        if (await file.exists()) await file.delete();
+        return stored;
+      }
+      final key = await file.exists() ? (await file.readAsString()).trim() : _newDatabaseKey();
+      await _keyStorage.write(key: name, value: key);
+      // Delete the file only once the keystore really holds the key, or the database would be lost.
+      if (await _keyStorage.read(key: name) == key && await file.exists()) await file.delete();
+      return key;
+    } on PlatformException catch (error) {
+      debugPrint('keystore unavailable, using the key file: $error');
+    } on MissingPluginException {
+      // Tests and platforms without a keystore plugin.
+    }
     if (await file.exists()) return (await file.readAsString()).trim();
-    final random = Random.secure();
-    final key = base64Encode(List<int>.generate(32, (_) => random.nextInt(256)));
+    final key = _newDatabaseKey();
     await file.writeAsString(key, flush: true);
     return key;
+  }
+
+  static String _newDatabaseKey() {
+    final random = Random.secure();
+    return base64Encode(List<int>.generate(32, (_) => random.nextInt(256)));
   }
 
   /// Shown to the user in Settings → Devices on every device, e.g. "Redmi Note 12 Pro" instead of "Android".
@@ -735,6 +863,84 @@ class TelegramAccount {
       debugPrint('initial loadChats failed: $error');
     }
     await loadStories();
+    // Fresh copy of the own user (premium status, names) right after login.
+    try {
+      final me = await client.send<td.User>(const td.GetMe());
+      users[me.id] = me;
+      _markUsers();
+    } on TdException catch (error) {
+      debugPrint('getMe failed: $error');
+    }
+    await _setupLanguagePacks();
+    await loadAutosaveSettings();
+    await reportNetworkType();
+  }
+
+  /// Telegram's server language packs (Settings → Language) need a target app and a local database.
+  Future<void> _setupLanguagePacks() async {
+    try {
+      await client.send<td.Ok>(const td.SetOption(name: 'localization_target', value: td.OptionValueString(value: 'android')));
+      await client.send<td.Ok>(td.SetOption(
+        name: 'language_pack_database_path',
+        value: td.OptionValueString(value: '$databaseDirectory${Platform.pathSeparator}langpack.db'),
+      ));
+    } on TdException catch (error) {
+      debugPrint('language pack setup failed: $error');
+    }
+  }
+
+  /// Sets the chat's on-device name (empty clears it); stored by TDLib in the chat's client_data.
+  Future<void> setLocalChatName(int chatId, String name) async {
+    final chat = chats[chatId];
+    if (chat == null) return;
+    Map<String, dynamic> data = {};
+    try {
+      final decoded = chat.clientData.isEmpty ? null : jsonDecode(chat.clientData);
+      if (decoded is Map<String, dynamic>) data = Map.of(decoded);
+    } on FormatException {
+      data = {};
+    }
+    name.trim().isEmpty ? data.remove('name') : data['name'] = name.trim();
+    final value = data.isEmpty ? '' : jsonEncode(data);
+    await client.send<td.Ok>(td.SetChatClientData(chatId: chatId, clientData: value));
+    // TDLib sends no update for client_data; patch the cached chat ourselves.
+    _updateChat(chatId, (c) => c.copyWith(clientData: value));
+  }
+
+  /// Re-reads the authorization state; TDLib also pushes it, this only catches up after a long sleep.
+  Future<void> refreshAuthState() async {
+    try {
+      final state = await client.send<td.AuthorizationState>(const td.GetAuthorizationState());
+      if (state.runtimeType != authState.value.runtimeType) await _onAuthorizationState(state);
+    } on TdException catch (error) {
+      debugPrint('authorization state unavailable: $error');
+    }
+  }
+
+  Future<void> loadAutosaveSettings() async {
+    try {
+      autosaveSettings = await client.send<td.AutosaveSettings>(const td.GetAutosaveSettings());
+    } on TdException catch (error) {
+      debugPrint('autosave settings failed: $error');
+    }
+  }
+
+  /// Tells TDLib whether we are on Wi-Fi or mobile data (auto-download presets, data usage).
+  Future<void> reportNetworkType() async {
+    final kind = await KeepAliveService.networkType();
+    if (kind == null || _disposed) return;
+    final td.NetworkType type = switch (kind) {
+      'wifi' => const td.NetworkTypeWiFi(),
+      'mobile' => const td.NetworkTypeMobile(),
+      'roaming' => const td.NetworkTypeMobileRoaming(),
+      'none' => const td.NetworkTypeNone(),
+      _ => const td.NetworkTypeOther(),
+    };
+    try {
+      await client.send<td.Ok>(td.SetNetworkType(type: type));
+    } on TdException catch (error) {
+      debugPrint('setNetworkType failed: $error');
+    }
   }
 
   bool _storiesFullyLoaded = false;

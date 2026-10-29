@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +14,7 @@ import '../../widgets/settings_group.dart';
 import '../admin/admin_panel_screen.dart';
 import '../business/profile_sharing.dart';
 import '../chat/media_viewers.dart';
+import '../chat/sticker_extras.dart' show pickPhotoSource;
 import 'advanced_settings.dart';
 import 'file_guard_screen.dart';
 import 'folders_screen.dart';
@@ -25,6 +25,7 @@ import 'premium_extras.dart';
 import 'privacy_screen.dart';
 import 'language_screen.dart';
 import 'storage_usage_screen.dart';
+import '../profile/profile_more.dart';
 import '../profile/user_profile_extras.dart';
 import 'profile_colors.dart';
 import 'session_security.dart';
@@ -195,6 +196,16 @@ class SettingsScreen extends ConsumerWidget {
             await guard(context, () => ref.read(accountProvider).send<td.Ok>(td.SetDefaultReactionType(reactionType: td.ReactionTypeEmoji(emoji: emoji))));
           },
         ),
+        ListTile(
+          leading: const TileIcon(Icons.history_toggle_off_rounded, Color(0xFF8E8E93)),
+          title: Text(s.t('clear_recent_reactions')),
+          onTap: () async {
+            if (!await confirm(context, title: s.t('clear_recent_reactions')) || !context.mounted) return;
+            final done = await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ClearRecentReactions()));
+            if (done != null && context.mounted) showToast(context, s.t('done'));
+          },
+        ),
+        const _SponsoredMessagesTile(),
       ],
     );
   }
@@ -251,15 +262,16 @@ Future<String?> _pickQuickReaction(BuildContext context) => showDialog<String>(
 
 /// Picks an image from the gallery and makes it the profile photo.
 Future<void> changeProfilePhoto(BuildContext context, WidgetRef ref) async {
-  final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 92, maxWidth: 1280);
-  if (file == null || !context.mounted) return;
+  // Gallery photo, or an emoji avatar (set inside pickPhotoSource).
+  final path = await pickPhotoSource(context, ref.read(accountProvider));
+  if (path == null || !context.mounted) return;
   await guard(
     context,
     () => ref
         .read(accountProvider)
         .send<td.ChatPhoto>(
           td.SetProfilePhoto(
-            photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: file.path)),
+            photo: td.InputChatPhotoStatic(photo: td.InputFileLocal(path: path)),
             isPublic: false,
           ),
         ),
@@ -406,6 +418,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   late final _username = TextEditingController(text: _me?.usernames?.editableUsername ?? '');
   final _bio = TextEditingController();
   td.Birthdate? _birthdate;
+  td.UserFullInfo? _info;
   bool _saving = false;
 
   @override
@@ -416,7 +429,10 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       ref.read(accountProvider).send<td.UserFullInfo>(td.GetUserFullInfo(userId: me.id)).then((info) {
         if (!mounted) return;
         _bio.text = info.bio?.text ?? '';
-        setState(() => _birthdate = info.birthdate);
+        setState(() {
+          _birthdate = info.birthdate;
+          _info = info;
+        });
       }, onError: (Object _) {});
     }
   }
@@ -437,12 +453,20 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     if (me == null || _first.text.trim().isEmpty) return;
     setState(() => _saving = true);
     final account = ref.read(accountProvider);
+    final strings = context.s;
     final ok = await guard(context, () async {
       if (_first.text.trim() != me.firstName || _last.text.trim() != me.lastName) {
         await account.send<td.Ok>(td.SetName(firstName: _first.text.trim(), lastName: _last.text.trim()));
       }
       final username = _username.text.trim();
       if (username != (me.usernames?.editableUsername ?? '')) {
+        if (username.isNotEmpty) {
+          final problem = await usernameProblem(account, me.id, username, strings);
+          if (problem != null) {
+            if (mounted) showToast(context, problem);
+            return false;
+          }
+        }
         await account.send<td.Ok>(td.SetUsername(username: username));
       }
       await account.send<td.Ok>(td.SetBio(bio: _bio.text.trim()));
@@ -500,6 +524,35 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.link_rounded),
+            title: Text(s.t('profile_link')),
+            onTap: () => shareMyProfileLink(context, ref.read(accountProvider)),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.campaign_outlined),
+            title: Text(s.t('personal_channel')),
+            subtitle: Text(switch (_info?.personalChatId) {
+              final id? when id != 0 => ref.read(accountProvider).chats[id]?.title ?? '…',
+              _ => s.t('none'),
+            }),
+            onTap: () async {
+              await pickPersonalChannel(context, ref.read(accountProvider), hasOne: (_info?.personalChatId ?? 0) != 0);
+              await _reloadInfo();
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.tab_rounded),
+            title: Text(s.t('main_profile_tab')),
+            subtitle: Text(s.t(profileTabLabel(_info?.mainProfileTab) ?? 'auto')),
+            onTap: () async {
+              await pickMainProfileTab(context, ref.read(accountProvider), _info?.mainProfileTab);
+              await _reloadInfo();
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.palette_outlined),
             title: Text(s.t('profile_colors')),
             onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProfileColorsScreen())),
@@ -549,6 +602,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _reloadInfo() async {
+    final me = _me;
+    if (me == null) return;
+    final info = await guard(context, () => ref.read(accountProvider).send<td.UserFullInfo>(td.GetUserFullInfo(userId: me.id)));
+    if (info != null && mounted) setState(() => _info = info);
   }
 
   /// Saved right away, like Telegram; null removes the date.
@@ -833,6 +893,32 @@ class AppearanceScreen extends ConsumerWidget {
           ]),
         ],
       ),
+    );
+  }
+}
+
+final _sponsoredEnabledProvider = FutureProvider.autoDispose<bool?>((ref) async {
+  final account = ref.watch(accountProvider);
+  if (account.users[account.myId]?.isPremium != true) return null;
+  return (await account.send<td.UserFullInfo>(td.GetUserFullInfo(userId: account.myId))).hasSponsoredMessagesEnabled;
+});
+
+/// Premium users may switch off sponsored messages in channels.
+class _SponsoredMessagesTile extends ConsumerWidget {
+  const _SponsoredMessagesTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabled = ref.watch(_sponsoredEnabledProvider).value;
+    if (enabled == null) return const SizedBox.shrink();
+    return SwitchListTile(
+      secondary: const TileIcon(Icons.campaign_outlined, Color(0xFFFF8A3D)),
+      title: Text(context.t('show_sponsored_messages')),
+      value: enabled,
+      onChanged: (value) async {
+        await guard(context, () => ref.read(accountProvider).send<td.Ok>(td.ToggleHasSponsoredMessagesEnabled(hasSponsoredMessagesEnabled: value)));
+        ref.invalidate(_sponsoredEnabledProvider);
+      },
     );
   }
 }

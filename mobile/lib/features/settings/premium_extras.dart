@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
@@ -12,6 +13,7 @@ import '../../widgets/custom_emoji.dart';
 import '../../widgets/settings_group.dart';
 import '../chat/composer_panels.dart';
 import '../contacts/contacts_screen.dart';
+import 'gifts_extras.dart' show GiftCollectionsScreen, giftMoreActions, giftPromoAnimationProvider;
 import 'privacy_screen.dart';
 
 /// Limits Telegram raises with Premium, as reported by the server.
@@ -207,12 +209,15 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
                 title: Text(s.t('gift_sell', {'n': '${gift.sellStarCount}'})),
                 onTap: () => Navigator.pop(context, 'sell'),
               ),
+            ListTile(leading: const Icon(Icons.more_horiz_rounded), title: Text(s.t('more')), onTap: () => Navigator.pop(context, 'more')),
           ],
         ),
       ),
     );
     if (action == null || !mounted) return;
-    if (action == 'save') {
+    if (action == 'more') {
+      await giftMoreActions(context, account, gift);
+    } else if (action == 'save') {
       await guard(context, () => account.send<td.Ok>(td.ToggleGiftIsSaved(receivedGiftId: gift.receivedGiftId, isSaved: !gift.isSaved)));
     } else if (action == 'pin') {
       final pinned = [for (final g in _gifts?.gifts ?? const <td.ReceivedGift>[]) if (g.isPinned && g.receivedGiftId != gift.receivedGiftId) g.receivedGiftId];
@@ -283,11 +288,26 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
     final account = ref.watch(accountProvider);
     final gifts = _gifts?.gifts;
     return Scaffold(
-      appBar: AppBar(title: Text(s.t('my_gifts'))),
+      appBar: AppBar(
+        title: Text(s.t('my_gifts')),
+        actions: [
+          IconButton(
+            tooltip: s.t('gift_collections'),
+            icon: const Icon(Icons.collections_bookmark_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => GiftCollectionsScreen(ownerId: td.MessageSenderUser(userId: account.myId)))),
+          ),
+        ],
+      ),
       body: gifts == null
           ? const Center(child: CircularProgressIndicator())
           : gifts.isEmpty
-              ? Center(child: Text(s.t('nothing_here')))
+              ? Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    if (ref.watch(giftPromoAnimationProvider).value?.thumbnail case final thumb?)
+                      SizedBox.square(dimension: 160, child: TdImage(file: thumb.file, fit: BoxFit.contain)),
+                    Text(s.t('nothing_here')),
+                  ]),
+                )
               : GridView.builder(
                   padding: const EdgeInsets.all(12),
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 130, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.8),
@@ -326,23 +346,47 @@ class _MyGiftsScreenState extends ConsumerState<MyGiftsScreen> {
   }
 }
 
-/// Premium emoji status next to the user's name: recent and default emoji, with an optional duration.
-Future<void> showEmojiStatusPicker(BuildContext context) async {
+/// Premium emoji status next to the user's name, or (with [chatId]) a channel's status unlocked by boosts:
+/// themed, recent and default emoji, with an optional duration.
+Future<void> showEmojiStatusPicker(BuildContext context, {int? chatId}) async {
   final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
   final s = context.s;
   final lists = await guard(context, () async {
+    if (chatId != null) {
+      final results = await Future.wait([
+        account.send<td.EmojiStatusCustomEmojis>(const td.GetThemedChatEmojiStatuses()),
+        account.send<td.EmojiStatusCustomEmojis>(const td.GetDefaultChatEmojiStatuses()),
+        account.send<td.EmojiStatusCustomEmojis>(const td.GetDisallowedChatEmojiStatuses()),
+      ]);
+      final disallowed = results[2].customEmojiIds.toSet();
+      final themed = [for (final id in results[0].customEmojiIds) if (!disallowed.contains(id)) id];
+      return (themed, [for (final id in results[1].customEmojiIds) if (!disallowed.contains(id) && !themed.contains(id)) id]);
+    }
     final results = await Future.wait([
       account.send<td.EmojiStatuses>(const td.GetRecentEmojiStatuses()),
       account.send<td.EmojiStatusCustomEmojis>(const td.GetDefaultEmojiStatuses()),
+      account.send<td.EmojiStatusCustomEmojis>(const td.GetThemedEmojiStatuses()),
     ]);
+    final themed = (results[2] as td.EmojiStatusCustomEmojis).customEmojiIds;
     final recent = [
+      ...themed,
       for (final status in (results[0] as td.EmojiStatuses).emojiStatuses)
-        if (status.type case td.EmojiStatusTypeCustomEmoji(:final customEmojiId)) customEmojiId,
+        if (status.type case td.EmojiStatusTypeCustomEmoji(:final customEmojiId) when !themed.contains(customEmojiId)) customEmojiId,
     ];
     final defaults = (results[1] as td.EmojiStatusCustomEmojis).customEmojiIds;
     return (recent, [for (final id in defaults) if (!recent.contains(id)) id]);
   });
   if (lists == null || !context.mounted) return;
+  // Unique gifts the user owns can be worn as a status too.
+  var giftStatuses = const <td.EmojiStatus>[];
+  if (chatId == null) {
+    try {
+      giftStatuses = (await account.send<td.EmojiStatuses>(const td.GetUpgradedGiftEmojiStatuses())).emojiStatuses;
+    } on TdException catch (error) {
+      debugPrint('gift statuses unavailable: $error');
+    }
+    if (!context.mounted) return;
+  }
   final picked = await showModalBottomSheet<int>(
     context: context,
     showDragHandle: true,
@@ -362,22 +406,35 @@ Future<void> showEmojiStatusPicker(BuildContext context) async {
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
           child: ListView(shrinkWrap: true, children: [
-            if (account.me?.isPremium != true) GroupHint(s.t('emoji_status_premium')),
+            if (chatId == null && account.me?.isPremium != true) GroupHint(s.t('emoji_status_premium')),
             ListTile(leading: const Icon(Icons.block_rounded), title: Text(s.t('emoji_status_remove')), onTap: () => Navigator.pop(context, 0)),
             if (lists.$1.isNotEmpty) ...[
               Row(children: [
                 Expanded(child: SectionHeader(s.t('recent'))),
-                TextButton(
-                  onPressed: () {
-                    account.send<td.Ok>(const td.ClearRecentEmojiStatuses()).ignore();
-                    Navigator.pop(context);
-                  },
-                  child: Text(s.t('clear')),
-                ),
+                if (chatId == null)
+                  TextButton(
+                    onPressed: () {
+                      account.send<td.Ok>(const td.ClearRecentEmojiStatuses()).ignore();
+                      Navigator.pop(context);
+                    },
+                    child: Text(s.t('clear')),
+                  ),
               ]),
               grid(lists.$1),
             ],
             grid(lists.$2),
+            if (giftStatuses.isNotEmpty) ...[
+              SectionHeader(s.t('gift_statuses')),
+              Wrap(children: [
+                for (final (i, status) in giftStatuses.indexed)
+                  if (status.type case td.EmojiStatusTypeUpgradedGift(:final modelCustomEmojiId))
+                    InkWell(
+                      // Negative values stand for gift statuses (index), positive for custom emoji ids.
+                      onTap: () => Navigator.pop(context, -(i + 1)),
+                      child: Padding(padding: const EdgeInsets.all(6), child: CustomEmojiView(id: modelCustomEmojiId, size: 32)),
+                    ),
+              ]),
+            ],
             const SizedBox(height: 12),
           ]),
         ),
@@ -400,10 +457,13 @@ Future<void> showEmojiStatusPicker(BuildContext context) async {
     if (hours == null || !context.mounted) return;
     if (hours > 0) expires = DateTime.now().add(Duration(hours: hours)).millisecondsSinceEpoch ~/ 1000;
   }
+  final status = picked == 0
+      ? null
+      : picked < 0
+          ? td.EmojiStatus(type: giftStatuses[-picked - 1].type, expirationDate: expires)
+          : td.EmojiStatus(type: td.EmojiStatusTypeCustomEmoji(customEmojiId: picked), expirationDate: expires);
   final done = await guard(context, () async {
-    await account.send<td.Ok>(td.SetEmojiStatus(
-      emojiStatus: picked == 0 ? null : td.EmojiStatus(type: td.EmojiStatusTypeCustomEmoji(customEmojiId: picked), expirationDate: expires),
-    ));
+    await account.send<td.Ok>(chatId == null ? td.SetEmojiStatus(emojiStatus: status) : td.SetChatEmojiStatus(chatId: chatId, emojiStatus: status));
     return true;
   });
   if (done == true && context.mounted) showToast(context, s.t('done'));

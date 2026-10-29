@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -15,6 +16,7 @@ import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_screen.dart';
+import '../profile/profile_more.dart';
 
 final contactsProvider = FutureProvider.autoDispose<List<int>>((ref) async {
   final account = ref.watch(accountProvider);
@@ -43,6 +45,8 @@ class ContactsScreen extends ConsumerStatefulWidget {
 
 class _ContactsScreenState extends ConsumerState<ContactsScreen> {
   String _query = '';
+  // TDLib's own contact search (handles transliteration); merged with the local word-prefix match.
+  Set<int> _serverMatches = const {};
   final Set<int> _selected = {};
   bool _importing = false;
   bool _byName = false;
@@ -70,17 +74,64 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
             ),
       ];
       if (!mounted) return;
-      final account = ref.read(accountProvider);
-      for (var i = 0; i < imported.length; i += 500) {
-        final batch = imported.sublist(i, (i + 500).clamp(0, imported.length));
-        await guard(context, () => account.send<td.ImportedContacts>(td.ImportContacts(contacts: batch)));
-        if (!mounted) return;
-      }
+      // Replaces the synced list, so contacts deleted from the phone are dropped too.
+      final done = await guard(context, () => ref.read(accountProvider).send<td.ImportedContacts>(td.ChangeImportedContacts(contacts: imported)));
+      if (done == null || !mounted) return;
       ref.invalidate(contactsProvider);
       showToast(context, s.t('contacts_synced'));
     } finally {
       if (mounted) setState(() => _importing = false);
     }
+  }
+
+  /// Adds someone by phone number (ImportContacts); opens the chat when they use Telegram.
+  Future<void> _addByPhone() async {
+    final s = context.s;
+    final phoneCtl = TextEditingController();
+    final firstCtl = TextEditingController();
+    final lastCtl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(s.t('add_contact')),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: firstCtl, autofocus: true, decoration: InputDecoration(labelText: s.t('first_name'))),
+          TextField(controller: lastCtl, decoration: InputDecoration(labelText: s.t('last_name'))),
+          TextField(controller: phoneCtl, keyboardType: TextInputType.phone, decoration: InputDecoration(labelText: s.t('phone_number'), prefixText: '+')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(s.t('cancel'))),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: Text(s.t('add'))),
+        ],
+      ),
+    );
+    final phoneNumber = phoneCtl.text.replaceAll(RegExp(r'[^\d]'), '');
+    final first = firstCtl.text.trim();
+    final last = lastCtl.text.trim();
+    phoneCtl.dispose();
+    firstCtl.dispose();
+    lastCtl.dispose();
+    if (ok != true || !mounted) return;
+    if (phoneNumber.length < 7 || first.isEmpty) {
+      showToast(context, s.t('contact_invalid'));
+      return;
+    }
+    final account = ref.read(accountProvider);
+    final result = await guard(
+      context,
+      () => account.send<td.ImportedContacts>(td.ImportContacts(contacts: [td.ImportedContact(phoneNumber: phoneNumber, firstName: first, lastName: last, note: null)])),
+    );
+    if (result == null || !mounted) return;
+    final userId = result.userIds.firstOrNull ?? 0;
+    if (userId == 0) {
+      showToast(context, s.t('contact_not_on_telegram'));
+      return;
+    }
+    ref.invalidate(contactsProvider);
+    final chat = await guard(context, () => account.openPrivateChat(userId));
+    if (chat == null || !mounted) return;
+    Navigator.pop(context);
+    openChat(context, chat.id);
   }
 
   Future<void> _onUserTap(td.User user) async {
@@ -120,15 +171,33 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
         _ => -4,
       };
 
+  Future<void> _onQuery(String value) async {
+    final query = value.trim().toLowerCase();
+    setState(() => _query = query);
+    if (query.isEmpty) return;
+    try {
+      final found = await ref.read(accountProvider).send<td.Users>(td.SearchContacts(query: query, limit: 50));
+      if (mounted && query == _query) setState(() => _serverMatches = found.userIds.toSet());
+    } on TdException catch (error) {
+      debugPrint('contact search failed: $error');
+    }
+  }
+
   List<td.User> _filterAndSort(List<int> userIds) {
     final account = ref.read(accountProvider);
     int byName(td.User a, td.User b) => '${a.firstName} ${a.lastName}'.toLowerCase().compareTo('${b.firstName} ${b.lastName}'.toLowerCase());
-    return userIds.map((id) => account.users[id]).whereType<td.User>().where((u) {
-      if (_query.isEmpty) return true;
-      final name = '${u.firstName} ${u.lastName}'.toLowerCase();
-      final username = u.usernames?.activeUsernames.join(' ').toLowerCase() ?? '';
-      return name.contains(_query) || username.contains(_query) || u.phoneNumber.contains(_query);
-    }).toList()
+    final users = userIds.map((id) => account.users[id]).whereType<td.User>().toList();
+    final Set<int>? prefixHits = _query.isEmpty
+        ? null
+        : prefixMatches([for (final u in users) '${u.firstName} ${u.lastName} ${u.usernames?.activeUsernames.join(' ') ?? ''}'], _query);
+    return [
+      for (final (i, u) in users.indexed)
+        if (_query.isEmpty ||
+            _serverMatches.contains(u.id) ||
+            (prefixHits?.contains(i) ?? '${u.firstName} ${u.lastName}'.toLowerCase().contains(_query)) ||
+            u.phoneNumber.contains(_query))
+          u,
+    ]
       ..sort((a, b) {
         if (_byName) return byName(a, b);
         final seen = _lastSeenScore(b).compareTo(_lastSeenScore(a));
@@ -136,10 +205,19 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       });
   }
 
-  Future<void> _invite() {
+  Future<void> _invite() async {
     final username = ref.read(meProvider)?.usernames?.activeUsernames.firstOrNull;
-    final link = username == null ? 'https://telegram.org/dl' : 'https://t.me/$username';
-    return SharePlus.instance.share(ShareParams(text: context.t('invite_text', {'link': link})));
+    var link = username == null ? '' : 'https://t.me/$username';
+    if (link.isEmpty) {
+      // Telegram's personal invite link (counts the friends who join).
+      try {
+        link = (await ref.read(accountProvider).send<td.HttpUrl>(const td.GetApplicationDownloadLink())).url;
+      } on TdException {
+        link = 'https://telegram.org/dl';
+      }
+    }
+    if (!mounted) return;
+    await SharePlus.instance.share(ShareParams(text: context.t('invite_text', {'link': link})));
   }
 
   /// One horizontal slice of a rounded card, so long lists stay lazily built.
@@ -158,7 +236,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
       child: TextField(
-        onChanged: (value) => setState(() => _query = value.trim().toLowerCase()),
+        onChanged: _onQuery,
         decoration: InputDecoration(
           hintText: s.t(widget.createGroup ? 'add_members' : 'search_contacts'),
           prefixIcon: const Icon(Icons.search_rounded),
@@ -200,13 +278,47 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
           onTap: _invite,
         ),
         ListTile(
+          leading: const TileIcon(Icons.dialpad_rounded, Color(0xFF8E62E8)),
+          title: Text(s.t('add_contact_by_phone')),
+          onTap: _addByPhone,
+        ),
+        ListTile(
           leading: const TileIcon(Icons.sync_rounded, Color(0xFF2EAD5B)),
           title: Text(s.t('sync_contacts')),
           trailing: _importing ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
           onTap: _importing ? null : _importPhoneContacts,
         ),
       ]),
+      if (ref.read(accountProvider).closeBirthdays case final birthdays when birthdays.isNotEmpty) _birthdays(birthdays),
     ];
+  }
+
+  /// "Birthdays soon" card, as in Telegram's contact list; can be hidden for now.
+  Widget _birthdays(List<td.CloseBirthdayUser> birthdays) {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    return SettingsGroup(children: [
+      ListTile(
+        leading: const TileIcon(Icons.cake_rounded, Color(0xFFF2557A)),
+        title: Text(s.t('birthdays_soon')),
+        trailing: IconButton(
+          tooltip: s.t('hide'),
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () async {
+            await guard(context, () => account.send<td.Ok>(const td.HideContactCloseBirthdays()));
+            if (mounted) setState(() => account.closeBirthdays = const []);
+          },
+        ),
+      ),
+      for (final b in birthdays)
+        if (account.users[b.userId] case final user?)
+          ListTile(
+            leading: UserAvatar(userId: user.id, size: 40),
+            title: Text('${user.firstName} ${user.lastName}'.trim()),
+            subtitle: Text('${b.birthdate.day.toString().padLeft(2, '0')}.${b.birthdate.month.toString().padLeft(2, '0')}'),
+            onTap: () => _onUserTap(user),
+          ),
+    ]);
   }
 
   Widget _userTile(td.User user) {
@@ -393,8 +505,18 @@ class _NewChannelScreenState extends ConsumerState<NewChannelScreen> {
   Future<void> _create() async {
     final title = _title.text.trim();
     if (title.isEmpty) return;
-    setState(() => _creating = true);
     final account = ref.read(accountProvider);
+    final wanted = _username.text.trim();
+    if (wanted.isNotEmpty) {
+      if (!await ensurePublicChatSlot(context, account) || !mounted) return;
+      final problem = await usernameProblem(account, 0, wanted, context.s);
+      if (!mounted) return;
+      if (problem != null) {
+        showToast(context, problem);
+        return;
+      }
+    }
+    setState(() => _creating = true);
     final chatId = await guard(context, () async {
       final chat = await account.send<td.Chat>(td.CreateNewSupergroupChat(
         title: title,

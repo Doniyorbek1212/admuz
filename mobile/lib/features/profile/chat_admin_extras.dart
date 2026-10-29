@@ -6,7 +6,12 @@ import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
+import '../../state/actions.dart';
 import '../../widgets/common.dart';
+import '../../widgets/settings_group.dart';
+import '../chat/composer_panels.dart' show StickerThumb;
+import '../chat/sticker_extras.dart' show customReactionEffectsProvider, emojiReactionProvider;
+import '../settings/privacy_screen.dart' show promptText;
 
 /// Telegram's default cap on different reactions under one message.
 const _maxReactionCount = 11;
@@ -70,13 +75,31 @@ class _ChatReactionsScreenState extends ConsumerState<ChatReactionsScreen> {
             padding: const EdgeInsets.all(12),
             child: Wrap(spacing: 6, runSpacing: 6, children: [
               for (final emoji in emojis)
-                FilterChip(
-                  label: Text(emoji, style: const TextStyle(fontSize: 22)),
-                  selected: _chosen.contains(emoji),
-                  onSelected: (on) => setState(() => _chosen = on ? {..._chosen, emoji} : ({..._chosen}..remove(emoji))),
+                // Telegram's own name for the reaction ("Thumbs Up", …) on long press.
+                Tooltip(
+                  message: ref.watch(emojiReactionProvider(emoji)).value?.title ?? emoji,
+                  child: FilterChip(
+                    label: Text(emoji, style: const TextStyle(fontSize: 22)),
+                    selected: _chosen.contains(emoji),
+                    onSelected: (on) => setState(() => _chosen = on ? {..._chosen, emoji} : ({..._chosen}..remove(emoji))),
+                  ),
                 ),
             ]),
           ),
+        if (_mode == 'all')
+          switch (ref.watch(customReactionEffectsProvider).value) {
+            final effects? when effects.isNotEmpty => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SectionHeader(s.t('reaction_effects')),
+                SizedBox(
+                  height: 72,
+                  child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 12), children: [
+                    for (final sticker in effects.take(20)) Padding(padding: const EdgeInsets.all(4), child: SizedBox.square(dimension: 60, child: StickerThumb(sticker: sticker))),
+                  ]),
+                ),
+                GroupHint(s.t('reaction_effects_hint')),
+              ]),
+            _ => const SizedBox.shrink(),
+          },
       ]),
     );
   }
@@ -118,4 +141,93 @@ Future<void> pickDiscussionGroup(BuildContext context, TelegramAccount account, 
     return true;
   });
   if (done == true && context.mounted) showToast(context, s.t('done'));
+}
+
+/// Admin: messages a group or channel sends to everyone who joins (add, edit, delete, clear all).
+class WelcomeMessagesScreen extends ConsumerStatefulWidget {
+  const WelcomeMessagesScreen({super.key, required this.chatId});
+
+  final int chatId;
+
+  @override
+  ConsumerState<WelcomeMessagesScreen> createState() => _WelcomeMessagesScreenState();
+}
+
+class _WelcomeMessagesScreenState extends ConsumerState<WelcomeMessagesScreen> {
+  late final TelegramAccount _account = ref.read(accountProvider);
+
+  @override
+  void initState() {
+    super.initState();
+    // The list arrives as updateChatWelcomeMessages.
+    _account.send<td.Ok>(td.LoadChatWelcomeMessages(chatId: widget.chatId)).catchError((Object error) {
+      if (mounted) showError(context, error);
+      return const td.Ok();
+    });
+  }
+
+  td.InputMessageContent _content(String text) => td.InputMessageText(text: formattedText(text), linkPreviewOptions: null, clearDraft: false);
+
+  Future<void> _add() async {
+    final s = context.s;
+    final text = await promptText(context, title: s.t('welcome_message_add'), label: s.t('message_hint'));
+    if (text == null || text.isEmpty || !mounted) return;
+    await guard(context, () => _account.send<td.Ok>(td.AddChatWelcomeMessage(chatId: widget.chatId, inputMessageContent: _content(text))));
+  }
+
+  Future<void> _edit(td.WelcomeMessage message) async {
+    final s = context.s;
+    final current = message.content is td.MessageText ? (message.content as td.MessageText).text.text : '';
+    final text = await promptText(context, title: s.t('edit'), label: s.t('message_hint'), initial: current);
+    if (text == null || text.isEmpty || !mounted) return;
+    await guard(
+      context,
+      () => _account.send<td.Ok>(td.EditChatWelcomeMessage(chatId: widget.chatId, welcomeMessageId: message.id, inputMessageContent: _content(text))),
+    );
+  }
+
+  Future<void> _delete(td.WelcomeMessage message) async {
+    if (!await confirm(context, title: context.t('delete'), destructive: true) || !mounted) return;
+    await guard(context, () => _account.send<td.Ok>(td.DeleteChatWelcomeMessage(chatId: widget.chatId, welcomeMessageId: message.id)));
+  }
+
+  Future<void> _deleteAll() async {
+    final s = context.s;
+    if (!await confirm(context, title: s.t('welcome_messages_delete_all'), destructive: true) || !mounted) return;
+    await guard(context, () => _account.send<td.Ok>(td.DeleteAllChatWelcomeMessages(chatId: widget.chatId)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    return ValueListenableBuilder<int>(
+      valueListenable: _account.welcomeMessagesRevision,
+      builder: (context, _, _) {
+        final messages = _account.welcomeMessages[widget.chatId];
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(s.t('welcome_messages')),
+            actions: [
+              if (messages?.isNotEmpty ?? false)
+                IconButton(icon: const Icon(Icons.delete_sweep_outlined), tooltip: s.t('welcome_messages_delete_all'), onPressed: _deleteAll),
+            ],
+          ),
+          floatingActionButton: FloatingActionButton(onPressed: _add, tooltip: s.t('welcome_message_add'), child: const Icon(Icons.add_rounded)),
+          body: messages == null
+              ? const Center(child: CircularProgressIndicator())
+              : messages.isEmpty
+                  ? Center(child: Padding(padding: const EdgeInsets.all(32), child: Text(s.t('welcome_messages_empty'), textAlign: TextAlign.center)))
+                  : ListView(children: [
+                      for (final message in messages)
+                        ListTile(
+                          leading: const Icon(Icons.waving_hand_outlined),
+                          title: Text(contentPreview(message.content, s) ?? '', maxLines: 3, overflow: TextOverflow.ellipsis),
+                          onTap: message.content is td.MessageText ? () => _edit(message) : null,
+                          trailing: IconButton(icon: const Icon(Icons.delete_outline_rounded), tooltip: s.t('delete'), onPressed: () => _delete(message)),
+                        ),
+                    ]),
+        );
+      },
+    );
+  }
 }

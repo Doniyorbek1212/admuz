@@ -15,6 +15,7 @@ import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../contacts/contacts_screen.dart';
 import '../settings/privacy_screen.dart' show pickOption, promptText;
+import 'conference_calls.dart';
 
 /// Whether the current user may start and manage video chats in [chat].
 bool canManageVideoChats(TelegramAccount account, td.Chat chat) => switch (account.myStatus(chat)) {
@@ -262,6 +263,18 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
         } else {
           await run(td.StartGroupCallRecording(groupCallId: call.id, title: call.title, recordVideo: false, usePortraitOrientation: false));
         }
+      case 'conference_link':
+        await shareConferenceLink(_session);
+      case 'conference_invite':
+        await inviteToConference(context, _session);
+      case 'conference_revoke':
+        await revokeConferenceLink(context, _session);
+      case 'messages_allowed':
+        await run(td.ToggleGroupCallAreMessagesAllowed(groupCallId: call.id, areMessagesAllowed: !call.areMessagesAllowed));
+      case 'paid_messages':
+        final text = await promptText(context, title: s.t('video_chat_paid_messages'), label: '⭐', keyboard: TextInputType.number, initial: '${call.paidMessageStarCount}');
+        final stars = int.tryParse(text ?? '');
+        if (stars != null && mounted) await run(td.SetGroupCallPaidMessageStarCount(groupCallId: call.id, paidMessageStarCount: stars));
       case 'link':
         final canSpeak = call.canBeManaged
             ? await pickOption<bool>(context, s.t('video_chat_invite_link'), {false: s.t('video_chat_invite_listener_link'), true: s.t('video_chat_invite_speaker_link')}, null)
@@ -315,6 +328,12 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
             if (p.isHandRaised && (_session.groupCall.canBeManaged || p.isCurrentUser))
               ListTile(leading: const Icon(Icons.back_hand_outlined), title: Text(s.t('video_chat_lower_hand')), onTap: () => Navigator.pop(context, 'lower_hand')),
             if (!p.isCurrentUser) ListTile(leading: const Icon(Icons.tune_rounded), title: Text(s.t('video_chat_volume')), onTap: () => Navigator.pop(context, 'volume')),
+            if (_session.isConference && _session.groupCall.isOwned && !p.isCurrentUser && p.participantId is td.MessageSenderUser)
+              ListTile(
+                leading: Icon(Icons.block_rounded, color: Theme.of(context).colorScheme.error),
+                title: Text(s.t('conference_ban'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                onTap: () => Navigator.pop(context, 'ban'),
+              ),
           ],
         ),
       ),
@@ -332,6 +351,8 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
         await run(td.ToggleGroupCallParticipantIsMuted(groupCallId: id, participantId: p.participantId, isMuted: true));
       case 'unmute_all' || 'unmute_me':
         await run(td.ToggleGroupCallParticipantIsMuted(groupCallId: id, participantId: p.participantId, isMuted: false));
+      case 'ban':
+        if (p.participantId case td.MessageSenderUser(:final userId)) await banFromConference(context, _session, userId);
       case 'lower_hand':
         await run(td.ToggleGroupCallParticipantIsHandRaised(groupCallId: id, participantId: p.participantId, isHandRaised: false));
       case 'volume':
@@ -339,6 +360,106 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
         // TDLib volume is in hundredths of a percent: 10000 = 100%.
         if (level != null && mounted) await run(td.SetGroupCallParticipantVolumeLevel(groupCallId: id, participantId: p.participantId, volumeLevel: level));
     }
+  }
+
+  /// The call's text chat: messages as they arrive, a field to write, and admin removal on long press.
+  Future<void> _openMessages() async {
+    final controller = TextEditingController();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.6,
+          child: ListenableBuilder(
+            listenable: _session,
+            builder: (context, _) {
+              final s = context.s;
+              final call = _session.groupCall;
+              final canWrite = call.canSendMessages && (call.areMessagesAllowed || call.canBeManaged);
+              return Column(children: [
+                Expanded(
+                  child: _session.messages.isEmpty
+                      ? Center(child: Text(s.t('video_chat_messages_empty')))
+                      : ListView(reverse: true, children: [
+                          for (final m in _session.messages.reversed)
+                            ListTile(
+                              dense: true,
+                              title: Text(_session.account.senderName(m.senderId), style: const TextStyle(fontWeight: FontWeight.w600)),
+                              subtitle: Text(m.text.text),
+                              trailing: m.paidMessageStarCount > 0 ? Text('${m.paidMessageStarCount} ⭐') : null,
+                              onLongPress: (m.canBeDeleted || call.canDeleteMessages) ? () => _messageMenu(m) : null,
+                            ),
+                        ]),
+                ),
+                if (canWrite)
+                  SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 4, 8),
+                      child: Row(children: [
+                        Expanded(
+                          child: TextField(
+                            controller: controller,
+                            maxLength: 128,
+                            decoration: InputDecoration(
+                              hintText: call.paidMessageStarCount > 0 ? s.t('paid_messages_cost', {'n': '${call.paidMessageStarCount}'}) : s.t('message_hint'),
+                              counterText: '',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.send_rounded),
+                          tooltip: s.t('send'),
+                          onPressed: () async {
+                            final text = controller.text.trim();
+                            if (text.isEmpty) return;
+                            final sent = await guard(context, () async {
+                              await _session.sendMessage(text);
+                              return true;
+                            });
+                            if (sent == true) controller.clear();
+                          },
+                        ),
+                      ]),
+                    ),
+                  )
+                else
+                  Padding(padding: const EdgeInsets.all(12), child: Text(s.t('video_chat_messages_off'), style: TextStyle(color: Theme.of(context).hintColor))),
+              ]);
+            },
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+  }
+
+  Future<void> _messageMenu(td.GroupCallMessage message) async {
+    final s = context.s;
+    var reportSpam = false;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(leading: const Icon(Icons.delete_outline_rounded), title: Text(s.t('delete')), onTap: () => Navigator.pop(context, 'one')),
+            if (_session.groupCall.canDeleteMessages)
+              ListTile(leading: const Icon(Icons.delete_sweep_outlined), title: Text(s.t('delete_all_from_user')), onTap: () => Navigator.pop(context, 'all')),
+            CheckboxListTile(value: reportSpam, title: Text(s.t('report_spam')), onChanged: (v) => setState(() => reportSpam = v ?? false)),
+          ]),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    await guard(
+      context,
+      () => _session.account.send<td.Ok>(action == 'one'
+          ? td.DeleteGroupCallMessages(groupCallId: _session.id, messageIds: [message.messageId], reportSpam: reportSpam)
+          : td.DeleteGroupCallMessagesBySender(groupCallId: _session.id, senderId: message.senderId, reportSpam: reportSpam)),
+    );
   }
 
   Future<int?> _pickVolume(int current) {
@@ -383,7 +504,7 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(call.title.isNotEmpty ? call.title : (chat?.title ?? s.t('video_chat'))),
+            Text(call.title.isNotEmpty ? call.title : (_session.isConference ? s.t('conference_call') : (chat?.title ?? s.t('video_chat')))),
             Text(
               [
                 s.count('video_chat_participants', call.participantCount),
@@ -394,17 +515,29 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
           ],
         ),
         actions: [
+          if (call.canSendMessages || call.areMessagesAllowed || _session.messages.isNotEmpty)
+            IconButton(icon: const Icon(Icons.chat_bubble_outline_rounded), tooltip: s.t('video_chat_messages'), onPressed: _openMessages),
           PopupMenuButton<String>(
             onSelected: _onMenu,
             itemBuilder: (context) => [
+              if (_session.isConference) ...[
+                PopupMenuItem(value: 'conference_link', child: Text(s.t('video_chat_invite_link'))),
+                PopupMenuItem(value: 'conference_invite', child: Text(s.t('video_chat_invite'))),
+                if (call.isOwned || call.canBeManaged) PopupMenuItem(value: 'conference_revoke', child: Text(s.t('conference_revoke_link'))),
+              ],
+              if (call.canToggleAreMessagesAllowed)
+                CheckedPopupMenuItem(value: 'messages_allowed', checked: call.areMessagesAllowed, child: Text(s.t('video_chat_messages_allowed'))),
+              if (call.canBeManaged) PopupMenuItem(value: 'paid_messages', child: Text(s.t('video_chat_paid_messages'))),
               if (call.canBeManaged) PopupMenuItem(value: 'title', child: Text(s.t('video_chat_title_edit'))),
               if (call.canToggleMuteNewParticipants)
                 CheckedPopupMenuItem(value: 'mute_new', checked: call.muteNewParticipants, child: Text(s.t('video_chat_mute_new'))),
               if (call.canBeManaged) PopupMenuItem(value: 'record', child: Text(s.t(call.recordDuration > 0 ? 'video_chat_record_stop' : 'video_chat_record_start'))),
-              PopupMenuItem(value: 'link', child: Text(s.t('video_chat_invite_link'))),
-              PopupMenuItem(value: 'invite', child: Text(s.t('video_chat_invite'))),
-              PopupMenuItem(value: 'display_as', child: Text(s.t('video_chat_display_as'))),
-              if (call.canBeManaged) PopupMenuItem(value: 'rtmp', child: Text(s.t('video_chat_rtmp'))),
+              if (!_session.isConference) ...[
+                PopupMenuItem(value: 'link', child: Text(s.t('video_chat_invite_link'))),
+                PopupMenuItem(value: 'invite', child: Text(s.t('video_chat_invite'))),
+                PopupMenuItem(value: 'display_as', child: Text(s.t('video_chat_display_as'))),
+                if (call.canBeManaged) PopupMenuItem(value: 'rtmp', child: Text(s.t('video_chat_rtmp'))),
+              ],
             ],
           ),
         ],

@@ -15,18 +15,33 @@ String participantKey(td.MessageSender sender) => switch (sender) {
       _ => '',
     };
 
-/// A joined video chat (voice chat of a group or channel), audio only.
+/// A joined video chat (voice chat of a group or channel) or a conference call (no chat), audio only.
 ///
 /// One peer connection to Telegram's SFU: the first m-line sends our microphone, each further m-line
 /// receives one participant's audio SSRC. Participant changes renegotiate locally (offer from us,
 /// answer synthesized from the join transport), the SFU itself is told nothing beyond the join.
 /// shortcut: no participant video or screen sharing yet (needs simulcast SSRC groups and colibri constraints).
 class GroupCallSession extends ChangeNotifier {
-  GroupCallSession(this.account, this.chatId, this.groupCall);
+  GroupCallSession(this.account, this.chatId, td.GroupCall call) : groupCall = call;
+
+  GroupCallSession._conference(this.account) : chatId = 0;
 
   final TelegramAccount account;
+
+  /// 0 for conference calls, which belong to no chat.
   final int chatId;
-  td.GroupCall groupCall;
+  late td.GroupCall groupCall;
+
+  /// How a conference call is re-entered after needRejoin (its invite link).
+  td.InputGroupCall? _conferenceInput;
+
+  /// Text chat of the call, oldest first.
+  final List<td.GroupCallMessage> messages = [];
+
+  bool get isConference => chatId == 0;
+
+  /// The call of a live story: joined with joinLiveStory instead of joinVideoChat.
+  bool liveStory = false;
 
   /// Participants by [participantKey], kept sorted by TDLib's order in [sortedParticipants].
   final Map<String, td.GroupCallParticipant> participants = {};
@@ -56,8 +71,47 @@ class GroupCallSession extends ChangeNotifier {
 
   /// Joins with the microphone muted, like Telegram does.
   Future<void> join({String inviteHash = ''}) async {
+    if (isConference) return _joinConference(_conferenceInput);
     // TDLib sends participant updates only for calls fetched with getGroupCall.
     groupCall = await account.send<td.GroupCall>(td.GetGroupCall(groupCallId: id));
+    await _connect(
+      (params) async => (await account.send<td.Text>(
+        liveStory ? td.JoinLiveStory(groupCallId: id, joinParameters: params) : td.JoinVideoChat(groupCallId: id, joinParameters: params, inviteHash: inviteHash),
+      ))
+          .text,
+    );
+    await _afterJoin();
+  }
+
+  /// Creates a new conference call ([input] null) or joins one by link or by its chat message.
+  static Future<GroupCallSession> conference(TelegramAccount account, {td.InputGroupCall? input}) async {
+    final session = GroupCallSession._conference(account);
+    try {
+      await session._joinConference(input);
+    } on Object {
+      session.dispose();
+      rethrow;
+    }
+    return session;
+  }
+
+  /// shortcut: conference calls are end-to-end encrypted in official apps (frames go through
+  /// Encrypt/DecryptGroupCallData); flutter_webrtc has no hook for that, so their audio may not decode.
+  Future<void> _joinConference(td.InputGroupCall? input) async {
+    late td.GroupCallInfo info;
+    await _connect((params) async {
+      info = await account.send<td.GroupCallInfo>(
+        input == null ? td.CreateGroupCall(joinParameters: params) : td.JoinGroupCall(inputGroupCall: input, joinParameters: params),
+      );
+      return info.joinPayload;
+    });
+    groupCall = await account.send<td.GroupCall>(td.GetGroupCall(groupCallId: info.groupCallId));
+    if (groupCall.inviteLink.isNotEmpty) _conferenceInput = td.InputGroupCallLink(link: groupCall.inviteLink);
+    await _afterJoin();
+  }
+
+  /// Opens the peer connection and hands our parameters to [joinRequest], which returns the SFU's transport JSON.
+  Future<void> _connect(Future<String> Function(td.GroupCallJoinParameters) joinRequest) async {
     _local = await navigator.mediaDevices.getUserMedia({
       'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
       'video': false,
@@ -69,19 +123,33 @@ class GroupCallSession extends ChangeNotifier {
     await pc.addTransceiver(track: track, kind: RTCRtpMediaType.RTCRtpMediaTypeAudio, init: RTCRtpTransceiverInit(direction: TransceiverDirection.SendOnly, streams: [_local!]));
     final offer = await _localOffer();
     _sendMid = offer.mids.first;
-    final response = await account.send<td.Text>(td.JoinVideoChat(
-      groupCallId: id,
-      joinParameters: td.GroupCallJoinParameters(audioSourceId: signedSsrc(offer.audioSsrc), payload: buildJoinPayload(offer), isMuted: muted, isMyVideoEnabled: false),
-      inviteHash: inviteHash,
-    ));
-    _transport = GroupJoinTransport.parse(response.text);
+    final response = await joinRequest(
+      td.GroupCallJoinParameters(audioSourceId: signedSsrc(offer.audioSsrc), payload: buildJoinPayload(offer), isMuted: muted, isMyVideoEnabled: false),
+    );
+    _transport = GroupJoinTransport.parse(response);
     await pc.setRemoteDescription(RTCSessionDescription(_answer(offer.mids), 'answer'));
     await Helper.setSpeakerphoneOn(speaker);
+  }
+
+  Future<void> _afterJoin() async {
     joined = true;
     _levelTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => unawaited(_pollLevels()));
     _notify();
     await account.send<td.Ok>(td.LoadGroupCallParticipants(groupCallId: id, limit: 100));
   }
+
+  void onMessage(td.GroupCallMessage message) {
+    messages.add(message);
+    _notify();
+  }
+
+  void onMessagesDeleted(List<int> ids) {
+    messages.removeWhere((m) => ids.contains(m.messageId));
+    _notify();
+  }
+
+  Future<void> sendMessage(String text) =>
+      account.send<td.Ok>(td.SendGroupCallMessage(groupCallId: id, text: td.FormattedText(text: text, entities: const []), paidMessageStarCount: groupCall.paidMessageStarCount));
 
   Future<LocalOfferInfo> _localOffer() async {
     final pc = _pc!;

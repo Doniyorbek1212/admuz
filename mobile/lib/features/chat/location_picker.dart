@@ -10,6 +10,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/map_thumbnail.dart';
+import '../settings/misc_extras.dart' show currentWeatherProvider;
 
 /// What [LocationPickerScreen] returns.
 sealed class LocationChoice {
@@ -177,7 +178,14 @@ class _LocationPickerScreenState extends ConsumerState<LocationPickerScreen> {
                   enabled: pin != null,
                   leading: CircleAvatar(backgroundColor: theme.colorScheme.primary, child: const Icon(Icons.location_on_rounded, color: Colors.white)),
                   title: Text(s.t('send_selected_location')),
-                  subtitle: pin == null ? null : Text('${pin.$1.toStringAsFixed(5)}, ${pin.$2.toStringAsFixed(5)}'),
+                  subtitle: pin == null
+                      ? null
+                      : Text([
+                          '${pin.$1.toStringAsFixed(5)}, ${pin.$2.toStringAsFixed(5)}',
+                          // Weather at the pin, from Telegram (as on location stickers in stories).
+                          if (ref.watch(currentWeatherProvider((double.parse(pin.$1.toStringAsFixed(2)), double.parse(pin.$2.toStringAsFixed(2))))).value case final w?)
+                            '${w.emoji} ${w.temperature.round()}°C',
+                        ].join('   ')),
                   onTap: pin == null ? null : () => Navigator.pop(context, PointChoice(pin.$1, pin.$2)),
                 ),
                 if (here != null)

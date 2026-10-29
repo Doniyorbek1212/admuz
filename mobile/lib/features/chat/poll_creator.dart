@@ -9,6 +9,7 @@ typedef PollDraft = ({
   List<String> options,
   bool anonymous,
   bool multiple,
+  bool allowAdding,
   int? correctOption,
   String explanation,
 });
@@ -29,6 +30,7 @@ class _PollCreatorScreenState extends State<PollCreatorScreen> {
   final List<TextEditingController> _options = [TextEditingController(), TextEditingController()];
   bool _anonymous = true;
   bool _multiple = false;
+  bool _allowAdding = false;
   bool _quiz = false;
   int? _correct;
 
@@ -73,6 +75,7 @@ class _PollCreatorScreenState extends State<PollCreatorScreen> {
       options: [for (final i in kept) _options[i].text.trim()],
       anonymous: _anonymous,
       multiple: _multiple && !_quiz,
+      allowAdding: _allowAdding && !_quiz,
       correctOption: _quiz && correct != null ? kept.indexOf(correct) : null,
       explanation: _quiz ? _explanation.text.trim() : '',
     ));
@@ -143,6 +146,12 @@ class _PollCreatorScreenState extends State<PollCreatorScreen> {
             title: Text(s.t('poll_multiple')),
             value: _multiple && !_quiz,
             onChanged: _quiz ? null : (value) => setState(() => _multiple = value),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(s.t('poll_allow_adding')),
+            value: _allowAdding && !_quiz,
+            onChanged: _quiz ? null : (value) => setState(() => _allowAdding = value),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,

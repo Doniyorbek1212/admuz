@@ -68,6 +68,8 @@ class _SavedTopicsScreenState extends ConsumerState<SavedTopicsScreen> {
               title: Text(s.t(topic.isPinned ? 'unpin' : 'pin')),
               onTap: () => Navigator.pop(context, 'pin'),
             ),
+            if (topic.isPinned) ListTile(leading: const Icon(Icons.swap_vert_rounded), title: Text(s.t('pinned_reorder')), onTap: () => Navigator.pop(context, 'order')),
+            ListTile(leading: const Icon(Icons.date_range_rounded), title: Text(s.t('clear_by_date')), onTap: () => Navigator.pop(context, 'by_date')),
             ListTile(
               leading: Icon(Icons.delete_outline_rounded, color: Theme.of(context).colorScheme.error),
               title: Text(s.t('delete'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -78,6 +80,25 @@ class _SavedTopicsScreenState extends ConsumerState<SavedTopicsScreen> {
       ),
     );
     if (!mounted) return;
+    if (action == 'order') {
+      await _reorderPinned();
+      return;
+    }
+    if (action == 'by_date') {
+      final range = await showDateRangePicker(context: context, firstDate: DateTime(2013, 8), lastDate: DateTime.now(), helpText: s.t('clear_by_date'), saveText: s.t('delete'));
+      if (range == null || !mounted) return;
+      final ok = await confirm(context, title: title, message: s.t('clear_history_confirm'), destructive: true);
+      if (!ok || !mounted) return;
+      await guard(
+        context,
+        () => account.send<td.Ok>(td.DeleteSavedMessagesTopicMessagesByDate(
+          savedMessagesTopicId: topic.id,
+          minDate: range.start.millisecondsSinceEpoch ~/ 1000,
+          maxDate: DateTime(range.end.year, range.end.month, range.end.day, 23, 59, 59).millisecondsSinceEpoch ~/ 1000,
+        )),
+      );
+      return;
+    }
     if (action == 'pin') {
       await guard(context, () => account.send<td.Ok>(td.ToggleSavedMessagesTopicIsPinned(savedMessagesTopicId: topic.id, isPinned: !topic.isPinned)));
     } else if (action == 'delete') {
@@ -89,6 +110,35 @@ class _SavedTopicsScreenState extends ConsumerState<SavedTopicsScreen> {
       });
       if (done == true && mounted) setState(() => _topics.remove(topic.id));
     }
+  }
+
+  Future<void> _reorderPinned() async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    var pinned = _topics.values.where((t) => t.isPinned && t.order != 0).toList()..sort((a, b) => b.order.compareTo(a.order));
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+            child: ReorderableListView(
+              shrinkWrap: true,
+              onReorderItem: (from, to) {
+                setSheetState(() => pinned = [...pinned]..insert(to, pinned.removeAt(from)));
+                guard(context, () => account.send<td.Ok>(td.SetPinnedSavedMessagesTopics(savedMessagesTopicIds: [for (final t in pinned) t.id])));
+              },
+              children: [
+                for (final t in pinned)
+                  ListTile(key: ValueKey(t.id), title: Text(savedTopicTitle(t, account, s)), trailing: const Icon(Icons.drag_handle_rounded)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -204,7 +254,26 @@ class _SavedTopicMessagesScreenState extends ConsumerState<SavedTopicMessagesScr
     final account = ref.watch(accountProvider);
     final messages = _messages;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            tooltip: s.t('go_to_date'),
+            icon: const Icon(Icons.calendar_month_rounded),
+            onPressed: () async {
+              final picked = await showDatePicker(context: context, firstDate: DateTime(2013, 8), lastDate: DateTime.now(), initialDate: DateTime.now());
+              if (picked == null || !context.mounted) return;
+              final message = await guard(
+                context,
+                () => account.send<td.Message>(
+                  td.GetSavedMessagesTopicMessageByDate(savedMessagesTopicId: widget.topic.id, date: DateTime(picked.year, picked.month, picked.day, 23, 59, 59).millisecondsSinceEpoch ~/ 1000),
+                ),
+              );
+              if (message != null && context.mounted) Navigator.pop(context, message.id);
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(

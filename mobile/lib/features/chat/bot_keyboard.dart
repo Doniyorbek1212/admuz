@@ -20,6 +20,7 @@ import '../webapp/web_app_screen.dart';
 import 'forward_picker.dart';
 import 'link_router.dart';
 import 'message_content.dart';
+import 'payments.dart';
 
 /// Called when a button wants text placed in the composer ("@bot query" for switch-inline buttons).
 typedef InsertText = void Function(String text);
@@ -316,6 +317,8 @@ Future<String> payInputInvoice(BuildContext context, TelegramAccount account, td
       }
       if (result.success) showToast(context, s.t('payment_done'));
       return result.success ? 'paid' : 'failed';
+    case td.PaymentFormTypeRegular() && final regular:
+      return payRegularInvoice(context, account, invoice, form, regular);
     default:
       showToast(context, s.t('payment_card_unsupported'));
       return 'failed';
@@ -381,7 +384,15 @@ class ReplyKeyboardPanel extends ConsumerWidget {
         // Poll picker: send the label so the bot can fall back to text handling.
         await onSendText(button.text);
     }
-    if (keyboard.oneTime) onHide();
+    if (keyboard.oneTime) {
+      onHide();
+      // A used one-time keyboard is dropped from the chat, so it doesn't come back on the next open.
+      try {
+        await account.send<td.Ok>(td.DeleteChatReplyMarkup(chatId: chat.id, messageId: markupMessage.id));
+      } on TdException catch (error) {
+        debugPrint('reply markup not deleted: $error');
+      }
+    }
   }
 
   @override

@@ -11,6 +11,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import 'message_content.dart';
+import 'sticker_extras.dart' show StickerOutlinePlaceholder;
 import 'sticker_sets.dart';
 
 // ------------------------------------------------------------------ mentions
@@ -277,8 +278,12 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
   List<td.Sticker> _recent = const [];
   List<td.Sticker> _favorite = const [];
   final Map<int, List<td.Sticker>> _setStickers = {};
+  List<td.EmojiCategory> _categories = const [];
+  List<td.Sticker> _found = const [];
+  bool _searching = false;
+  Future<td.Emojis>? _stickerEmojis;
 
-  /// -1 = recent, -2 = favorites, otherwise a sticker set id.
+  /// -1 = recent, -2 = favorites, -3 = search / category results, otherwise a sticker set id.
   int _selected = -1;
   bool _loaded = false;
 
@@ -304,9 +309,32 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
         if (_recent.isEmpty) _selected = _favorite.isNotEmpty ? -2 : (_sets.isNotEmpty ? _sets.first.id : -1);
       });
       if (_selected > 0) await _openSet(_selected);
+      final categories = await account.send<td.EmojiCategories>(const td.GetEmojiCategories(type: td.EmojiCategoryTypeRegularStickers()));
+      if (mounted) setState(() => _categories = categories.categories);
     } on TdException catch (error) {
       debugPrint('stickers unavailable: $error');
       if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  /// Telegram's sticker search: by emoji (categories) or by keyword in the user's language.
+  Future<void> _search({String emojis = '', String query = ''}) async {
+    setState(() {
+      _selected = -3;
+      _found = const [];
+    });
+    try {
+      final found = await ref.read(accountProvider).send<td.Stickers>(td.SearchStickers(
+        stickerType: const td.StickerTypeRegular(),
+        emojis: emojis,
+        query: query,
+        inputLanguageCodes: [Localizations.localeOf(context).languageCode],
+        offset: 0,
+        limit: 100,
+      ));
+      if (mounted && _selected == -3) setState(() => _found = found.stickers);
+    } on TdException catch (error) {
+      debugPrint('sticker search failed: $error');
     }
   }
 
@@ -324,6 +352,7 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
   List<td.Sticker> get _current => switch (_selected) {
         -1 => _recent,
         -2 => _favorite,
+        -3 => _found,
         _ => _setStickers[_selected] ?? const [],
       };
 
@@ -359,8 +388,18 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
                 },
                 child: const SizedBox(width: 44, child: Icon(Icons.tune_rounded)),
               ),
+              InkWell(
+                onTap: () => setState(() => _searching = !_searching),
+                child: SizedBox(width: 44, child: Icon(Icons.search_rounded, color: _searching ? primary : null)),
+              ),
               tab(-1, const Icon(Icons.access_time_rounded)),
               if (_favorite.isNotEmpty) tab(-2, const Icon(Icons.star_rounded)),
+              for (final category in _categories)
+                if (category.source case td.EmojiCategorySourceSearch(:final emojis))
+                  Tooltip(
+                    message: category.name,
+                    child: InkWell(onTap: () => _search(emojis: emojis.join()), child: SizedBox(width: 40, child: Padding(padding: const EdgeInsets.all(8), child: StickerThumb(sticker: category.icon)))),
+                  ),
               for (final set in _sets)
                 tab(
                   set.id,
@@ -369,6 +408,34 @@ class _StickersTabState extends ConsumerState<_StickersTab> with AutomaticKeepAl
             ],
           ),
         ),
+        if (_searching)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+            child: TextField(
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(isDense: true, hintText: context.t('sticker_search'), prefixIcon: const Icon(Icons.search_rounded, size: 20), border: const OutlineInputBorder()),
+              onSubmitted: (value) => value.trim().isEmpty ? null : _search(query: value.trim()),
+            ),
+          ),
+        // Every emoji that has stickers: one tap searches by it.
+        if (_searching)
+          SizedBox(
+            height: 40,
+            child: FutureBuilder<td.Emojis>(
+              future: _stickerEmojis ??= ref
+                  .read(accountProvider)
+                  .send<td.Emojis>(const td.GetAllStickerEmojis(stickerType: td.StickerTypeRegular(), query: '', chatId: 0, returnOnlyMainEmoji: true)),
+              builder: (context, snapshot) => ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                children: [
+                  for (final emoji in snapshot.data?.emojis ?? const <String>[])
+                    InkWell(onTap: () => _search(emojis: emoji), child: Padding(padding: const EdgeInsets.all(6), child: Text(emoji, style: const TextStyle(fontSize: 22)))),
+                ],
+              ),
+            ),
+          ),
         const Divider(height: 1),
         Expanded(
           child: stickers.isEmpty
@@ -444,7 +511,10 @@ class StickerThumb extends StatelessWidget {
     if (thumb != null && thumb.format is! td.ThumbnailFormatTgs && thumb.format is! td.ThumbnailFormatWebm) {
       return TdImage(file: thumb.file, fit: BoxFit.contain);
     }
-    return Center(child: Text(sticker.emoji, style: const TextStyle(fontSize: 34)));
+    // No still preview (animated packs): the sticker's silhouette instead of a bare emoji.
+    return LayoutBuilder(
+      builder: (context, box) => StickerOutlinePlaceholder(sticker: sticker, size: box.biggest.shortestSide.isFinite ? box.biggest.shortestSide : 64, useSvgPath: true),
+    );
   }
 }
 

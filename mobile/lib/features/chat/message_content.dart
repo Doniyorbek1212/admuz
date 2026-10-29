@@ -16,6 +16,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/file_guard.dart';
 import '../../core/link_safety.dart';
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../core/live_location.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
@@ -29,11 +30,19 @@ import '../../widgets/custom_emoji.dart';
 import '../../widgets/map_thumbnail.dart';
 import '../home/home_screen.dart';
 import '../search/search_screen.dart';
+import '../settings/misc_extras.dart' show SpeechRatingRow;
+import '../settings/gifts_extras.dart' show GiftPurchaseOfferCard;
+import '../settings/stars_extras.dart' show GiveawayCard;
+import 'payments.dart' show showBankCardInfo;
+import 'sticker_extras.dart' show StickerOutlinePlaceholder;
 import 'bot_keyboard.dart';
 import 'link_router.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
 import 'message_extras.dart';
+import 'message_tools.dart';
+import 'rich_message.dart';
+import '../calls/conference_calls.dart' show GroupCallMessageView;
 import 'sticker_sets.dart';
 import 'video_note_view.dart';
 
@@ -141,6 +150,8 @@ class _FormattedTextViewState extends State<FormattedTextView> {
         return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'mailto', path: part))));
       case td.TextEntityTypePhoneNumber():
         return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'tel', path: part))));
+      case td.TextEntityTypeBankCardNumber():
+        return TextSpan(text: part, style: link, recognizer: _tap(() => showBankCardInfo(context, ProviderScope.containerOf(context, listen: false).read(accountProvider), part)));
       case td.TextEntityTypeMention():
         return TextSpan(
           text: part,
@@ -237,10 +248,15 @@ class MessageMedia extends ConsumerWidget {
       td.MessageVenue(:final venue) =>
         _LocationView(latitude: venue.location.latitude, longitude: venue.location.longitude, title: venue.title, subtitle: venue.address),
       td.MessageContact(:final contact) => _ContactView(contact: contact),
-      td.MessagePoll(:final poll) => PollView(message: message, poll: poll),
+      td.MessagePoll(:final poll, :final canAddOption) => PollView(message: message, poll: poll, canAddOption: canAddOption),
+      td.MessageGiveaway() && final giveaway => GiveawayCard(message: message, giveaway: giveaway),
+      td.MessageUpgradedGiftPurchaseOffer() && final offer => GiftPurchaseOfferCard(message: message, offer: offer),
       td.MessageChecklist(:final list) => ChecklistView(message: message, checklist: list),
+      td.MessageRichMessage(message: final rich) => RichMessageView(message: message, rich: rich),
+      final td.MessageGroupCall call => GroupCallMessageView(message: message, call: call),
       td.MessageCall(:final isVideo, :final duration) => _CallView(isVideo: isVideo, duration: duration, outgoing: message.isOutgoing),
       td.MessageInvoice() => InvoiceView(message: message),
+      td.MessageAnimatedEmoji(:final animatedEmoji) when animatedEmoji.sticker != null => _AnimatedEmojiView(message: message, sticker: animatedEmoji.sticker!),
       td.MessageAnimatedEmoji(:final emoji) || td.MessageDice(:final emoji) =>
         Text(emoji, style: const TextStyle(fontSize: 56)),
       _ => const SizedBox.shrink(),
@@ -557,25 +573,57 @@ final _fileStateProvider = StreamProvider.autoDispose.family<td.File, int>((ref,
   return ref.watch(accountProvider).fileUpdates(fileId);
 });
 
-class _StickerView extends ConsumerWidget {
-  const _StickerView({required this.sticker});
+/// Big animated emoji; a tap plays Telegram's full-screen effect and tells the chat partner (ClickAnimatedEmojiMessage).
+class _AnimatedEmojiView extends ConsumerWidget {
+  const _AnimatedEmojiView({required this.message, required this.sticker});
 
+  final td.Message message;
   final td.Sticker sticker;
 
-  static const size = 160.0;
+  Future<void> _play(BuildContext context, WidgetRef ref) async {
+    td.Sticker? effect;
+    try {
+      effect = await ref.read(accountProvider).send<td.Sticker>(td.ClickAnimatedEmojiMessage(chatId: message.chatId, messageId: message.id));
+    } on TdException {
+      effect = null; // 404: this emoji has no effect.
+    }
+    if (effect == null || !context.mounted) return;
+    await ref.read(accountProvider).send<td.File>(td.DownloadFile(fileId: effect.sticker.id, priority: 32, offset: 0, limit: 0, synchronous: true));
+    if (!context.mounted) return;
+    final shown = effect;
+    final overlay = OverlayEntry(builder: (_) => IgnorePointer(child: Center(child: _StickerView(sticker: shown, size: 320, repeat: false))));
+    Overlay.of(context).insert(overlay);
+    await Future<void>.delayed(const Duration(seconds: 3));
+    overlay.remove();
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) =>
+      GestureDetector(onTap: () => _play(context, ref), child: _StickerView(sticker: sticker, size: 120, tappable: false));
+}
+
+class _StickerView extends ConsumerWidget {
+  const _StickerView({required this.sticker, this.size = 160, this.repeat = true, this.tappable = true});
+
+  final td.Sticker sticker;
+  final double size;
+  final bool repeat;
+
+  /// False when the parent handles taps (animated emoji), so the set sheet does not open.
+  final bool tappable;
 
   Widget _fallback() {
     final thumb = sticker.thumbnail;
     if (thumb != null && thumb.format is! td.ThumbnailFormatTgs && thumb.format is! td.ThumbnailFormatWebm) {
       return TdImage(file: thumb.file, width: size, height: size, fit: BoxFit.contain);
     }
-    return SizedBox.square(dimension: size, child: Center(child: Text(sticker.emoji, style: const TextStyle(fontSize: 96))));
+    return StickerOutlinePlaceholder(sticker: sticker, size: size);
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final content = _content(ref);
-    if (sticker.setId == 0) return content;
+    if (sticker.setId == 0 || !tappable) return content;
     return GestureDetector(onTap: () => showStickerSetSheet(context, sticker.setId), child: content);
   }
 
@@ -601,7 +649,7 @@ class _StickerView extends ConsumerWidget {
                 width: size,
                 height: size,
                 fit: BoxFit.contain,
-                repeat: true,
+                repeat: repeat,
                 animate: animate,
                 errorBuilder: (_, _, _) => _fallback(),
               )
@@ -936,8 +984,10 @@ class VoiceNoteView extends ConsumerWidget {
             );
           },
         ),
-        if (recognition is td.SpeechRecognitionResultText)
-          Padding(padding: const EdgeInsets.only(top: 6), child: Text(recognition.text))
+        if (recognition is td.SpeechRecognitionResultText) ...[
+          Padding(padding: const EdgeInsets.only(top: 6), child: Text(recognition.text)),
+          SpeechRatingRow(message: message),
+        ]
         else if (recognition is td.SpeechRecognitionResultPending)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -1107,10 +1157,11 @@ class WaveformPainter extends CustomPainter {
 // ------------------------------------------------------------------ polls
 
 class PollView extends ConsumerWidget {
-  const PollView({super.key, required this.message, required this.poll});
+  const PollView({super.key, required this.message, required this.poll, this.canAddOption = false});
 
   final td.Message message;
   final td.Poll poll;
+  final bool canAddOption;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1143,6 +1194,7 @@ class PollView extends ConsumerWidget {
                           : (poll.allowsMultipleAnswers ? [...chosen, i] : [i]);
                       guard(context, () => account.vote(message, next));
                     },
+              onLongPress: () => showPollOptionMenu(context, account, message, poll.options[i]),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 5),
                 child: Column(
@@ -1191,6 +1243,12 @@ class PollView extends ConsumerWidget {
             if (poll.canGetVoters && poll.totalVoterCount > 0)
               TextButton(onPressed: () => showPollVoters(context, account, message, poll), child: Text(s.t('poll_view_votes'))),
           ]),
+          if (canAddOption && !poll.isClosed)
+            TextButton.icon(
+              onPressed: () => addPollOption(context, account, message),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: Text(s.t('poll_add_option')),
+            ),
         ],
       ),
     );

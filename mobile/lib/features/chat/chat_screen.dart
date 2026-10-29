@@ -23,21 +23,28 @@ import '../../widgets/message_context_menu.dart';
 import '../../widgets/playback_bar.dart';
 import '../../widgets/swipe_to_reply.dart';
 import '../home/home_screen.dart';
+import '../profile/profile_media.dart' show isProfileAudio, toggleProfileAudio;
+import 'sticker_extras.dart';
 import '../profile/chat_info_screen.dart';
 import '../settings/wallpaper.dart';
 import 'bot_keyboard.dart';
 import '../calls/video_chat_screen.dart';
 import 'call_options.dart';
+import '../settings/business_extras.dart' show BusinessBotBar;
+import 'chat_action_bar.dart';
 import 'chat_search_screen.dart';
 import 'composer.dart';
 import 'forward_picker.dart';
 import 'link_router.dart';
 import 'marked_messages_screen.dart';
 import 'saved_topics_screen.dart';
+import 'media_calendar.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
 import 'message_bubble.dart';
 import 'message_content.dart';
+import '../calls/conference_calls.dart' show PendingBotMessageBar;
+import 'message_tools.dart';
 import 'message_extras.dart';
 import 'scheduled_screen.dart';
 import 'sponsored_bubble.dart';
@@ -128,7 +135,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final chat = _account.chats[widget.chatId];
     if (chat == null || chat.replyMarkupMessageId == 0 || _account.replyMarkupMessages.containsKey(chat.id)) return;
     try {
-      final message = await _account.send<td.Message>(td.GetMessage(chatId: chat.id, messageId: chat.replyMarkupMessageId));
+      td.Message message;
+      try {
+        message = await _account.send<td.Message>(td.GetMessageLocally(chatId: chat.id, messageId: chat.replyMarkupMessageId));
+      } on TdException {
+        message = await _account.send<td.Message>(td.GetMessage(chatId: chat.id, messageId: chat.replyMarkupMessageId));
+      }
       _account.replyMarkupMessages[chat.id] = message;
       if (mounted) setState(() {});
     } on TdException catch (error) {
@@ -232,6 +244,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final hasVersions = _account.archive.versionsOf(message.chatId, message.id).isNotEmpty;
     final marked = ref.read(markedMessagesProvider.notifier).isMarked(message.chatId, message.id);
     td.MessageProperties? props;
+    var onProfile = false;
+    if (message.content case td.MessageAudio(:final audio) when !deleted) onProfile = await isProfileAudio(_account, audio.audio.id);
     List<String> reactions = const ['👍', '❤', '🔥', '🥰', '👏', '😁', '🤔', '😢', '🎉', '🙏'];
     if (!deleted) {
       try {
@@ -266,7 +280,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         : <_MenuEntry>[
       if (failed) (Icons.refresh_rounded, s.t('retry'), 'retry'),
       if (props?.canBeReplied ?? true) (Icons.reply_rounded, s.t('reply'), 'reply'),
+      if ((props?.canBeReplied ?? true) && text.length > 1) (Icons.format_quote_rounded, s.t('reply_quote'), 'quote'),
       if (text.isNotEmpty && (props?.canBeCopied ?? true)) (Icons.copy_rounded, s.t('copy'), 'copy'),
+      if ((captionOf(message.content)?.entities.isNotEmpty ?? false) && (props?.canBeCopied ?? true))
+        (Icons.format_bold_rounded, s.t('copy_markdown'), 'copy_markdown'),
+      if (message.ephemeralContent != null) (Icons.auto_delete_outlined, s.t('ephemeral_delete'), 'ephemeral_delete'),
       if (text.isNotEmpty) (Icons.translate_rounded, s.t('translate'), 'translate'),
       if (text.length > 300) (Icons.summarize_rounded, s.t('ai_summarize'), 'summarize'),
       if (props?.canBeEdited ?? false) (Icons.edit_rounded, s.t('edit'), 'edit'),
@@ -281,12 +299,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if ((props?.canGetViewers ?? false) || (props?.canGetReadDate ?? false)) (Icons.done_all_rounded, s.t('seen'), 'seen'),
       if (message.content case td.MessagePoll(:final poll) when !poll.isClosed && (props?.canBeEdited ?? false))
         (Icons.stop_circle_outlined, s.t('stop_poll'), 'stop_poll'),
+      if (message.content is td.MessageChecklist && (props?.canBeEdited ?? false)) (Icons.edit_note_rounded, s.t('checklist_edit'), 'edit_checklist'),
+      if (message.content is td.MessageChecklist && (props?.canAddTasks ?? false)) (Icons.playlist_add_rounded, s.t('checklist_add_task'), 'add_tasks'),
+      if (_account.isChannel(chat) && !message.isOutgoing && message.isChannelPost) (Icons.star_rounded, s.t('paid_reaction'), 'paid_reaction'),
+      if (props?.canGetAuthor ?? false) (Icons.person_search_rounded, s.t('message_author'), 'author'),
+      if (props?.canGetEmbeddingCode ?? false) (Icons.code_rounded, s.t('embed_code'), 'embed'),
+      if (props?.canSetFactCheck ?? false) (Icons.fact_check_outlined, s.t('fact_check'), 'fact_check'),
+      if (chat.id == repliesBotUserId && message.forwardInfo != null) (Icons.block_rounded, s.t('block_user'), 'block_replies'),
       if (!blockedFile && message.content is td.MessageAnimation) (Icons.gif_box_outlined, s.t('save_gif'), 'save_gif'),
       if (text.isNotEmpty) (Icons.share_rounded, s.t('share'), 'share'),
       if (!blockedFile && _isGalleryMedia(message) && (props?.canBeSaved ?? message.canBeSaved))
         (Icons.download_rounded, s.t('save_to_gallery'), 'save'),
       if (!blockedFile && (message.content is td.MessageDocument || message.content is td.MessageAudio))
         (Icons.file_download_outlined, s.t('download'), 'download'),
+      if (message.content is td.MessageAudio)
+        (onProfile ? Icons.playlist_remove_rounded : Icons.playlist_add_rounded, s.t(onProfile ? 'profile_audio_remove' : 'profile_audio_add'), 'profile_audio'),
       (Icons.check_circle_outline_rounded, s.t('select'), 'select'),
       if ((message.interactionInfo?.reactions?.reactions.isNotEmpty ?? false) && !_account.isChannel(chat))
         (Icons.favorite_border_rounded, s.t('reactions_who'), 'reactions_who'),
@@ -382,7 +409,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     switch (action) {
       case 'retry':
         await guard(context, () => _account.resend(message));
+      case 'quote':
+        final quote = await pickReplyQuote(context, _account, message);
+        if (quote == null || !mounted) return;
+        pendingReplyQuotes[message.id] = quote;
+        setState(() {
+          _editing = null;
+          _replyTo = message;
+        });
       case 'reply':
+        pendingReplyQuotes.remove(message.id);
         setState(() {
           _editing = null;
           _replyTo = message;
@@ -391,6 +427,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (await _blockLoginCodeShare([message]) || !mounted) return;
         await Clipboard.setData(ClipboardData(text: messageText(message)));
         if (mounted) showToast(context, s.t('copied'));
+      case 'copy_markdown':
+        if (await _blockLoginCodeShare([message]) || !mounted) return;
+        final formatted = captionOf(message.content);
+        if (formatted == null) return;
+        await Clipboard.setData(ClipboardData(text: markdownOf(formatted)));
+        if (mounted) showToast(context, s.t('copied'));
+      case 'ephemeral_delete':
+        await guard(context, () => _account.send<td.Ok>(td.DeleteMessageEphemeralContent(chatId: message.chatId, messageId: message.id)));
       case 'translate':
         final translations = ref.read(translationsProvider.notifier);
         if (ref.read(translationsProvider).containsKey(message.id)) {
@@ -474,7 +518,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (saved == true && mounted) showToast(context, s.t('gif_saved'));
         }
       case 'reactions_who':
-        await showAddedReactions(context, _account, message);
+        await showAddedReactions(context, _account, message, props: props);
+      case 'profile_audio':
+        if (message.content case td.MessageAudio(:final audio)) {
+          final onProfile = await isProfileAudio(_account, audio.audio.id);
+          if (mounted) await toggleProfileAudio(context, _account, audio, onProfile: onProfile);
+        }
+      case 'edit_checklist' || 'add_tasks':
+        if (message.content case td.MessageChecklist(:final list)) {
+          await (action == 'edit_checklist' ? editChecklist : addChecklistTask)(context, _account, message, list);
+        }
+      case 'paid_reaction':
+        await sendPaidReaction(context, _account, message);
+      case 'author':
+        await showMessageAuthor(context, _account, message);
+      case 'embed':
+        await copyEmbedCode(context, _account, message);
+      case 'fact_check':
+        await editFactCheck(context, _account, message);
+      case 'block_replies':
+        await blockFromReplies(context, _account, message);
       case 'moderate':
         await moderateSender(context, _account, message);
       case 'report':
@@ -645,6 +708,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           children: [
             const PlaybackBar(),
             if (chat.videoChat.groupCallId != 0) VideoChatBar(chat: chat),
+            if (chat.actionBar != null && !selecting) ChatActionBarView(chat: chat),
+            if (chat.businessBotManageBar != null && !selecting) BusinessBotBar(chat: chat),
             if (_pinned != null) _PinnedBar(message: _pinned!, onTap: () => _jumpTo(_pinned!.id), onClose: () => setState(() => _pinned = null)),
             Expanded(
               child: ChatBackground(
@@ -705,7 +770,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
                 ),
               )
-            else if (!selecting)
+            else if (!selecting) ...[
+              PendingBotMessageBar(account: _account, chatId: chat.id),
               Composer(
                 key: _composerKey,
                 chat: chat,
@@ -715,6 +781,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 onCancelEdit: () => setState(() => _editing = null),
                 onSent: () => unawaited(_scrollToBottom()),
               ),
+            ],
           ],
         ),
       ),
@@ -876,6 +943,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         item('marked', Icons.star_outline_rounded, s.t('find_marked')),
         item('first', Icons.vertical_align_top_rounded, s.t('go_to_first')),
         item('date', Icons.calendar_month_rounded, s.t('go_to_date')),
+        item('calendar', Icons.photo_library_outlined, s.t('media_calendar')),
+        if (account.isGroup(chat)) item('live_locations', Icons.share_location_rounded, s.t('live_locations')),
+        item('local_note', Icons.sticky_note_2_outlined, s.t('local_note')),
+        if (!account.isChannel(chat) && !account.isSavedMessages(chat)) item('import', Icons.move_to_inbox_rounded, s.t('import_history')),
         item('silent', chat.defaultDisableNotification ? Icons.notifications_active_outlined : Icons.notifications_paused_outlined,
             s.t(chat.defaultDisableNotification ? 'silent_default_off' : 'silent_default_on')),
         if (_pinned != null && _canUnpinAll(chat)) item('unpin_all', Icons.push_pin_outlined, s.t('unpin_all')),
@@ -921,6 +992,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         final until = DateTime(day.year, day.month, day.day, 23, 59, 59).millisecondsSinceEpoch ~/ 1000;
         final found = await guard(context, () => account.send<td.Message>(td.GetChatMessageByDate(chatId: chat.id, date: until)));
         if (found != null && mounted) await _jumpTo(found.id);
+      case 'local_note':
+        await addLocalNote(context, account, chat.id);
+      case 'import':
+        await importChatHistory(context, account, chat.id);
+      case 'live_locations':
+        final id = await pickLiveLocation(context, account, chat.id);
+        if (id != null && mounted) await _jumpTo(id);
+      case 'calendar':
+        final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => MediaCalendarScreen(chatId: chat.id)));
+        if (id != null && mounted) await _jumpTo(id);
       case 'silent':
         await guard(
           context,
@@ -1047,7 +1128,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (!_history.initialized) return const Center(child: CircularProgressIndicator());
     if (messages.isEmpty) {
       if (_account.privateUser(chat) != null && !_account.isSavedMessages(chat) && _account.canSendMessages(chat) && !_account.isBot(_account.privateUser(chat))) {
-        return Center(child: _EmptyChatCard(onGreet: () => guard(context, () => _account.sendText(chat.id, '👋'))));
+        return Center(child: _EmptyChatCard(chatId: chat.id, onGreet: () => guard(context, () => _account.sendText(chat.id, '👋'))));
       }
       return Center(
         child: ServiceMessage(text: s.t(_account.isSavedMessages(chat) ? 'saved_empty' : 'no_messages')),
@@ -1099,9 +1180,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         Widget item;
         final service = serviceMessageText(message, _account, s);
         if (service != null) {
-          item = message.content is td.MessagePaymentSuccessful
-              ? GestureDetector(onTap: () => showPaymentReceipt(context, _account, message), child: ServiceMessage(text: service))
-              : ServiceMessage(text: service);
+          item = switch (message.content) {
+            td.MessagePaymentSuccessful() => GestureDetector(onTap: () => showPaymentReceipt(context, _account, message), child: ServiceMessage(text: service)),
+            td.MessageChatHasProtectedContentDisableRequested(isExpired: false) when !message.isOutgoing =>
+              Column(children: [
+                ServiceMessage(text: service),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  for (final approve in const [false, true])
+                    TextButton(
+                      onPressed: () => guard(
+                        context,
+                        () => _account.send<td.Ok>(td.ProcessChatHasProtectedContentDisableRequest(chatId: chat.id, requestMessageId: message.id, approve: approve)),
+                      ),
+                      child: Text(s.t(approve ? 'accept' : 'decline')),
+                    ),
+                ]),
+              ]),
+            // "Group upgraded": jump between the old basic group and its new supergroup, as Telegram does.
+            td.MessageChatUpgradeTo(:final supergroupId) => GestureDetector(
+                onTap: () async {
+                  final chat = await guard(context, () async {
+                    await _account.send<td.Supergroup>(td.GetSupergroup(supergroupId: supergroupId));
+                    return _account.send<td.Chat>(td.CreateSupergroupChat(supergroupId: supergroupId, force: false));
+                  });
+                  if (chat != null && context.mounted) openChat(context, chat.id);
+                },
+                child: ServiceMessage(text: service),
+              ),
+            td.MessageChatUpgradeFrom(:final basicGroupId) => GestureDetector(
+                onTap: () async {
+                  final chat = await guard(context, () async {
+                    await _account.send<td.BasicGroup>(td.GetBasicGroup(basicGroupId: basicGroupId));
+                    return _account.send<td.Chat>(td.CreateBasicGroupChat(basicGroupId: basicGroupId, force: false));
+                  });
+                  if (chat != null && context.mounted) openChat(context, chat.id);
+                },
+                child: ServiceMessage(text: service),
+              ),
+            _ => ServiceMessage(text: service),
+          };
         } else {
           item = MessageBubble(
             message: message,
@@ -1126,6 +1243,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (_selected.isEmpty && _account.canSendMessages(chat) && message.sendingState == null) {
             item = SwipeToReply(onReply: () => unawaited(_runAction('reply', message, null)), child: item);
           }
+          if (message.isChannelPost) item = ViewMetricsReporter(account: _account, message: message, child: item);
         }
         return Column(
           key: key,
@@ -1190,8 +1308,9 @@ class _PinnedBar extends ConsumerWidget {
 
 /// First-message card for an empty private chat (Telegram's greeting prompt).
 class _EmptyChatCard extends StatelessWidget {
-  const _EmptyChatCard({required this.onGreet});
+  const _EmptyChatCard({required this.chatId, required this.onGreet});
 
+  final int chatId;
   final VoidCallback onGreet;
 
   @override
@@ -1208,10 +1327,14 @@ class _EmptyChatCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(s.t('empty_chat_hint'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 14)),
           const SizedBox(height: 12),
-          InkWell(
-            borderRadius: BorderRadius.circular(40),
-            onTap: onGreet,
-            child: const Padding(padding: EdgeInsets.all(8), child: Text('👋', style: TextStyle(fontSize: 56))),
+          // Telegram's greeting sticker when available, else the waving hand.
+          GreetingStickerCard(
+            chatId: chatId,
+            fallback: InkWell(
+              borderRadius: BorderRadius.circular(40),
+              onTap: onGreet,
+              child: const Padding(padding: EdgeInsets.all(8), child: Text('👋', style: TextStyle(fontSize: 56))),
+            ),
           ),
         ],
       ),

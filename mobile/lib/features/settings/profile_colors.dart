@@ -5,6 +5,8 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart';
+import '../chat/sticker_extras.dart' show pickBackgroundEmoji;
 
 Color _rgb(int value) => Color(0xFF000000 | value);
 
@@ -24,18 +26,30 @@ class ProfileColorsScreen extends ConsumerWidget {
     final me = ref.watch(meProvider);
     final nameColor = chat?.accentColorId ?? me?.accentColorId ?? 0;
     final profileColor = chat?.profileAccentColorId ?? me?.profileAccentColorId ?? -1;
+    // Changing a color keeps the chosen background emoji, and the other way round.
+    final nameEmoji = chat?.backgroundCustomEmojiId ?? me?.backgroundCustomEmojiId ?? 0;
+    final profileEmoji = chat?.profileBackgroundCustomEmojiId ?? me?.profileBackgroundCustomEmojiId ?? 0;
 
-    Future<void> setName(int id) => guard(
+    Future<void> setName(int id, {int? emoji}) => guard(
           context,
           () => account.send<td.Ok>(chatId == null
-              ? td.SetAccentColor(accentColorId: id, backgroundCustomEmojiId: 0)
-              : td.SetChatAccentColor(chatId: chatId!, accentColorId: id, backgroundCustomEmojiId: 0)),
+              ? td.SetAccentColor(accentColorId: id, backgroundCustomEmojiId: emoji ?? nameEmoji)
+              : td.SetChatAccentColor(chatId: chatId!, accentColorId: id, backgroundCustomEmojiId: emoji ?? nameEmoji)),
         );
-    Future<void> setProfile(int id) => guard(
+    Future<void> setProfile(int id, {int? emoji}) => guard(
           context,
           () => account.send<td.Ok>(chatId == null
-              ? td.SetProfileAccentColor(profileAccentColorId: id, profileBackgroundCustomEmojiId: 0)
-              : td.SetChatProfileAccentColor(chatId: chatId!, profileAccentColorId: id, profileBackgroundCustomEmojiId: 0)),
+              ? td.SetProfileAccentColor(profileAccentColorId: id, profileBackgroundCustomEmojiId: emoji ?? profileEmoji)
+              : td.SetChatProfileAccentColor(chatId: chatId!, profileAccentColorId: id, profileBackgroundCustomEmojiId: emoji ?? profileEmoji)),
+        );
+    Widget emojiTile(String label, int current, Future<void> Function(int emoji) set) => ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(label),
+          trailing: current == 0 ? Text(s.t('none')) : CustomEmojiView(id: current, size: 26),
+          onTap: () async {
+            final picked = await pickBackgroundEmoji(context, account);
+            if (picked != null) await set(picked);
+          },
         );
 
     Widget swatch(List<int> colors, bool selected, VoidCallback onTap) => GestureDetector(
@@ -62,6 +76,7 @@ class ProfileColorsScreen extends ConsumerWidget {
           for (final color in account.accentColors)
             swatch(dark ? color.darkThemeColors : color.lightThemeColors, color.id == nameColor, () => setName(color.id)),
         ]),
+        emojiTile(s.t('background_emoji'), nameEmoji, (emoji) => setName(nameColor, emoji: emoji)),
         const SizedBox(height: 24),
         Text(s.t('profile_color'), style: const TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
@@ -77,6 +92,7 @@ class ProfileColorsScreen extends ConsumerWidget {
               () => setProfile(color.id),
             ),
         ]),
+        if (profileColor != -1) emojiTile(s.t('background_emoji'), profileEmoji, (emoji) => setProfile(profileColor, emoji: emoji)),
       ]),
     );
   }

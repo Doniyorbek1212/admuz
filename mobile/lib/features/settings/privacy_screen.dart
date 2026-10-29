@@ -4,6 +4,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/app_lock.dart';
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/link_policy.dart';
@@ -31,6 +32,16 @@ final _accountTtlProvider = FutureProvider.autoDispose<int>((ref) async {
 });
 
 final _passwordProvider = FutureProvider.autoDispose<td.PasswordState>((ref) => ref.watch(accountProvider).passwordState());
+
+/// Telegram asks some accounts to add a login e-mail (codes then come by mail instead of SMS).
+final _loginEmailRequiredProvider = FutureProvider.autoDispose<bool>((ref) async {
+  try {
+    await ref.watch(accountProvider).send<td.Ok>(const td.IsLoginEmailAddressRequired());
+    return true;
+  } on TdException {
+    return false;
+  }
+});
 
 final _blockedCountProvider = FutureProvider.autoDispose<int>((ref) async {
   final result = await ref.watch(accountProvider).send<td.MessageSenders>(
@@ -132,6 +143,9 @@ class PrivacyScreen extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.mail_outline_rounded),
               title: Text(s.t('login_email')),
+              subtitle: password != null && password.loginEmailAddressPattern.isEmpty && (ref.watch(_loginEmailRequiredProvider).value ?? false)
+                  ? Text(s.t('login_email_required'), style: TextStyle(color: Theme.of(context).colorScheme.error))
+                  : null,
               trailing: value(password == null ? null : (password.loginEmailAddressPattern.isEmpty ? s.t('state_off') : password.loginEmailAddressPattern)),
               onTap: password == null ? null : () => changeLoginEmail(context, ref, password.loginEmailAddressPattern).then((_) => ref.invalidate(_passwordProvider)),
             ),
@@ -229,6 +243,10 @@ class PrivacyScreen extends ConsumerWidget {
             ListTile(title: Text(s.t('close_friends')), onTap: () => _push(context, ref, const CloseFriendsScreen())),
             ListTile(
               title: Text(s.t('delete_synced_contacts')),
+              trailing: FutureBuilder<td.Count>(
+                future: account.send<td.Count>(const td.GetImportedContactCount()),
+                builder: (context, snap) => Text(snap.hasData ? '${snap.data!.count}' : '', style: TextStyle(color: Theme.of(context).hintColor)),
+              ),
               onTap: () async {
                 final ok = await confirm(context, title: s.t('delete_synced_contacts'), message: s.t('delete_synced_contacts_confirm'), destructive: true);
                 if (!ok || !context.mounted) return;
@@ -313,9 +331,16 @@ Future<void> changeLoginEmail(BuildContext context, WidgetRef ref, String patter
   if (email == null || !email.contains('@') || !context.mounted) return;
   final sent = await guard(context, () => account.send<td.EmailAddressAuthenticationCodeInfo>(td.SetLoginEmailAddress(newLoginEmailAddress: email)));
   if (sent == null || !context.mounted) return;
-  final code = await promptText(context, title: s.t('email_code'), label: s.t('email_code_hint', {'email': sent.emailAddressPattern}), keyboard: TextInputType.number);
-  if (code == null || code.isEmpty || !context.mounted) return;
-  final ok = await guard(context, () => account.send<td.Ok>(td.CheckLoginEmailAddressCode(code: td.EmailAddressAuthenticationCode(code: code))));
+  var code = await promptText(context, title: s.t('email_code'), label: s.t('email_code_hint', {'email': sent.emailAddressPattern}), keyboard: TextInputType.number);
+  if ((code == null || code.isEmpty) && context.mounted && await confirm(context, title: s.t('resend_code'), message: sent.emailAddressPattern)) {
+    if (!context.mounted) return;
+    final again = await guard(context, () => account.send<td.EmailAddressAuthenticationCodeInfo>(const td.ResendLoginEmailAddressCode()));
+    if (again == null || !context.mounted) return;
+    code = await promptText(context, title: s.t('email_code'), label: s.t('email_code_hint', {'email': again.emailAddressPattern}), keyboard: TextInputType.number);
+  }
+  final entered = code;
+  if (entered == null || entered.isEmpty || !context.mounted) return;
+  final ok = await guard(context, () => account.send<td.Ok>(td.CheckLoginEmailAddressCode(code: td.EmailAddressAuthenticationCode(code: entered))));
   if (ok != null && context.mounted) showToast(context, s.t('done'));
 }
 
@@ -404,13 +429,13 @@ Future<void> _deleteAccountNow(BuildContext context, TelegramAccount account) as
 }
 
 /// One-field text dialog; null when cancelled.
-Future<String?> promptText(BuildContext context, {required String title, required String label, TextInputType? keyboard, String initial = ''}) {
+Future<String?> promptText(BuildContext context, {required String title, required String label, TextInputType? keyboard, String initial = '', bool obscure = false}) {
   final controller = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: TextField(controller: controller, autofocus: true, keyboardType: keyboard, decoration: InputDecoration(labelText: label)),
+      content: TextField(controller: controller, autofocus: true, keyboardType: keyboard, obscureText: obscure, decoration: InputDecoration(labelText: label)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: Text(context.t('cancel'))),
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),

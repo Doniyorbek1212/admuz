@@ -117,6 +117,7 @@ class ChatTile extends ConsumerWidget {
     final trailingBadges = <Widget>[
       if (chat.unreadMentionCount > 0) _Badge(text: '@', color: theme.colorScheme.primary),
       if (chat.unreadReactionCount > 0) _Badge(text: '❤', color: Colors.redAccent),
+      if (chat.unreadPollVoteCount > 0) _Badge(text: '📊', color: theme.colorScheme.tertiary),
       if (unread)
         _Badge(
           text: unreadCount > 0 ? formatCount(unreadCount) : '',

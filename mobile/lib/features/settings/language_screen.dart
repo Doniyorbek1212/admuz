@@ -7,6 +7,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import 'privacy_screen.dart' show pickOption;
+import 'telegram_extras.dart';
 
 /// App languages with their native and English names, as Telegram lists them.
 const _appLanguages = {'uz': ("O'zbek", 'Uzbek'), 'ru': ('Русский', 'Russian'), 'en': ('English', 'English')};
@@ -76,6 +77,14 @@ class LanguageScreen extends ConsumerWidget {
                   if (Strings.supported.contains(code))
                     RadioListTile<String>(value: code, title: Text(native), subtitle: Text(english)),
               ]),
+            ),
+          ]),
+          SettingsGroup(children: [
+            ListTile(
+              title: Text(s.t('telegram_languages')),
+              subtitle: Text(s.t('telegram_languages_short')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TelegramLanguagesScreen())),
             ),
           ]),
         ],

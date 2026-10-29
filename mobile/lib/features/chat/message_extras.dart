@@ -9,7 +9,10 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../profile/statistics_screen.dart' show StatGraphCard;
+import '../settings/misc_extras.dart' show UsdHint;
 import 'message_content.dart';
+import 'message_tools.dart';
 
 /// Receipt of a completed payment, opened from its "You paid …" service message.
 Future<void> showPaymentReceipt(BuildContext context, TelegramAccount account, td.Message message) async {
@@ -31,7 +34,16 @@ Future<void> showPaymentReceipt(BuildContext context, TelegramAccount account, t
           title: Text(receipt.productInfo.title, style: const TextStyle(fontWeight: FontWeight.w700)),
           subtitle: receipt.productInfo.description.text.isEmpty ? null : Text(receipt.productInfo.description.text),
         ),
-        ListTile(dense: true, title: Text(s.t('receipt_total')), trailing: Text(total, style: const TextStyle(fontWeight: FontWeight.w700))),
+        ListTile(
+          dense: true,
+          title: Text(s.t('receipt_total')),
+          trailing: Text(total, style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: switch (receipt.type) {
+            td.PaymentReceiptTypeRegular(:final invoice, :final tipAmount) =>
+              UsdHint(amount: invoice.priceParts.fold<int>(0, (sum, p) => sum + p.amount) + tipAmount, currency: invoice.currency),
+            _ => null,
+          },
+        ),
         ListTile(dense: true, title: Text(s.t('receipt_seller')), trailing: Text(account.userName(receipt.sellerBotUserId))),
         ListTile(dense: true, title: Text(s.t('date')), trailing: Text(formatChatTime(receipt.date, s.locale))),
         if (receipt.type case td.PaymentReceiptTypeStars(:final transactionId))
@@ -54,6 +66,15 @@ Future<void> showPollVoters(BuildContext context, TelegramAccount account, td.Me
   );
   if (results == null || !context.mounted) return;
   final s = context.s;
+  // Votes over time; Telegram gives it to the poll's author and channel admins only.
+  td.StatisticalGraph? graph;
+  try {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    graph = (await account.send<td.PollVoteStatistics>(td.GetPollVoteStatistics(chatId: message.chatId, messageId: message.id, isDark: dark))).voteGraph;
+  } on TdException catch (error) {
+    debugPrint('poll vote statistics: $error');
+  }
+  if (!context.mounted) return;
   await showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -62,6 +83,8 @@ Future<void> showPollVoters(BuildContext context, TelegramAccount account, td.Me
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
         child: ListView(shrinkWrap: true, children: [
+          if (graph != null && graph is! td.StatisticalGraphError)
+            StatGraphCard(chatId: message.chatId, title: s.t('poll_vote_graph'), graph: graph),
           for (var i = 0; i < poll.options.length; i++)
             if (results[i].voters.isNotEmpty) ...[
               SectionHeader('${poll.options[i].text.text} — ${s.count('votes', results[i].totalCount)}'),
@@ -210,7 +233,9 @@ Future<void> showMessageSeen(BuildContext context, TelegramAccount account, td.M
 }
 
 /// Who put which reaction on a message (groups only; channels keep reactions anonymous).
-Future<void> showAddedReactions(BuildContext context, TelegramAccount account, td.Message message) async {
+/// Admins can tap a row to remove or report that person's reaction.
+Future<void> showAddedReactions(BuildContext context, TelegramAccount account, td.Message message, {td.MessageProperties? props}) async {
+  final canModerate = (props?.canDeleteReactions ?? false) || (props?.canReportReactions ?? false);
   final s = context.s;
   final result = await guard(
     context,
@@ -238,6 +263,7 @@ Future<void> showAddedReactions(BuildContext context, TelegramAccount account, t
               title: Text(account.senderName(reaction.senderId)),
               subtitle: Text(_when(reaction.date, s)),
               trailing: Text(switch (reaction.type) { td.ReactionTypeEmoji(:final emoji) => emoji, _ => '⭐' }, style: const TextStyle(fontSize: 22)),
+              onTap: canModerate && props != null ? () => moderateReaction(context, account, message, reaction.senderId, props) : null,
             ),
         ],
       ),

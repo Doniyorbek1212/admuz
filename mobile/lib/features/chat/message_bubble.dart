@@ -14,13 +14,23 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import 'bot_keyboard.dart';
 import 'comments.dart';
+import 'link_preview_card.dart';
 import 'message_content.dart';
+import 'message_tools.dart';
 
-/// Replied-to message, fetched on demand.
-final repliedMessageProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
-  final account = ref.watch(accountProvider);
+/// The message a reply points to, resolved by TDLib from the reply itself (works across chats and threads).
+final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
   try {
-    return await account.send<td.Message>(td.GetMessage(chatId: key.$1, messageId: key.$2));
+    return await ref.watch(accountProvider).send<td.Message>(td.GetRepliedMessage(chatId: key.$1, messageId: key.$2));
+  } on TdException {
+    return null;
+  }
+});
+
+/// Message effects (the animated emoji a sender attached), fetched once per effect id.
+final messageEffectProvider = FutureProvider.family<td.MessageEffect?, int>((ref, effectId) async {
+  try {
+    return await ref.watch(accountProvider).send<td.MessageEffect>(td.GetMessageEffect(effectId: effectId));
   } on TdException {
     return null;
   }
@@ -210,7 +220,7 @@ class MessageBubble extends ConsumerWidget {
       if (senderLabel != null) Padding(padding: const EdgeInsets.fromLTRB(10, 6, 10, 0), child: senderLabel),
       if (message.forwardInfo != null) _ForwardHeader(info: message.forwardInfo!, outgoing: outgoing),
       if (message.replyTo case final td.MessageReplyToMessage reply)
-        _ReplyHeader(reply: reply, outgoing: outgoing, onTap: () => onReplyTap(reply.messageId)),
+        _ReplyHeader(message: message, reply: reply, outgoing: outgoing, onTap: () => onReplyTap(reply.messageId)),
       if (!bareMedia && content is! td.MessageText)
         Padding(
           padding: isMediaBubble ? EdgeInsets.zero : const EdgeInsets.fromLTRB(10, 8, 10, 0),
@@ -259,12 +269,26 @@ class MessageBubble extends ConsumerWidget {
             style: TextStyle(color: textColor, fontSize: 15.5 * settings.textScale, height: 1.3),
           ),
         ),
+      if (content case td.MessageText(:final linkPreview?) when !folded) LinkPreviewCard(preview: linkPreview, textColor: textColor),
       if (translation != null)
         Container(
           margin: const EdgeInsets.fromLTRB(10, 6, 10, 0),
           padding: const EdgeInsets.only(left: 8),
           decoration: BoxDecoration(border: Border(left: BorderSide(color: Theme.of(context).colorScheme.primary, width: 2))),
-          child: Text(translation, style: TextStyle(color: textColor, fontSize: 15 * settings.textScale, fontStyle: FontStyle.italic)),
+          child: FormattedTextView(text: linkified(translation), style: TextStyle(color: textColor, fontSize: 15 * settings.textScale, fontStyle: FontStyle.italic)),
+        ),
+      if (message.factCheck case final factCheck?)
+        Container(
+          margin: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.error.withValues(alpha: 0.08),
+            border: Border(left: BorderSide(color: Theme.of(context).colorScheme.error, width: 2)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(context.t('fact_check'), style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Theme.of(context).colorScheme.error)),
+            FormattedTextView(text: factCheck.text, style: TextStyle(color: textColor, fontSize: 14 * settings.textScale)),
+          ]),
         ),
       if (!inlineFooter && !footerOnMedia)
         Align(
@@ -287,7 +311,7 @@ class MessageBubble extends ConsumerWidget {
             crossAxisAlignment: outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               if (message.replyTo case final td.MessageReplyToMessage reply)
-                _ReplyHeader(reply: reply, outgoing: outgoing, onTap: () => onReplyTap(reply.messageId)),
+                _ReplyHeader(message: message, reply: reply, outgoing: outgoing, onTap: () => onReplyTap(reply.messageId)),
               // Round videos carry the time on their bottom-right edge, as in Telegram.
               if (content is td.MessageVideoNote)
                 Stack(
@@ -433,6 +457,9 @@ class _Footer extends ConsumerWidget {
           Text('${s.t('deleted_label')} ', style: style.copyWith(color: onMedia ? null : Theme.of(context).colorScheme.error)),
         ],
         if (archived.hasVersions) Padding(padding: const EdgeInsets.only(right: 2), child: Icon(Icons.history_rounded, size: 12, color: color)),
+        if (message.effectId != 0)
+          if (ref.watch(messageEffectProvider(message.effectId)).value case final effect?)
+            Padding(padding: const EdgeInsets.only(right: 3), child: Text(effect.emoji, style: const TextStyle(fontSize: 12))),
         if (message.editDate > 0) Text('${s.t('edited')} ', style: style),
         Text(formatTime(message.date, s.locale), style: style),
         if (message.isOutgoing && !isChannel) ...[
@@ -489,8 +516,9 @@ class _ForwardHeader extends ConsumerWidget {
 }
 
 class _ReplyHeader extends ConsumerWidget {
-  const _ReplyHeader({required this.reply, required this.outgoing, required this.onTap});
+  const _ReplyHeader({required this.message, required this.reply, required this.outgoing, required this.onTap});
 
+  final td.Message message;
   final td.MessageReplyToMessage reply;
   final bool outgoing;
   final VoidCallback onTap;
@@ -499,7 +527,7 @@ class _ReplyHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
     final s = context.s;
-    final repliedState = ref.watch(repliedMessageProvider((reply.chatId, reply.messageId)));
+    final repliedState = ref.watch(_replyTargetProvider((message.chatId, message.id)));
     final replied = repliedState.value;
     final primary = Theme.of(context).colorScheme.primary;
     // Replies to messages from other chats (or not yet loaded) carry their origin and content inline.
@@ -557,7 +585,22 @@ class _Reactions extends ConsumerWidget {
       runSpacing: 4,
       children: [
         for (final reaction in reactions)
-          if (reaction.type case td.ReactionTypeEmoji(:final emoji))
+          if (reaction.type is td.ReactionTypePaid)
+            GestureDetector(
+              onTap: () => sendPaidReaction(context, account, message),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: reaction.isChosen ? const Color(0xFFF5A623) : const Color(0xFFF5A623).withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  '⭐ ${formatCount(reaction.totalCount)}',
+                  style: TextStyle(fontSize: 13, color: reaction.isChosen ? Colors.white : const Color(0xFFB7791F), fontWeight: FontWeight.w600),
+                ),
+              ),
+            )
+          else if (reaction.type case td.ReactionTypeEmoji(:final emoji))
             GestureDetector(
               onTap: () => guard(context, () => account.toggleReaction(message, emoji)),
               child: Container(

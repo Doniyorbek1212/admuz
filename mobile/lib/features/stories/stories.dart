@@ -16,6 +16,7 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import 'story_actions.dart';
+import 'story_extras.dart';
 import '../chat/message_content.dart';
 
 bool _hasUnread(td.ChatActiveStories stories) => stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
@@ -394,6 +395,21 @@ class _StoryViewerState extends ConsumerState<StoryViewer> with SingleTickerProv
           );
         }
         return Center(child: AspectRatio(aspectRatio: controller.value.aspectRatio, child: VideoPlayer(controller)));
+      case td.StoryContentLive(:final groupCallId):
+        return Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.sensors_rounded, color: Colors.redAccent, size: 64),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: Text(context.t('live_join')),
+              onPressed: () {
+                _pause();
+                joinLiveStory(context, _account, story.posterChatId, groupCallId);
+              },
+            ),
+          ]),
+        );
       default:
         return Center(child: Text(context.t('story_unsupported'), style: const TextStyle(color: Colors.white70)));
     }
@@ -482,6 +498,24 @@ class _StoryViewerState extends ConsumerState<StoryViewer> with SingleTickerProv
                     ),
                   ),
                   const Spacer(),
+                  // Place stickers: tap to see other public stories from the same place.
+                  if (story != null)
+                    Wrap(spacing: 6, children: [
+                      for (final area in story.areas)
+                        if (switch (area.type) { td.StoryAreaTypeVenue() || td.StoryAreaTypeLocation(address: _?) => true, _ => false })
+                          ActionChip(
+                            avatar: const Icon(Icons.place_rounded, size: 16),
+                            label: Text(switch (area.type) {
+                              td.StoryAreaTypeVenue(:final venue) => venue.title,
+                              td.StoryAreaTypeLocation(:final address?) => address.city.isNotEmpty ? address.city : address.street,
+                              _ => '',
+                            }),
+                            onPressed: () {
+                              _pause();
+                              openStoriesForArea(context, area.type);
+                            },
+                          ),
+                    ]),
                   if (story != null && story.caption.text.isNotEmpty)
                     Container(
                       width: double.infinity,
@@ -518,6 +552,12 @@ class _StoryViewerState extends ConsumerState<StoryViewer> with SingleTickerProv
                               color: story.chosenReactionType != null ? Colors.redAccent : Colors.white,
                             ),
                             onPressed: () => _toggleLike(story),
+                            onLongPress: () async {
+                              _pause();
+                              final emoji = await pickStoryReaction(context, _account);
+                              if (emoji != null && context.mounted) await guard(context, () => _account.reactToStory(story.posterChatId, story.id, emoji));
+                              if (mounted) _resume();
+                            },
                           ),
                         ],
                       ),
@@ -568,7 +608,22 @@ class _AddStoryTile extends ConsumerWidget {
 Future<void> postStoryFlow(BuildContext context, WidgetRef ref) async {
   final account = ref.read(accountProvider);
   final s = context.s;
-  final check = await guard(context, account.canPostStory);
+  final kind = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(leading: const Icon(Icons.add_photo_alternate_outlined), title: Text(s.t('story_new')), onTap: () => Navigator.pop(context, 'story')),
+        ListTile(leading: const Icon(Icons.sensors_rounded, color: Colors.redAccent), title: Text(s.t('live_start')), onTap: () => Navigator.pop(context, 'live')),
+      ]),
+    ),
+  );
+  if (kind == null || !context.mounted) return;
+  // Channels and groups where the user may post stories are offered next to their own profile.
+  final posterId = await pickStoryPoster(context, account);
+  if (posterId == null || !context.mounted) return;
+  if (kind == 'live') return startLiveStory(context, account, posterId);
+  final check = await guard(context, () => account.canPostStory(chatId: posterId));
   if (check == null || !context.mounted) return;
   if (check is! td.CanPostStoryResultOk) {
     showToast(context, s.t(check is td.CanPostStoryResultPremiumNeeded ? 'story_premium_needed' : 'story_limit'));
@@ -582,7 +637,7 @@ Future<void> postStoryFlow(BuildContext context, WidgetRef ref) async {
   if (options == null || !context.mounted) return;
   final story = await guard(
     context,
-    () => account.postStory(picked.path, isVideo: isVideo, caption: options.$1, contactsOnly: options.$2, activeSeconds: options.$3),
+    () => account.postStory(picked.path, isVideo: isVideo, caption: options.$1, contactsOnly: options.$2, activeSeconds: options.$3, chatId: posterId),
   );
   if (story != null && context.mounted) showToast(context, s.t('story_posting'));
 }

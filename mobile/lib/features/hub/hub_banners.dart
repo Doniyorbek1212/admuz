@@ -8,7 +8,6 @@ import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../business/business_screen.dart';
-import '../settings/settings_screen.dart';
 import 'ad_banner_card.dart';
 import 'hub_catalog.dart';
 
@@ -34,7 +33,7 @@ class _Promo {
   final Widget screen;
 }
 
-/// Sado's own banners, shown after the paid ads (and alone when there are none).
+/// Shown only while a region has no paid ads, so the slot invites businesses to advertise.
 const _promos = [
   _Promo(
     titleKey: 'banner_ad_title',
@@ -43,23 +42,9 @@ const _promos = [
     colors: [Color(0xFFFF8A3D), Color(0xFFFF4D7A)],
     screen: BusinessScreen(),
   ),
-  _Promo(
-    titleKey: 'banner_ghost_title',
-    textKey: 'banner_ghost_text',
-    icon: Icons.visibility_off_rounded,
-    colors: [Color(0xFF5B5BF7), Color(0xFF2E9BF0)],
-    screen: SettingsScreen(),
-  ),
-  _Promo(
-    titleKey: 'banner_archive_title',
-    textKey: 'banner_archive_text',
-    icon: Icons.restore_rounded,
-    colors: [Color(0xFF13B88A), Color(0xFF0E8FB5)],
-    screen: SettingsScreen(),
-  ),
 ];
 
-/// Auto-scrolling carousel at the top of the hub: paid ads for the selected region, then promos.
+/// Auto-scrolling carousel at the top of the hub: paid ads for the selected region, or the advertise promo when there are none.
 class HubBanners extends ConsumerStatefulWidget {
   const HubBanners({super.key});
 
@@ -100,7 +85,8 @@ class _HubBannersState extends ConsumerState<HubBanners> {
     final theme = Theme.of(context);
     final region = ref.watch(hubRegionProvider);
     final ads = ref.watch(activeAdsProvider(region)).value ?? const <Ad>[];
-    _count = ads.length + _promos.length;
+    final promos = ads.isEmpty ? _promos : const <_Promo>[];
+    _count = ads.length + promos.length;
     if (_page >= _count) _page = 0;
     return Column(
       children: [
@@ -117,12 +103,13 @@ class _HubBannersState extends ConsumerState<HubBanners> {
                 onPageChanged: (page) => setState(() => _page = page),
                 itemBuilder: (context, index) => index < ads.length
                     ? AdBannerCard(ad: ads[index], onTap: () => _openAd(ads[index]))
-                    : _PromoCard(promo: _promos[index - ads.length]),
+                    : _PromoCard(promo: promos[index - ads.length]),
               ),
             ),
           ),
         ),
-        Row(
+        if (_count > 1)
+          Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             for (var i = 0; i < _count; i++)

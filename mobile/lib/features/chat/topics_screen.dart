@@ -13,6 +13,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart';
 import '../profile/chat_info_screen.dart';
 import '../settings/privacy_screen.dart';
 import 'chat_screen.dart';
@@ -111,7 +112,12 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     final s = context.s;
     final name = await promptText(context, title: s.t('topic_new'), label: s.t('topic_name'));
     if (name == null || name.isEmpty || !mounted) return;
-    final info = await guard(context, () => _account.createTopic(widget.chatId, name, color: _topicColors[_topics.length % _topicColors.length]));
+    final emojiId = await _pickIcon();
+    if (emojiId == null || !mounted) return;
+    final info = await guard(
+      context,
+      () => _account.createTopic(widget.chatId, name, color: _topicColors[_topics.length % _topicColors.length], customEmojiId: emojiId),
+    );
     if (info == null || !mounted) return;
     await _reload();
     if (!mounted) return;
@@ -120,9 +126,79 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     ));
   }
 
-  /// Long-press actions; the server rejects the ones the user has no right to.
-  Future<void> _showTopicMenu(td.ForumTopic topic) async {
+  /// Icon for a new topic from Telegram's default topic emoji; 0 keeps the colored circle, null cancels.
+  Future<int?> _pickIcon() async {
     final s = context.s;
+    final icons = await guard(context, () => _account.send<td.Stickers>(const td.GetForumTopicDefaultIcons()));
+    if (!mounted) return null;
+    if (icons == null || icons.stickers.isEmpty) return 0;
+    return showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.6),
+          child: GridView.count(
+            crossAxisCount: 6,
+            padding: const EdgeInsets.all(12),
+            shrinkWrap: true,
+            children: [
+              IconButton(tooltip: s.t('none'), icon: const Icon(Icons.circle_rounded, color: Color(0xFF6FB9F0)), onPressed: () => Navigator.pop(context, 0)),
+              for (final sticker in icons.stickers)
+                if (sticker.fullType case td.StickerFullTypeCustomEmoji(:final customEmojiId))
+                  InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => Navigator.pop(context, customEmojiId),
+                    child: Center(child: CustomEmojiView(id: customEmojiId, size: 32, fallback: sticker.emoji)),
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Pinned topics in the user's order; dragging saves the new order.
+  Future<void> _reorderPinned() async {
+    final s = context.s;
+    var pinned = [for (final t in _topics) if (t.isPinned) t];
+    if (pinned.length < 2) {
+      showToast(context, s.t('pinned_topics_min'));
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+            child: ReorderableListView(
+              shrinkWrap: true,
+              onReorderItem: (from, to) {
+                setSheetState(() => pinned = [...pinned]..insert(to, pinned.removeAt(from)));
+                guard(context, () => _account.send<td.Ok>(td.SetPinnedForumTopics(chatId: widget.chatId, forumTopicIds: [for (final t in pinned) t.info.forumTopicId])));
+              },
+              children: [
+                for (final t in pinned)
+                  ListTile(key: ValueKey(t.info.forumTopicId), title: Text(t.info.name), trailing: const Icon(Icons.drag_handle_rounded)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _reload();
+  }
+
+  /// Long-press actions; the server rejects the ones the user has no right to.
+  Future<void> _showTopicMenu(td.ForumTopic cached) async {
+    final s = context.s;
+    // The cached row may be stale (closed, renamed by another admin); menu items follow the fresh state.
+    final topic = await guard(context, () => _account.send<td.ForumTopic>(td.GetForumTopic(chatId: widget.chatId, forumTopicId: cached.info.forumTopicId))) ?? cached;
+    if (!mounted) return;
     final info = topic.info;
     final muted = topic.notificationSettings.muteFor > 0;
     final action = await showModalBottomSheet<String>(
@@ -135,6 +211,7 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
             children: [
               for (final (icon, key, value) in <(IconData, String, String)>[
                 if (topic.unreadMentionCount > 0 || topic.unreadReactionCount > 0) (Icons.alternate_email_rounded, 'topic_read_mentions', 'read'),
+                if (topic.unreadPollVoteCount > 0) (Icons.poll_outlined, 'topic_read_poll_votes', 'poll_votes'),
                 (topic.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded, topic.isPinned ? 'unpin' : 'pin', 'pin'),
                 (muted ? Icons.notifications_rounded : Icons.notifications_off_rounded, muted ? 'unmute' : 'mute', 'mute'),
                 (Icons.link_rounded, 'copy_link', 'link'),
@@ -160,6 +237,8 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
     switch (action) {
       case 'read':
         await guard(context, () => _account.readTopicMentionsAndReactions(info));
+      case 'poll_votes':
+        await guard(context, () => _account.send<td.Ok>(td.ReadAllForumTopicPollVotes(chatId: widget.chatId, forumTopicId: info.forumTopicId)));
       case 'pin':
         await guard(context, () => _account.setTopicPinned(info, !topic.isPinned));
       case 'mute':
@@ -219,6 +298,22 @@ class _TopicsScreenState extends ConsumerState<TopicsScreen> {
             tooltip: s.t('view_as_messages'),
             icon: const Icon(Icons.chat_rounded),
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatScreen(chatId: widget.chatId))),
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              switch (value) {
+                case 'pinned':
+                  await _reorderPinned();
+                case 'as_messages':
+                  // Remembered by Telegram: next time the forum opens as one message list.
+                  await guard(context, () => _account.send<td.Ok>(td.ToggleChatViewAsTopics(chatId: widget.chatId, viewAsTopics: false)));
+                  if (context.mounted) Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => ChatScreen(chatId: widget.chatId)));
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(value: 'pinned', child: Text(s.t('pinned_reorder'))),
+              PopupMenuItem(value: 'as_messages', child: Text(s.t('view_as_messages_default'))),
+            ],
           ),
         ],
       ),

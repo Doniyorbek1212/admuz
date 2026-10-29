@@ -189,6 +189,12 @@ class _OwnedStickerSetScreenState extends ConsumerState<OwnedStickerSetScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           ListTile(leading: const Icon(Icons.emoji_emotions_outlined), title: Text(s.t('sticker_emoji')), onTap: () => Navigator.pop(context, 'emoji')),
           ListTile(leading: const Icon(Icons.vertical_align_top_rounded), title: Text(s.t('sticker_move_first')), onTap: () => Navigator.pop(context, 'first')),
+          ListTile(leading: const Icon(Icons.sell_outlined), title: Text(s.t('sticker_keywords')), onTap: () => Navigator.pop(context, 'keywords')),
+          ListTile(leading: const Icon(Icons.find_replace_rounded), title: Text(s.t('sticker_replace')), onTap: () => Navigator.pop(context, 'replace')),
+          ListTile(leading: const Icon(Icons.photo_size_select_actual_outlined), title: Text(s.t('sticker_set_cover')), onTap: () => Navigator.pop(context, 'cover')),
+          ListTile(leading: const Icon(Icons.info_outline_rounded), title: Text(s.t('sticker_emojis_all')), onTap: () => Navigator.pop(context, 'emojis')),
+          if (_set?.stickerType is td.StickerTypeMask)
+            ListTile(leading: const Icon(Icons.face_retouching_natural_rounded), title: Text(s.t('sticker_mask_position')), onTap: () => Navigator.pop(context, 'mask')),
           ListTile(
             leading: Icon(Icons.delete_outline_rounded, color: Theme.of(context).colorScheme.error),
             title: Text(s.t('delete'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -204,15 +210,77 @@ class _OwnedStickerSetScreenState extends ConsumerState<OwnedStickerSetScreen> {
         if (emoji != null && emoji.trim().isNotEmpty) await _run(() => _account.send<td.Ok>(td.SetStickerEmojis(sticker: file, emojis: emoji.trim())));
       case 'first':
         await _run(() => _account.send<td.Ok>(td.SetStickerPositionInSet(sticker: file, position: 0)));
+      case 'keywords':
+        final text = await promptText(context, title: s.t('sticker_keywords'), label: s.t('sticker_keywords_hint'));
+        if (text == null) return;
+        final keywords = [for (final k in text.split(',')) if (k.trim().isNotEmpty) k.trim()];
+        await _run(() => _account.send<td.Ok>(td.SetStickerKeywords(sticker: file, keywords: keywords)));
+      case 'replace':
+        await _replace(sticker, file);
+      case 'cover':
+        final set = _set;
+        if (set == null) return;
+        await _run(() => switch (sticker.fullType) {
+              td.StickerFullTypeCustomEmoji(:final customEmojiId) =>
+                _account.send<td.Ok>(td.SetCustomEmojiStickerSetThumbnail(name: set.name, customEmojiId: customEmojiId)),
+              _ => _account.send<td.Ok>(td.SetStickerSetThumbnail(userId: _account.myId, name: set.name, thumbnail: file, format: sticker.format)),
+            });
+      case 'emojis':
+        final emojis = await guard(context, () => _account.send<td.Emojis>(td.GetStickerEmojis(sticker: file)));
+        if (emojis != null && mounted) showToast(context, emojis.emojis.isEmpty ? sticker.emoji : emojis.emojis.join(' '));
+      case 'mask':
+        final point = await pickOption<String>(context, s.t('sticker_mask_position'), {
+          'forehead': s.t('mask_forehead'),
+          'eyes': s.t('mask_eyes'),
+          'mouth': s.t('mask_mouth'),
+          'chin': s.t('mask_chin'),
+        }, null);
+        if (point == null || !mounted) return;
+        final td.MaskPoint maskPoint = switch (point) {
+          'eyes' => const td.MaskPointEyes(),
+          'mouth' => const td.MaskPointMouth(),
+          'chin' => const td.MaskPointChin(),
+          _ => const td.MaskPointForehead(),
+        };
+        await _run(() => _account.send<td.Ok>(td.SetStickerMaskPosition(
+              sticker: file,
+              maskPosition: td.MaskPosition(point: maskPoint, xShift: 0, yShift: 0, scale: 1),
+            )));
       case 'delete':
         final ok = await confirm(context, title: s.t('delete'), message: s.t('sticker_delete_hint'), destructive: true);
         if (ok) await _run(() => _account.send<td.Ok>(td.RemoveStickerFromSet(sticker: file)));
     }
   }
 
+  /// Swaps a sticker's picture while keeping its place and emoji: upload the new file, then replace in the set.
+  Future<void> _replace(td.Sticker sticker, td.InputFile old) async {
+    final set = _set;
+    final path = await pickStickerImage();
+    if (set == null || path == null || !mounted) return;
+    await _run(() async {
+      final uploaded = await _account.send<td.File>(
+        td.UploadStickerFile(userId: _account.myId, stickerFormat: const td.StickerFormatWebp(), sticker: td.InputFileLocal(path: path)),
+      );
+      await _account.send<td.Ok>(td.ReplaceStickerInSet(
+        userId: _account.myId,
+        name: set.name,
+        oldSticker: old,
+        newSticker: td.NewSticker(
+          sticker: td.InputFileRemote(id: uploaded.remote.id),
+          format: const td.StickerFormatWebp(),
+          emojis: sticker.emoji,
+          maskPosition: null,
+          keywords: const [],
+        ),
+      ));
+    });
+  }
+
   Future<void> _setMenu(String action, td.StickerSet set) async {
     final s = context.s;
     switch (action) {
+      case 'cover_reset':
+        await _run(() => _account.send<td.Ok>(td.SetStickerSetThumbnail(userId: _account.myId, name: set.name, thumbnail: null, format: null)));
       case 'rename':
         final title = await promptText(context, title: s.t('rename'), label: s.t('sticker_pack_title'), initial: set.title);
         if (title != null && title.trim().isNotEmpty) await _run(() => _account.send<td.Ok>(td.SetStickerSetTitle(name: set.name, title: title.trim())));
@@ -243,6 +311,7 @@ class _OwnedStickerSetScreenState extends ConsumerState<OwnedStickerSetScreen> {
               itemBuilder: (_) => [
                 PopupMenuItem(value: 'rename', child: Text(s.t('rename'))),
                 PopupMenuItem(value: 'share', child: Text(s.t('share'))),
+                PopupMenuItem(value: 'cover_reset', child: Text(s.t('sticker_set_cover_reset'))),
                 PopupMenuItem(value: 'delete', child: Text(s.t('sticker_pack_delete'))),
               ],
             ),

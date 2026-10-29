@@ -1,6 +1,8 @@
 package uz.sado.app
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -26,6 +28,8 @@ class MainApplication : Application() {
                 "batteryLevel" -> result.success(
                     getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY),
                 )
+                // TDLib picks the auto-download preset and splits data usage by this.
+                "networkType" -> result.success(networkType())
                 else -> result.notImplemented()
             }
         }
@@ -62,6 +66,18 @@ class MainApplication : Application() {
         engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
         if (KeepAliveService.isEnabled(this)) KeepAliveService.start(this)
+    }
+
+    /** "wifi", "mobile", "roaming", "none" or "other" for the active network. */
+    private fun networkType(): String {
+        val connectivity = getSystemService(ConnectivityManager::class.java) ?: return "other"
+        val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return "none"
+        return when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ->
+                if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING)) "mobile" else "roaming"
+            else -> "other"
+        }
     }
 
     companion object {

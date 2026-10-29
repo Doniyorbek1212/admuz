@@ -7,6 +7,7 @@ import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../chat/call_options.dart';
+import 'conference_calls.dart';
 
 /// Recent calls (all / missed), Telegram's "Calls" list: tap to call back, clear the history.
 class CallsScreen extends ConsumerStatefulWidget {
@@ -48,9 +49,17 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     final account = ref.watch(accountProvider);
     final calls = _calls;
     return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => startConference(context),
+        icon: const Icon(Icons.group_add_rounded),
+        label: Text(s.t('conference_new')),
+      ),
       appBar: AppBar(
         title: Text(s.t('calls')),
-        actions: [IconButton(tooltip: s.t('calls_clear'), icon: const Icon(Icons.delete_sweep_rounded), onPressed: _clear)],
+        actions: [
+          IconButton(tooltip: s.t('conference_join'), icon: const Icon(Icons.link_rounded), onPressed: () => joinConferenceByLink(context)),
+          IconButton(tooltip: s.t('calls_clear'), icon: const Icon(Icons.delete_sweep_rounded), onPressed: _clear),
+        ],
       ),
       body: Column(
         children: [

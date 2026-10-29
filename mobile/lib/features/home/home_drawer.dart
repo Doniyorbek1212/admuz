@@ -34,12 +34,7 @@ class HomeDrawer extends ConsumerStatefulWidget {
 /// Hidden chats sit behind the passcode when one is set; true when the user may open them.
 Future<bool> unlockHiddenChats(BuildContext context, WidgetRef ref) async {
   if (!ref.read(appLockProvider).enabled) return true;
-  final s = context.s;
-  final pin = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_enter')));
-  if (pin == null || !context.mounted) return false;
-  if (await ref.read(appLockProvider.notifier).verify(pin)) return true;
-  if (context.mounted) showToast(context, s.t('passcode_wrong'));
-  return false;
+  return checkCurrentPasscode(context, ref);
 }
 
 class _HomeDrawerState extends ConsumerState<HomeDrawer> {

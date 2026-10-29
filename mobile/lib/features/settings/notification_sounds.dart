@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
@@ -53,7 +56,22 @@ class _NotificationSoundsScreenState extends ConsumerState<NotificationSoundsScr
 
   String _name(int soundId, Strings s) {
     if (soundId == 0) return s.t('sound_silent');
-    return _sounds?.where((x) => x.id == soundId).firstOrNull?.title ?? s.t('sound_default');
+    final known = _sounds?.where((x) => x.id == soundId).firstOrNull ?? _extra[soundId];
+    if (known == null && soundId > 0 && _sounds != null) unawaited(_fetchOne(soundId));
+    return known?.title ?? s.t('sound_default');
+  }
+
+  /// Sounds set on another device may be missing from the saved list; ask Telegram for that one.
+  final Map<int, td.NotificationSound> _extra = {};
+
+  Future<void> _fetchOne(int soundId) async {
+    if (_extra.containsKey(soundId)) return;
+    try {
+      final sound = await ref.read(accountProvider).send<td.NotificationSound>(td.GetSavedNotificationSound(notificationSoundId: soundId));
+      if (mounted) setState(() => _extra[soundId] = sound);
+    } on TdException catch (error) {
+      debugPrint('notification sound $soundId: $error');
+    }
   }
 
   Future<void> _pick(String key) async {

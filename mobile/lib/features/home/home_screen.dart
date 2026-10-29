@@ -16,6 +16,8 @@ import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/playback_bar.dart';
 import '../chat/chat_screen.dart';
+import '../chat/direct_topics_screen.dart';
+import '../settings/misc_extras.dart' show SuggestedActionBanner, TermsOfServiceWatcher;
 import '../chat/topics_screen.dart';
 import '../contacts/contacts_screen.dart';
 import '../search/search_screen.dart';
@@ -36,9 +38,13 @@ const splitViewMinWidth = 840.0;
 void openChat(BuildContext context, int chatId, {int? messageId}) {
   final account = ProviderScope.containerOf(context, listen: false).read(accountProvider);
   final chat = account.chats[chatId];
-  final Widget screen = messageId == null && chat != null && account.isForum(chat)
-      ? TopicsScreen(chatId: chatId)
-      : ChatScreen(key: ValueKey('chat_${chatId}_$messageId'), chatId: chatId, initialMessageId: messageId);
+  // Forums open on the topic list unless the user chose "view as messages"; a channel's direct
+  // messages group opens on its per-user topics for the admins.
+  final Widget screen = switch (chat) {
+    final c? when messageId == null && account.isForum(c) && c.viewAsTopics => TopicsScreen(chatId: chatId),
+    final c? when messageId == null && (account.supergroupOf(c)?.isAdministeredDirectMessagesGroup ?? false) => DirectTopicsScreen(chatId: chatId),
+    _ => ChatScreen(key: ValueKey('chat_${chatId}_$messageId'), chatId: chatId, initialMessageId: messageId),
+  };
   final pane = chatPaneNavigatorKey.currentState;
   if (pane != null && MediaQuery.sizeOf(context).width >= splitViewMinWidth) {
     // The chat becomes the pane's root page: no back arrow, Esc/closeChat empties the pane.
@@ -646,6 +652,8 @@ class _ChatListViewState extends ConsumerState<ChatListView> with AutomaticKeepA
           child: storiesOpen ? const StoriesBar() : const SizedBox(width: double.infinity),
         ),
         const UnconfirmedSessionBanner(),
+        const SuggestedActionBanner(),
+        const TermsOfServiceWatcher(),
         Expanded(child: list),
       ],
     );

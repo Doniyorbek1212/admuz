@@ -10,7 +10,12 @@ import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../contacts/contacts_screen.dart';
+import '../chat/link_router.dart' show openLink;
 import '../home/home_screen.dart';
+import 'misc_extras.dart' show appConfigValue;
+import 'affiliate_programs.dart';
+import 'gifts_extras.dart';
+import 'stars_extras.dart';
 import 'business_settings.dart';
 import 'premium_extras.dart';
 
@@ -143,6 +148,22 @@ class PremiumInfoScreen extends ConsumerWidget {
             text: s.t(isPremium ? 'premium_active' : 'premium_intro'),
           ),
           SettingsGroup(children: [for (final (icon, color, key) in _features) _Feature(icon, color, key)]),
+          const PremiumCatalogSection(),
+          // Telegram's own Premium bot (name from the app config) also sells and gifts Premium.
+          FutureBuilder<Object?>(
+            future: appConfigValue(ref.read(accountProvider), 'premium_bot_username'),
+            builder: (context, snapshot) => switch (snapshot.data) {
+              final String bot when bot.isNotEmpty => SettingsGroup(children: [
+                  ListTile(
+                    leading: const Icon(Icons.smart_toy_outlined),
+                    title: Text('@$bot'),
+                    subtitle: Text(s.t('premium_via_bot')),
+                    onTap: () => openLink(context, 'https://t.me/$bot'),
+                  ),
+                ]),
+              _ => const SizedBox.shrink(),
+            },
+          ),
           const PremiumServerSection(),
         ],
       ),
@@ -212,6 +233,25 @@ class StarsScreen extends ConsumerWidget {
             ],
             const SizedBox(height: 8),
           ]),
+          SettingsGroup(children: [
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined),
+              title: Text(s.t('revenue')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => RevenueScreen(owner: td.MessageSenderUser(userId: ref.read(accountProvider).myId)),
+              )),
+            ),
+          ]),
+          SettingsGroup(children: [
+            ListTile(
+              leading: const Icon(Icons.handshake_outlined),
+              title: Text(s.t('affiliate_programs')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AffiliateProgramsScreen())),
+            ),
+          ]),
+          const StarOptionsSection(),
           const StarSubscriptionsSection(),
           if (stars.value case final data? when data.transactions.isNotEmpty)
             SettingsGroup(title: s.t('stars_history'), children: [
@@ -326,8 +366,16 @@ class GiftPickerScreen extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(16),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(16),
+                      // Long press: the resale market for this gift, or its live auction.
+                      onLongPress: () {
+                        final gift = item.gift;
+                        Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => gift.auctionInfo != null ? GiftAuctionScreen(gift: gift, receiverUserId: user.id) : GiftResaleScreen(gift: gift),
+                        ));
+                      },
                       onTap: () async {
                         final gift = item.gift;
+                        if (!await checkCanSendGift(context, ref.read(accountProvider), gift) || !context.mounted) return;
                         final ok = await confirm(context, title: s.t('send_gift'), message: s.t('gift_confirm', {'name': name, 'n': '${gift.starCount}'}));
                         if (!ok || !context.mounted) return;
                         final sent = await guard(

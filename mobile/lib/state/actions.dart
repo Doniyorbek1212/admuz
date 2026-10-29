@@ -11,6 +11,11 @@ td.FormattedText plainText(String text) => td.FormattedText(text: text, entities
 /// Telegram's human-friendly markdown (**bold**, __italic__, ~~strike~~, ||spoiler||, `code`, ```pre```,
 /// [text](url), [name](tg://user?id=1)) parsed synchronously by TDLib; falls back to plain text.
 td.FormattedText formattedText(String text) {
+  // Pasted HTML (<b>, <a href>…) keeps its formatting too.
+  if (_hasHtml.hasMatch(text)) {
+    final parsed = TdClient.executeStatic(td.ParseTextEntities(text: text, parseMode: const td.TextParseModeHTML()))?.toTdObject();
+    if (parsed is td.FormattedText) return parsed;
+  }
   if (!_hasMarkup.hasMatch(text)) return plainText(text);
   try {
     final result = TdClient.executeStatic(td.ParseMarkdown(text: plainText(text)));
@@ -23,6 +28,25 @@ td.FormattedText formattedText(String text) {
 }
 
 final _hasMarkup = RegExp(r'\*\*|__|~~|\|\||`|\[[^\]]+\]\(');
+final _hasHtml = RegExp(r'</?(b|i|u|s|code|pre|a|tg-spoiler|blockquote)(\s[^>]*)?>');
+
+/// Plain text with its links, @mentions, #hashtags and emails detected by TDLib, so they become tappable.
+td.FormattedText linkified(String text) {
+  final found = TdClient.executeStatic(td.GetTextEntities(text: text))?.toTdObject();
+  return td.FormattedText(text: text, entities: found is td.TextEntities ? found.entities : const []);
+}
+
+/// The text with its formatting written back as Telegram markdown (**bold**, [link](url)…).
+String markdownOf(td.FormattedText text) {
+  final result = TdClient.executeStatic(td.GetMarkdownText(text: text))?.toTdObject();
+  return result is td.FormattedText ? result.text : text.text;
+}
+
+/// Indexes of [strings] whose words start with the words of [query] (Telegram's local name matching).
+Set<int>? prefixMatches(List<String> strings, String query) {
+  final result = TdClient.executeStatic(td.SearchStringsByPrefix(strings: strings, query: query, limit: strings.length, returnNoneForEmptyQuery: false))?.toTdObject();
+  return result is td.FoundPositions ? result.positions.toSet() : null;
+}
 
 const _noOptions = td.MessageSendOptions(
   suggestedPostInfo: null,
@@ -45,9 +69,12 @@ td.MessageSendOptions sendOptions({bool silent = false, int? scheduleAt}) => sil
       )
     : _noOptions;
 
+/// Part of a message the user chose to quote in their reply (message id → quote); cleared by a plain reply.
+final pendingReplyQuotes = <int, td.InputTextQuote>{};
+
 td.InputMessageReplyTo? replyTo(int? messageId) => messageId == null
     ? null
-    : td.InputMessageReplyToMessage(messageId: messageId, quote: null, checklistTaskId: 0, pollOptionId: '');
+    : td.InputMessageReplyToMessage(messageId: messageId, quote: pendingReplyQuotes[messageId], checklistTaskId: 0, pollOptionId: '');
 
 /// Packs 0..31 amplitude samples into Telegram's 5-bit voice note waveform format (base64 bytes).
 String encodeWaveform(List<int> samples) {
@@ -108,6 +135,7 @@ extension ChatActions on TelegramAccount {
     }
     if (chat.unreadMentionCount > 0) await send<td.Ok>(td.ReadAllChatMentions(chatId: chat.id));
     if (chat.unreadReactionCount > 0) await send<td.Ok>(td.ReadAllChatReactions(chatId: chat.id));
+    if (chat.unreadPollVoteCount > 0) await send<td.Ok>(td.ReadAllChatPollVotes(chatId: chat.id));
   }
 
   Future<void> markUnread(td.Chat chat) =>
@@ -266,6 +294,7 @@ extension ChatActions on TelegramAccount {
     List<String> options, {
     bool anonymous = true,
     bool multiple = false,
+    bool allowAdding = false,
     int? correctOption,
     String explanation = '',
   }) =>
@@ -284,7 +313,7 @@ extension ChatActions on TelegramAccount {
           shuffleOptions: false,
           hideResultsUntilCloses: false,
           type: correctOption == null
-              ? const td.InputPollTypeRegular(allowAddingOptions: false)
+              ? td.InputPollTypeRegular(allowAddingOptions: allowAdding)
               : td.InputPollTypeQuiz(correctOptionIds: [correctOption], explanation: formattedText(explanation), explanationMedia: null),
           openPeriod: 0,
           closeDate: 0,
@@ -513,11 +542,11 @@ extension ForumActions on TelegramAccount {
         limit: 50,
       ));
 
-  Future<td.ForumTopicInfo> createTopic(int chatId, String name, {int color = 0x6FB9F0}) => send<td.ForumTopicInfo>(td.CreateForumTopic(
+  Future<td.ForumTopicInfo> createTopic(int chatId, String name, {int color = 0x6FB9F0, int customEmojiId = 0}) => send<td.ForumTopicInfo>(td.CreateForumTopic(
         chatId: chatId,
         name: name,
         isNameImplicit: false,
-        icon: td.ForumTopicIcon(color: color, customEmojiId: 0),
+        icon: td.ForumTopicIcon(color: color, customEmojiId: customEmojiId),
       ));
 
   Future<void> renameTopic(td.ForumTopicInfo topic, String name) => send<td.Ok>(td.EditForumTopic(
@@ -925,7 +954,10 @@ extension AdminActions on TelegramAccount {
     final supergroup = supergroupOf(chat);
     if (supergroup == null) {
       final info = await send<td.BasicGroupFullInfo>(td.GetBasicGroupFullInfo(basicGroupId: basicGroupOf(chat)!.id));
-      return info.members;
+      if (filter != 'admins') return info.members;
+      // Basic groups have no member filters; ask Telegram who the admins are.
+      final admins = {for (final a in (await send<td.ChatAdministrators>(td.GetChatAdministrators(chatId: chat.id))).administrators) a.userId};
+      return [for (final m in info.members) if (m.memberId case td.MessageSenderUser(:final userId) when admins.contains(userId)) m];
     }
     final td.SupergroupMembersFilter supergroupFilter = switch (filter) {
       'admins' => const td.SupergroupMembersFilterAdministrators(),
@@ -1037,12 +1069,12 @@ extension LiveActions on TelegramAccount {
               ),
       ));
 
-  Future<td.CanPostStoryResult> canPostStory() => send<td.CanPostStoryResult>(td.CanPostStory(chatId: myId));
+  Future<td.CanPostStoryResult> canPostStory({int? chatId}) => send<td.CanPostStoryResult>(td.CanPostStory(chatId: chatId ?? myId));
 
   /// Posts a photo or video story to the user's own profile for [activeSeconds] (6/12/24/48 h).
-  Future<td.Story> postStory(String path, {required bool isVideo, String caption = '', bool contactsOnly = false, int activeSeconds = 86400}) =>
+  Future<td.Story> postStory(String path, {required bool isVideo, String caption = '', bool contactsOnly = false, int activeSeconds = 86400, int? chatId}) =>
       send<td.Story>(td.PostStory(
-        chatId: myId,
+        chatId: chatId ?? myId,
         content: isVideo
             ? td.InputStoryContentVideo(
                 video: td.InputFileLocal(path: path),

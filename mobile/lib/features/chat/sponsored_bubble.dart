@@ -59,51 +59,14 @@ class _SponsoredBubbleState extends ConsumerState<SponsoredBubble> {
     if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  Future<void> _report() async {
-    final account = widget.history.account;
-    final s = context.s;
-    var optionId = '';
-    for (var step = 0; step < 5; step++) {
-      td.ReportSponsoredResult result;
-      try {
-        result = await account.send<td.ReportSponsoredResult>(td.ReportChatSponsoredMessage(
+  Future<void> _report() => reportSponsored(
+        context,
+        (optionId) => widget.history.account.send<td.ReportSponsoredResult>(td.ReportChatSponsoredMessage(
           chatId: widget.history.chatId,
           messageId: widget.message.messageId,
           optionId: optionId,
-        ));
-      } on TdException catch (error) {
-        if (mounted) showError(context, error);
-        return;
-      }
-      if (!mounted) return;
-      if (result case td.ReportSponsoredResultOptionRequired(:final title, :final options)) {
-        final chosen = await showModalBottomSheet<String>(
-          context: context,
-          showDragHandle: true,
-          builder: (context) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(padding: const EdgeInsets.all(12), child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
-                for (final option in options)
-                  ListTile(title: Text(option.text), onTap: () => Navigator.pop(context, option.id)),
-              ],
-            ),
-          ),
-        );
-        if (chosen == null) return;
-        optionId = chosen;
-        continue;
-      }
-      showToast(context, s.t(switch (result) {
-        td.ReportSponsoredResultOk() => 'ad_reported',
-        td.ReportSponsoredResultAdsHidden() => 'ad_hidden',
-        td.ReportSponsoredResultPremiumRequired() => 'ad_premium_required',
-        _ => 'err_GENERIC',
-      }));
-      return;
-    }
-  }
+        )),
+      );
 
   void _about() {
     final s = context.s;
@@ -193,5 +156,47 @@ class _SponsoredBubbleState extends ConsumerState<SponsoredBubble> {
         ),
       ),
     );
+  }
+}
+
+/// Server-driven ad report flow shared by sponsored messages, search ads and video ads: pick reasons until the server is satisfied.
+Future<void> reportSponsored(BuildContext context, Future<td.ReportSponsoredResult> Function(String optionId) report) async {
+  final s = context.s;
+  var optionId = '';
+  for (var step = 0; step < 5; step++) {
+    td.ReportSponsoredResult result;
+    try {
+      result = await report(optionId);
+    } on TdException catch (error) {
+      if (context.mounted) showError(context, error);
+      return;
+    }
+    if (!context.mounted) return;
+    if (result case td.ReportSponsoredResultOptionRequired(:final title, :final options)) {
+      final chosen = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(padding: const EdgeInsets.all(12), child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
+              for (final option in options)
+                ListTile(title: Text(option.text), onTap: () => Navigator.pop(context, option.id)),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null) return;
+      optionId = chosen;
+      continue;
+    }
+    showToast(context, s.t(switch (result) {
+      td.ReportSponsoredResultOk() => 'ad_reported',
+      td.ReportSponsoredResultAdsHidden() => 'ad_hidden',
+      td.ReportSponsoredResultPremiumRequired() => 'ad_premium_required',
+      _ => 'err_GENERIC',
+    }));
+    return;
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -10,6 +12,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import 'privacy_screen.dart' show promptText;
 
 final _recommendedProvider = FutureProvider.autoDispose<List<td.RecommendedChatFolder>>((ref) async {
   final account = ref.watch(accountProvider);
@@ -35,6 +38,16 @@ class FoldersScreen extends ConsumerWidget {
       body: ListView(
         children: [
           Padding(padding: const EdgeInsets.all(16), child: Text(s.t('folders_hint'), style: TextStyle(color: Theme.of(context).hintColor))),
+          if (folders.isNotEmpty)
+            SwitchListTile(
+              secondary: const Icon(Icons.label_outline_rounded),
+              title: Text(s.t('folder_tags')),
+              subtitle: Text(s.t(account.me?.isPremium == true ? 'folder_tags_hint' : 'folder_tags_premium')),
+              value: account.folderTagsEnabled,
+              onChanged: account.me?.isPremium == true
+                  ? (on) => guard(context, () => account.send<td.Ok>(td.ToggleChatFolderTags(areTagsEnabled: on)))
+                  : null,
+            ),
           if (folders.isNotEmpty) SectionHeader(s.t('my_folders')),
           ReorderableListView(
             shrinkWrap: true,
@@ -49,7 +62,7 @@ class FoldersScreen extends ConsumerWidget {
               for (final folder in folders)
                 ListTile(
                   key: ValueKey(folder.id),
-                  leading: const Icon(Icons.folder_rounded),
+                  leading: Icon(folderIcon(folder.icon.name)),
                   title: Text(folder.name.text.text),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -148,6 +161,7 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
         ListTile(leading: const Icon(Icons.push_pin_outlined), title: Text(s.t('pinned_reorder')), onTap: () => Navigator.pop(context, 'pinned')),
         if (folderId != null) ...[
           ListTile(leading: const Icon(Icons.edit_rounded), title: Text(s.t('edit_folder')), onTap: () => Navigator.pop(context, 'edit')),
+          ListTile(leading: const Icon(Icons.playlist_add_rounded), title: Text(s.t('folder_new_chats')), onTap: () => Navigator.pop(context, 'new')),
           ListTile(
             leading: Icon(Icons.delete_outline_rounded, color: Theme.of(context).colorScheme.error),
             title: Text(s.t('delete_folder'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -165,10 +179,105 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PinnedOrderScreen(listKey: listKey)));
     case 'edit':
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => FolderEditScreen(folderId: folderId)));
+    case 'new':
+      await addFolderNewChats(context, account, folderId!);
     case 'delete':
       await deleteChatFolder(context, account, folderId!, title);
   }
 }
+
+/// Chats the owner of a shared (added by link) folder put in it after it was added here; joins the picked ones.
+Future<void> addFolderNewChats(BuildContext context, TelegramAccount account, int folderId) async {
+  final s = context.s;
+  final found = await guard(context, () => account.send<td.Chats>(td.GetChatFolderNewChats(chatFolderId: folderId)));
+  if (found == null || !context.mounted) return;
+  if (found.chatIds.isEmpty) {
+    showToast(context, s.t('folder_new_chats_none'));
+    return;
+  }
+  final picked = await showModalBottomSheet<List<int>>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) {
+      final selection = {...found.chatIds};
+      return StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Flexible(
+                child: ListView(shrinkWrap: true, children: [
+                  for (final id in found.chatIds)
+                    CheckboxListTile(
+                      value: selection.contains(id),
+                      onChanged: (v) => setSheetState(() => v == true ? selection.add(id) : selection.remove(id)),
+                      secondary: ChatAvatar(chatId: id, size: 40, showOnline: false),
+                      title: Text(account.chats[id] == null ? '$id' : chatTitle(account.chats[id]!, account, s), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: FilledButton(onPressed: () => Navigator.pop(context, selection.toList()), child: Text(s.t('folder_join_chats'))),
+              ),
+            ]),
+          ),
+        ),
+      );
+    },
+  );
+  if (picked == null || !context.mounted) return;
+  // Chats left unticked are dismissed, so Telegram stops offering them.
+  final done = await guard(context, () async {
+    await account.send<td.Ok>(td.ProcessChatFolderNewChats(chatFolderId: folderId, addedChatIds: picked));
+    return true;
+  });
+  if (done == true && context.mounted) showToast(context, s.t('done'));
+}
+
+/// Material icon for a Telegram folder icon name ("All", "Work", "Book", …).
+IconData folderIcon(String name) => switch (name) {
+      'All' => Icons.chat_bubble_rounded,
+      'Unread' => Icons.mark_chat_unread_rounded,
+      'Unmuted' => Icons.notifications_active_rounded,
+      'Bots' => Icons.smart_toy_rounded,
+      'Channels' => Icons.campaign_rounded,
+      'Groups' => Icons.groups_rounded,
+      'Private' => Icons.person_rounded,
+      'Setup' => Icons.tune_rounded,
+      'Cat' => Icons.pets_rounded,
+      'Crown' => Icons.workspace_premium_rounded,
+      'Favorite' => Icons.star_rounded,
+      'Flower' => Icons.local_florist_rounded,
+      'Game' => Icons.sports_esports_rounded,
+      'Home' => Icons.home_rounded,
+      'Love' => Icons.favorite_rounded,
+      'Mask' => Icons.theater_comedy_rounded,
+      'Party' => Icons.celebration_rounded,
+      'Sport' => Icons.sports_soccer_rounded,
+      'Study' => Icons.school_rounded,
+      'Trade' => Icons.trending_up_rounded,
+      'Travel' => Icons.luggage_rounded,
+      'Work' => Icons.work_rounded,
+      'Airplane' => Icons.flight_rounded,
+      'Book' => Icons.menu_book_rounded,
+      'Light' => Icons.lightbulb_rounded,
+      'Like' => Icons.thumb_up_rounded,
+      'Money' => Icons.payments_rounded,
+      'Note' => Icons.music_note_rounded,
+      'Palette' => Icons.palette_rounded,
+      _ => Icons.folder_rounded,
+    };
+
+/// Approximate chat count and default icon of a folder being edited, asked from Telegram.
+final _folderPreviewProvider = FutureProvider.autoDispose.family<(int, String), String>((ref, folderJson) async {
+  final account = ref.watch(accountProvider);
+  final folder = td.ChatFolder.fromJson(jsonDecode(folderJson) as Map<String, dynamic>)!;
+  final count = account.send<td.Count>(td.GetChatFolderChatCount(folder: folder));
+  final icon = account.send<td.Text>(td.GetChatFolderDefaultIconName(folder: folder));
+  return ((await count).count, (await icon).text);
+});
 
 /// Drag to reorder the pinned chats of one chat list.
 class PinnedOrderScreen extends ConsumerStatefulWidget {
@@ -305,6 +414,17 @@ class _FolderLinksScreenState extends ConsumerState<_FolderLinksScreen> {
                         title: Text(link.name.isNotEmpty ? link.name : link.inviteLink, maxLines: 1, overflow: TextOverflow.ellipsis),
                         subtitle: Text(s.count('chats', link.chatIds.length)),
                         onTap: () => SharePlus.instance.share(ShareParams(text: link.inviteLink)),
+                        onLongPress: () async {
+                          final name = await promptText(context, title: s.t('folder_link_rename'), label: s.t('link_name'), initial: link.name);
+                          if (name == null || !context.mounted) return;
+                          await guard(
+                            context,
+                            () => ref.read(accountProvider).send<td.ChatFolderInviteLink>(
+                                  td.EditChatFolderInviteLink(chatFolderId: widget.folderId, inviteLink: link.inviteLink, name: name.trim(), chatIds: link.chatIds),
+                                ),
+                          );
+                          await _load();
+                        },
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline_rounded),
                           onPressed: () async {
@@ -386,7 +506,15 @@ class _FolderEditScreenState extends ConsumerState<FolderEditScreen> {
       showToast(context, s.t('folder_invalid'));
       return;
     }
-    final folder = td.ChatFolder(
+    final folder = _folder(name);
+    final account = ref.read(accountProvider);
+    final ok = await guard(context, () => widget.folderId == null
+        ? account.send<td.ChatFolderInfo>(td.CreateChatFolder(folder: folder))
+        : account.send<td.ChatFolderInfo>(td.EditChatFolder(chatFolderId: widget.folderId!, folder: folder)));
+    if (ok != null && mounted) Navigator.pop(context);
+  }
+
+  td.ChatFolder _folder(String name) => td.ChatFolder(
       name: td.ChatFolderName(text: plainText(name), animateCustomEmoji: false),
       icon: _original?.icon,
       colorId: _original?.colorId ?? -1,
@@ -403,15 +531,12 @@ class _FolderEditScreenState extends ConsumerState<FolderEditScreen> {
       includeGroups: _types.contains('groups'),
       includeChannels: _types.contains('channels'),
     );
-    final account = ref.read(accountProvider);
-    final ok = await guard(context, () => widget.folderId == null
-        ? account.send<td.ChatFolderInfo>(td.CreateChatFolder(folder: folder))
-        : account.send<td.ChatFolderInfo>(td.EditChatFolder(chatFolderId: widget.folderId!, folder: folder)));
-    if (ok != null && mounted) Navigator.pop(context);
-  }
 
   Future<void> _addChats() async {
     final account = ref.read(accountProvider);
+    // Makes sure more than the first screen of chats is known before offering the list.
+    await guard(context, () => account.send<td.Chats>(const td.GetChats(chatList: td.ChatListMain(), limit: 200)));
+    if (!mounted) return;
     final chats = account.chatList(const td.ChatListMain());
     final s = context.s;
     final picked = await showModalBottomSheet<Set<int>>(
@@ -474,6 +599,14 @@ class _FolderEditScreenState extends ConsumerState<FolderEditScreen> {
                   padding: const EdgeInsets.all(16),
                   child: TextField(controller: _name, maxLength: 12, decoration: InputDecoration(labelText: s.t('folder_name'))),
                 ),
+                if (_types.isNotEmpty || _included.isNotEmpty)
+                  switch (ref.watch(_folderPreviewProvider(jsonEncode(_folder('-').toJson()))).value) {
+                    (final count, final icon) => ListTile(
+                        leading: Icon(folderIcon(_original?.icon?.name ?? icon)),
+                        title: Text(s.t('folder_chat_count', {'n': '$count'})),
+                      ),
+                    null => const SizedBox.shrink(),
+                  },
                 SectionHeader(s.t('included_chats')),
                 for (final type in const ['contacts', 'non_contacts', 'groups', 'channels', 'bots'])
                   CheckboxListTile(

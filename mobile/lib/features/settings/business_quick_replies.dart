@@ -10,6 +10,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import 'business_extras.dart';
 import 'business_settings.dart';
 import 'privacy_screen.dart';
 
@@ -136,6 +137,32 @@ class _QuickReplyMessagesScreenState extends ConsumerState<QuickReplyMessagesScr
     }
   }
 
+  /// New message for the shortcut: text, a photo album, or an inline bot result.
+  Future<void> _add(String shortcutName) async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final kind = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.short_text_rounded), title: Text(s.t('biz_reply_text')), onTap: () => Navigator.pop(context, 'text')),
+          ListTile(leading: const Icon(Icons.photo_library_outlined), title: Text(s.t('biz_reply_album')), onTap: () => Navigator.pop(context, 'album')),
+          ListTile(leading: const Icon(Icons.smart_toy_outlined), title: Text(s.t('biz_inline_bot')), onTap: () => Navigator.pop(context, 'inline')),
+        ]),
+      ),
+    );
+    if (kind == null || !mounted) return;
+    switch (kind) {
+      case 'text':
+        await addQuickReplyText(context, account, shortcutName);
+      case 'album':
+        await addQuickReplyAlbum(context, account, shortcutName);
+      case 'inline':
+        await addQuickReplyFromInlineBot(context, account, shortcutName);
+    }
+  }
+
   Future<void> _messageMenu(td.QuickReplyMessage message, td.QuickReplyShortcut shortcut) async {
     final s = context.s;
     final account = ref.read(accountProvider);
@@ -188,7 +215,7 @@ class _QuickReplyMessagesScreenState extends ConsumerState<QuickReplyMessagesScr
                 ),
             ],
           ),
-          floatingActionButton: FloatingActionButton(onPressed: () => addQuickReplyText(context, account, shortcut.name), child: const Icon(Icons.add_comment_rounded)),
+          floatingActionButton: FloatingActionButton(onPressed: () => _add(shortcut.name), child: const Icon(Icons.add_comment_rounded)),
           body: messages == null
               ? const Center(child: CircularProgressIndicator())
               : ListView.separated(
@@ -197,8 +224,20 @@ class _QuickReplyMessagesScreenState extends ConsumerState<QuickReplyMessagesScr
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final message = messages[index];
+                    final failed = message.sendingState is td.MessageSendingStateFailed;
                     return ListTile(
                       title: Text(quickReplyPreview(message, s)),
+                      // A message the server refused (e.g. flood wait) can be sent to the shortcut again.
+                      trailing: failed
+                          ? IconButton(
+                              tooltip: s.t('retry'),
+                              icon: Icon(Icons.error_outline_rounded, color: Theme.of(context).colorScheme.error),
+                              onPressed: () => guard(
+                                context,
+                                () => account.send<td.QuickReplyMessages>(td.ReaddQuickReplyShortcutMessages(shortcutName: shortcut.name, messageIds: [message.id])),
+                              ),
+                            )
+                          : null,
                       onTap: () => _messageMenu(message, shortcut),
                     );
                   },

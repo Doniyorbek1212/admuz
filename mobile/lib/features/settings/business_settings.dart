@@ -11,6 +11,7 @@ import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
+import 'business_extras.dart';
 import 'business_quick_replies.dart';
 import 'privacy_screen.dart';
 
@@ -135,6 +136,11 @@ class _BusinessSettingsScreenState extends ConsumerState<BusinessSettingsScreen>
                     onTap: () => _push(const BusinessChatLinksScreen()),
                   ),
                   ListTile(
+                    leading: const TileIcon(Icons.smart_toy_rounded, Color(0xFF3D8AD8)),
+                    title: Text(s.t('biz_chatbots')),
+                    onTap: () => _push(const BusinessBotScreen()),
+                  ),
+                  ListTile(
                     leading: const TileIcon(Icons.info_rounded, Color(0xFF8A72EA)),
                     title: Text(s.t('biz_intro')),
                     subtitle: sub(info?.startPage?.title.isNotEmpty == true ? info!.startPage!.title : s.t('off')),
@@ -142,6 +148,9 @@ class _BusinessSettingsScreenState extends ConsumerState<BusinessSettingsScreen>
                   ),
                 ]),
                 GroupHint(s.t('biz_premium_hint')),
+                // What Telegram Business currently includes, as Telegram lists it.
+                if (ref.watch(businessFeaturesProvider).value case final features? when features.isNotEmpty)
+                  GroupHint('${s.t('biz_features')}: ${{for (final f in features) s.t(businessFeatureKey(f))}.join(', ')}'),
               ],
             ),
     );

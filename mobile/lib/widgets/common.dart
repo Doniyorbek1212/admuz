@@ -259,7 +259,9 @@ Future<void> openLocalFile(BuildContext context, String path, {String mimeType =
   if (isDesktop) {
     await launchUrl(Uri.file(path));
   } else {
-    await OpenFilex.open(path, type: mimeType.isEmpty ? null : mimeType);
+    // Without a known type, TDLib's own extension table picks the app to open it with.
+    final type = mimeType.isNotEmpty ? mimeType : (TdClient.executeStatic(td.GetFileMimeType(fileName: path))?['text'] as String? ?? '');
+    await OpenFilex.open(path, type: type.isEmpty ? null : type);
   }
 }
 

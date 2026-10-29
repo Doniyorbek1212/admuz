@@ -17,8 +17,12 @@ import '../settings/profile_colors.dart';
 import 'chat_admin_extras.dart';
 import 'event_log_screen.dart';
 import 'invite_link_extras.dart';
+import '../settings/affiliate_programs.dart';
+import '../settings/gifts_extras.dart' show toggleChannelGiftNotifications;
+import '../settings/stars_extras.dart' show ChatBoostsScreen, RevenueScreen;
 import 'statistics_screen.dart';
 import 'supergroup_settings.dart';
+import '../settings/privacy_screen.dart' show promptText;
 import 'user_profile_extras.dart';
 
 /// Entry list of admin tools for a group or channel.
@@ -54,6 +58,13 @@ class ManageChatScreen extends ConsumerWidget {
             title: Text(s.t(isChannel ? 'subscribers_title' : 'members_title')),
             onTap: () => push(MembersScreen(chatId: chatId)),
           ),
+          if (isCreator || (rights?.canSendWelcomeMessages ?? false))
+            ListTile(
+              leading: const Icon(Icons.waving_hand_outlined),
+              title: Text(s.t('welcome_messages')),
+              subtitle: Text(s.t('welcome_messages_hint')),
+              onTap: () => push(WelcomeMessagesScreen(chatId: chatId)),
+            ),
           if (!isChannel && canRestrict)
             ListTile(
               leading: const Icon(Icons.key_rounded),
@@ -122,6 +133,43 @@ class ManageChatScreen extends ConsumerWidget {
               leading: const Icon(Icons.insights_rounded),
               title: Text(s.t('statistics')),
               onTap: () => push(ChatStatisticsScreen(chatId: chatId)),
+            ),
+          // Ad (TON) and Stars earnings; Telegram answers with what this chat actually has.
+          if (account.supergroupOf(chat) != null && isCreator)
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined),
+              title: Text(s.t('revenue')),
+              onTap: () => push(RevenueScreen(owner: td.MessageSenderChat(chatId: chatId), chatId: account.isChannel(chat) ? chatId : null)),
+            ),
+          if (account.isChannel(chat) && isCreator)
+            ListTile(
+              leading: const Icon(Icons.redeem_outlined),
+              title: Text(s.t('gift_notifications')),
+              onTap: () async {
+                final on = await showModalBottomSheet<bool>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (context) => SafeArea(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      ListTile(title: Text(s.t('state_on')), onTap: () => Navigator.pop(context, true)),
+                      ListTile(title: Text(s.t('state_off')), onTap: () => Navigator.pop(context, false)),
+                    ]),
+                  ),
+                );
+                if (on != null && context.mounted) await toggleChannelGiftNotifications(context, account, chatId, on);
+              },
+            ),
+          if (account.isChannel(chat) && isCreator)
+            ListTile(
+              leading: const Icon(Icons.handshake_outlined),
+              title: Text(s.t('affiliate_programs')),
+              onTap: () => push(AffiliateProgramsScreen(affiliate: td.AffiliateTypeChannel(chatId: chatId))),
+            ),
+          if (account.supergroupOf(chat) != null && (isCreator || rights != null))
+            ListTile(
+              leading: const Icon(Icons.bolt_rounded),
+              title: Text(s.t('boosts')),
+              onTap: () => push(ChatBoostsScreen(chatId: chatId)),
             ),
           if (account.supergroupOf(chat) != null && (isCreator || rights != null))
             ListTile(
@@ -275,6 +323,7 @@ class _MembersScreenState extends ConsumerState<MembersScreen> {
     final myRights = mine is td.ChatMemberStatusAdministrator ? mine.rights : null;
     final canPromote = isCreator || (myRights?.canPromoteMembers ?? false);
     final canRestrict = isCreator || (myRights?.canRestrictMembers ?? false);
+    final canTag = !account.isChannel(chat) && (isCreator || (myRights?.canManageTags ?? false));
     final status = member.status;
     final isAdmin = status is td.ChatMemberStatusAdministrator;
     final isOwner = status is td.ChatMemberStatusCreator;
@@ -295,6 +344,8 @@ class _MembersScreenState extends ConsumerState<MembersScreen> {
               ),
             if (canPromote && isAdmin && status.canBeEdited)
               ListTile(leading: const Icon(Icons.remove_moderator_rounded), title: Text(s.t('dismiss_admin')), onTap: () => Navigator.pop(context, 'dismiss')),
+            if (canTag && !isAdmin)
+              ListTile(leading: const Icon(Icons.sell_outlined), title: Text(s.t('member_tag')), onTap: () => Navigator.pop(context, 'tag')),
             if (isCreator && isAdmin)
               ListTile(leading: const Icon(Icons.key_rounded), title: Text(s.t('transfer_ownership')), onTap: () => Navigator.pop(context, 'transfer')),
             if (canRestrict && !isAdmin && !account.isChannel(chat) && status is! td.ChatMemberStatusBanned)
@@ -332,6 +383,10 @@ class _MembersScreenState extends ConsumerState<MembersScreen> {
         await guard(context, () => account.setMemberStatus(widget.chatId, userId, td.ChatMemberStatusAdministrator(canBeEdited: true, rights: rights)));
       case 'dismiss':
         await guard(context, () => account.setMemberStatus(widget.chatId, userId, const td.ChatMemberStatusMember(memberUntilDate: 0)));
+      case 'tag':
+        final tag = await promptText(context, title: s.t('member_tag'), label: s.t('member_tag_hint'), initial: member.tag);
+        if (tag == null || !mounted) return;
+        await guard(context, () => account.send<td.Ok>(td.SetChatMemberTag(chatId: widget.chatId, userId: userId, tag: tag.trim())));
       case 'transfer':
         final done = await transferOwnership(context, account, widget.chatId, userId);
         if (done && mounted) showToast(context, s.t('transfer_done'));
@@ -657,6 +712,33 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
   }
 
   Future<void> _create() async {
+    final account = ref.read(accountProvider);
+    final chat = account.chats[widget.chatId];
+    // Channels may also sell access: a link that charges Stars every month.
+    if (chat != null && account.isChannel(chat)) {
+      final s = context.s;
+      final kind = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(leading: const Icon(Icons.add_link_rounded), title: Text(s.t('create_link')), onTap: () => Navigator.pop(context, 'free')),
+            ListTile(
+              leading: const Icon(Icons.star_rounded),
+              title: Text(s.t('subscription_link')),
+              subtitle: Text(s.t('subscription_link_hint')),
+              onTap: () => Navigator.pop(context, 'paid'),
+            ),
+          ]),
+        ),
+      );
+      if (kind == null || !mounted) return;
+      if (kind == 'paid') {
+        await _createSubscriptionLink();
+        return;
+      }
+    }
+    if (!mounted) return;
     final result = await showDialog<(String, int, int, bool)>(context: context, builder: (_) => const _NewLinkDialog());
     if (result == null || !mounted) return;
     await guard(context, () => ref.read(accountProvider).createInviteLink(
@@ -666,6 +748,25 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
           memberLimit: result.$3,
           joinRequest: result.$4,
         ));
+    await _load();
+  }
+
+  /// Monthly Star subscription link: a name and the price per 30 days.
+  Future<void> _createSubscriptionLink() async {
+    final s = context.s;
+    final name = await promptText(context, title: s.t('subscription_link'), label: s.t('link_name'));
+    if (name == null || !mounted) return;
+    final price = await promptText(context, title: s.t('subscription_link'), label: s.t('subscription_price'), keyboard: TextInputType.number);
+    final stars = int.tryParse(price ?? '');
+    if (stars == null || stars <= 0 || !mounted) return;
+    await guard(
+      context,
+      () => ref.read(accountProvider).send<td.ChatInviteLink>(td.CreateChatSubscriptionInviteLink(
+            chatId: widget.chatId,
+            name: name.trim(),
+            subscriptionPricing: td.StarSubscriptionPricing(period: _subscriptionPeriod, starCount: stars),
+          )),
+    );
     await _load();
   }
 
@@ -715,8 +816,19 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
       case 'replace':
         final ok = await confirm(context, title: s.t('link_replace'), message: s.t('link_replace_hint'), destructive: true);
         if (ok && mounted) await guard(context, () => account.send<td.ChatInviteLink>(td.ReplacePrimaryChatInviteLink(chatId: widget.chatId)));
+      case 'edit' when link.subscriptionPricing != null:
+        // Only the name of a subscription link can change.
+        final name = await promptText(context, title: s.t('edit'), label: s.t('link_name'), initial: link.name);
+        if (name == null || !mounted) return;
+        await guard(
+          context,
+          () => account.send<td.ChatInviteLink>(td.EditChatSubscriptionInviteLink(chatId: widget.chatId, inviteLink: link.inviteLink, name: name.trim())),
+        );
       case 'edit':
-        final result = await showDialog<(String, int, int, bool)>(context: context, builder: (_) => _NewLinkDialog(initial: link));
+        // Fresh copy, so the dialog starts from the link as Telegram has it now.
+        final fresh = await guard(context, () => account.send<td.ChatInviteLink>(td.GetChatInviteLink(chatId: widget.chatId, inviteLink: link.inviteLink)));
+        if (!mounted) return;
+        final result = await showDialog<(String, int, int, bool)>(context: context, builder: (_) => _NewLinkDialog(initial: fresh ?? link));
         if (result == null || !mounted) return;
         await guard(
           context,
@@ -747,6 +859,7 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
 
   Widget _tile(td.ChatInviteLink link, Strings s) {
     final details = <String>[
+      if (link.subscriptionPricing case final pricing?) s.t('subscription_price_value', {'n': '${pricing.starCount}'}),
       s.count('joined', link.memberCount),
       if (link.memberLimit > 0) s.t('link_limit', {'n': '${link.memberLimit}'}),
       if (link.pendingJoinRequestCount > 0) s.t('link_pending', {'n': '${link.pendingJoinRequestCount}'}),
@@ -792,6 +905,9 @@ class _InviteLinksScreenState extends ConsumerState<InviteLinksScreen> {
     );
   }
 }
+
+/// Telegram's only subscription period: 30 days.
+const _subscriptionPeriod = 30 * 24 * 60 * 60;
 
 class _NewLinkDialog extends StatefulWidget {
   const _NewLinkDialog({this.initial});

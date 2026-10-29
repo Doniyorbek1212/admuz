@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../state/telegram.dart';
@@ -55,6 +57,10 @@ class CallSession extends ChangeNotifier {
   final Map<int, Timer> _serviceTimers = {};
   bool _disposed = false;
 
+  /// Call diagnostics for Telegram when it asks for them after the call (needDebugInformation / needLog).
+  final List<String> _log = [];
+  Map<String, Object?> _lastStats = const {};
+
   bool get isOutgoing => call.isOutgoing;
   Duration get duration => startedAt == null ? Duration.zero : DateTime.now().difference(startedAt!);
 
@@ -67,6 +73,7 @@ class CallSession extends ChangeNotifier {
   /// Applies an updateCall from TDLib.
   Future<void> onCallUpdate(td.Call updated) async {
     call = updated;
+    _trace('state ${updated.state.runtimeType}');
     switch (updated.state) {
       case td.CallStatePending():
       case td.CallStateExchangingKeys():
@@ -81,10 +88,13 @@ class CallSession extends ChangeNotifier {
         }
       case td.CallStateHangingUp():
         break;
-      case td.CallStateDiscarded(:final reason, :final needRating):
+      case td.CallStateDiscarded(:final reason, :final needRating, :final needDebugInformation, :final needLog):
         endReason = reason;
         this.needRating = needRating;
+        _trace('discarded ${reason.runtimeType}');
         await _end();
+        if (needDebugInformation) unawaited(_sendDebugInformation());
+        if (needLog) unawaited(_sendLog());
       case td.CallStateError(:final error):
         debugPrint('call error: ${error.code} ${error.message}');
         this.error = error;
@@ -358,6 +368,7 @@ class CallSession extends ChangeNotifier {
       timer.cancel();
     }
     _serviceTimers.clear();
+    await _snapshotStats();
     for (final track in _local?.getTracks() ?? const <MediaStreamTrack>[]) {
       await track.stop();
     }
@@ -371,6 +382,52 @@ class CallSession extends ChangeNotifier {
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  void _trace(String event) {
+    _log.add('${DateTime.now().toIso8601String()} $event');
+    if (_log.length > 500) _log.removeAt(0);
+  }
+
+  /// Last WebRTC stats before the connection closes: transport, candidate pair and RTP counters.
+  Future<void> _snapshotStats() async {
+    final pc = _pc;
+    if (pc == null) return;
+    try {
+      final reports = await pc.getStats();
+      const kept = {'transport', 'candidate-pair', 'inbound-rtp', 'outbound-rtp', 'remote-inbound-rtp'};
+      _lastStats = {
+        for (final report in reports)
+          if (kept.contains(report.type)) '${report.type}:${report.id}': report.values,
+      };
+    } on Object catch (error) {
+      _trace('stats failed: $error');
+    }
+  }
+
+  Future<void> _sendDebugInformation() async {
+    final info = jsonEncode({
+      'library': callProtocol.libraryVersions.first,
+      'duration': duration.inSeconds,
+      'video': videoOn || remoteVideo,
+      'stats': _lastStats,
+    });
+    try {
+      await account.send<td.Ok>(td.SendCallDebugInformation(callId: td.InputCallDiscarded(callId: call.id), debugInformation: info));
+    } on TdException catch (error) {
+      debugPrint('call debug info not sent: $error');
+    }
+  }
+
+  Future<void> _sendLog() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}call_${call.id}.log');
+      await file.writeAsString(_log.join('\n'));
+      await account.send<td.Ok>(td.SendCallLog(callId: td.InputCallDiscarded(callId: call.id), logFile: td.InputFileLocal(path: file.path)));
+    } on Object catch (error) {
+      debugPrint('call log not sent: $error');
+    }
   }
 
   @override

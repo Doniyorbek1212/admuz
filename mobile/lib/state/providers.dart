@@ -110,6 +110,7 @@ class AccountSlotsNotifier extends Notifier<AccountSlots> {
     );
     _persist(state);
     ref.read(sharedPreferencesProvider).remove('tg.label.$slot');
+    await TelegramAccount.forgetDatabaseKey(slot);
     try {
       final dir = Directory(await TelegramAccount.directoryFor(slot));
       if (await dir.exists()) await dir.delete(recursive: true);

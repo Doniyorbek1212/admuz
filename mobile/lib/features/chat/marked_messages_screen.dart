@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
-import 'message_bubble.dart';
+
+/// Marked messages of one chat, fetched in one GetMessages call; key is (chat id, comma-joined message ids).
+final _markedBatchProvider = FutureProvider.autoDispose.family<Map<int, td.Message>, (int, String)>((ref, key) async {
+  final ids = [for (final id in key.$2.split(',')) int.parse(id)];
+  try {
+    final found = await ref.watch(accountProvider).send<td.Messages>(td.GetMessages(chatId: key.$1, messageIds: ids));
+    return {for (final message in (found.messages ?? const <td.Message?>[]).whereType<td.Message>()) message.id: message};
+  } on TdException {
+    return const {};
+  }
+});
 
 /// Messages the user marked as important, from every chat (aka "Belgilangan xabarlar").
 class MarkedMessagesScreen extends ConsumerWidget {
@@ -29,7 +41,8 @@ class MarkedMessagesScreen extends ConsumerWidget {
               itemBuilder: (context, index) {
                 final (chatId, messageId) = marks[index];
                 final chat = account.chats[chatId];
-                final message = ref.watch(repliedMessageProvider((chatId, messageId)));
+                final ids = [for (final mark in marks) if (mark.$1 == chatId) mark.$2].join(',');
+                final message = ref.watch(_markedBatchProvider((chatId, ids))).whenData((found) => found[messageId]);
                 return ListTile(
                   leading: ChatAvatar(chatId: chatId, size: 46),
                   title: Text(chat == null ? '' : chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis),

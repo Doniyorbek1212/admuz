@@ -7,8 +7,11 @@ import '../../widgets/common.dart';
 
 /// Telegram's checklist ("Ro'yxat"): a title and tasks others can tick off. Pops with the checklist to send.
 /// Sending needs Telegram Premium; TDLib reports the error otherwise.
+/// With [initial] it edits a sent checklist: existing tasks keep their ids so ticks survive.
 class ChecklistCreatorScreen extends StatefulWidget {
-  const ChecklistCreatorScreen({super.key});
+  const ChecklistCreatorScreen({super.key, this.initial});
+
+  final td.Checklist? initial;
 
   static const maxTasks = 30;
 
@@ -17,10 +20,17 @@ class ChecklistCreatorScreen extends StatefulWidget {
 }
 
 class _ChecklistCreatorScreenState extends State<ChecklistCreatorScreen> {
-  final _title = TextEditingController();
-  final List<TextEditingController> _tasks = [TextEditingController()];
-  bool _othersCanAdd = true;
-  bool _othersCanMark = true;
+  late final _title = TextEditingController(text: widget.initial?.title.text);
+  late final List<TextEditingController> _tasks = [
+    for (final task in widget.initial?.tasks ?? const <td.ChecklistTask>[]) TextEditingController(text: task.text.text),
+    if (widget.initial == null) TextEditingController(),
+  ];
+  // Server task id per controller; 0 marks a task added in this editor.
+  late final Map<TextEditingController, int> _ids = {
+    for (final (i, task) in (widget.initial?.tasks ?? const <td.ChecklistTask>[]).indexed) _tasks[i]: task.id,
+  };
+  late bool _othersCanAdd = widget.initial?.othersCanAddTasks ?? true;
+  late bool _othersCanMark = widget.initial?.othersCanMarkTasksAsDone ?? true;
 
   @override
   void dispose() {
@@ -32,16 +42,17 @@ class _ChecklistCreatorScreenState extends State<ChecklistCreatorScreen> {
   }
 
   void _submit() {
-    final tasks = [for (final t in _tasks) if (t.text.trim().isNotEmpty) t.text.trim()];
+    final tasks = [for (final t in _tasks) if (t.text.trim().isNotEmpty) t];
     if (_title.text.trim().isEmpty || tasks.isEmpty) {
       showToast(context, context.t('checklist_invalid'));
       return;
     }
+    var nextId = _ids.values.fold(0, (a, b) => a > b ? a : b);
     Navigator.pop(
       context,
       td.InputChecklist(
         title: plainText(_title.text.trim()),
-        tasks: [for (final (i, text) in tasks.indexed) td.InputChecklistTask(id: i + 1, text: plainText(text))],
+        tasks: [for (final t in tasks) td.InputChecklistTask(id: _ids[t] ?? ++nextId, text: plainText(t.text.trim()))],
         othersCanAddTasks: _othersCanAdd,
         othersCanMarkTasksAsDone: _othersCanMark,
       ),
@@ -52,7 +63,7 @@ class _ChecklistCreatorScreenState extends State<ChecklistCreatorScreen> {
   Widget build(BuildContext context) {
     final s = context.s;
     return Scaffold(
-      appBar: AppBar(title: Text(s.t('checklist')), actions: [TextButton(onPressed: _submit, child: Text(s.t('send')))]),
+      appBar: AppBar(title: Text(s.t('checklist')), actions: [TextButton(onPressed: _submit, child: Text(s.t(widget.initial == null ? 'send' : 'save')))]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [

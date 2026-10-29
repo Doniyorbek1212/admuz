@@ -66,6 +66,34 @@ class CallService {
     return session;
   }
 
+  /// Joins the group call of a live story posted by [posterChatId], leaving any other call.
+  Future<GroupCallSession?> joinLiveStory(int posterChatId, int groupCallId) async {
+    final account = _account;
+    if (account == null) return null;
+    if (currentGroup.value != null) await leaveVideoChat();
+    final groupCall = await account.send<td.GroupCall>(td.GetGroupCall(groupCallId: groupCallId));
+    final session = GroupCallSession(account, posterChatId, groupCall)..liveStory = true;
+    currentGroup.value = session;
+    try {
+      await session.join();
+    } on Object {
+      currentGroup.value = null;
+      session.dispose();
+      rethrow;
+    }
+    return session;
+  }
+
+  /// Starts a new conference call ([input] null) or joins one by link / by its message, leaving any other call.
+  Future<GroupCallSession?> joinConference({td.InputGroupCall? input}) async {
+    final account = _account;
+    if (account == null) return null;
+    if (currentGroup.value != null) await leaveVideoChat();
+    final session = await GroupCallSession.conference(account, input: input);
+    currentGroup.value = session;
+    return session;
+  }
+
   Future<void> leaveVideoChat({bool endForAll = false}) async {
     final session = currentGroup.value;
     if (session == null) return;
@@ -128,6 +156,12 @@ class CallService {
       case td.UpdateGroupCallParticipant(:final groupCallId, :final participant):
         final session = currentGroup.value;
         if (session?.id == groupCallId) session!.onParticipant(participant);
+      case td.UpdateNewGroupCallMessage(:final groupCallId, :final message):
+        final session = currentGroup.value;
+        if (session?.id == groupCallId) session!.onMessage(message);
+      case td.UpdateGroupCallMessagesDeleted(:final groupCallId, :final messageIds):
+        final session = currentGroup.value;
+        if (session?.id == groupCallId) session!.onMessagesDeleted(messageIds);
       default:
         break;
     }

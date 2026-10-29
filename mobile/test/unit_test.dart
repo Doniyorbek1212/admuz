@@ -59,7 +59,13 @@ void main() {
         'soon', 'wallpaper', 'what', 'total', 'system_gallery', 'set', 'moderate', 'everyone', 'rejoin', 'renew',
         'b', 'd', 'r', 'replace', 'saved_topics', 'display_as', 'invite', 'lower_hand', 'mute_all', 'mute_me', 'mute_new',
         'record', 'rtmp', 'schedule', 'start', 'unmute_all', 'unmute_me', 'volume', 'folder', 'transfer', 'resale', 'upgrade',
-        'album', 'all', 'device', 'none', 'pinned', 'some', 'stats', 'where', 'site',
+        'conference_invite', 'conference_link', 'conference_revoke', 'messages_allowed', 'paid_messages',
+        'rich_compose', 'rich_create', 'rich_fix', 'rich_translate',
+        'add_tasks', 'author', 'block_replies', 'calendar', 'edit_checklist', 'embed', 'one',
+        'album', 'all', 'device', 'none', 'pinned', 'some', 'stats', 'where', 'site', 'country',
+        'as_messages', 'by_date', 'chin', 'cover', 'cover_reset', 'emojis', 'eyes', 'forehead', 'key', 'keywords', 'mask', 'mouth',
+        'new', 'order', 'revenue', 'strings', 'tag',
+        'card', 'collections', 'export', 'gift', 'inline', 'live', 'prize', 'rate', 'size', 'text', 'top',
       };
       final missing = used.where((k) => !notKeys.contains(k) && !en.containsKey(k) && !en.containsKey('${k}_one')).toList()..sort();
       expect(missing, isEmpty);

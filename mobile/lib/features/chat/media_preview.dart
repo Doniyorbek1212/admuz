@@ -1,11 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:video_player/video_player.dart';
 
+import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
+import '../../state/providers.dart';
+import '../../state/telegram.dart';
 import 'photo_draw_screen.dart';
 
 /// Selection shared by the attach sheet's grid and the full-screen preview: picked assets in order,
@@ -57,8 +63,40 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
 
   Future<File?> _fileOf(AssetEntity asset) => _files.putIfAbsent(asset.id, () => asset.file);
 
+  // Videos start uploading while the user is still in the viewer; dropped ones are cancelled on close.
+  final Map<String, int> _preUploads = {};
+  bool _sent = false;
+  TelegramAccount? _account;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_preUpload(_current));
+    });
+  }
+
+  Future<void> _preUpload(AssetEntity asset) async {
+    if (asset.type != AssetType.video || _preUploads.containsKey(asset.id)) return;
+    final path = (await _fileOf(asset))?.path;
+    if (path == null || !mounted) return;
+    try {
+      final TelegramAccount account = _account ?? ProviderScope.containerOf(context, listen: false).read(accountProvider);
+      _account = account;
+      // Sending later with the same local path reuses this upload.
+      final file = await account.send<td.File>(td.PreliminaryUploadFile(file: td.InputFileLocal(path: path), fileType: const td.FileTypeVideo(), priority: 1));
+      _preUploads[asset.id] = file.id;
+    } on TdException catch (error) {
+      debugPrint('preliminary upload failed: $error');
+    }
+  }
+
   @override
   void dispose() {
+    for (final MapEntry(key: assetId, value: fileId) in _preUploads.entries) {
+      if (_sent && widget.selection.selected.any((a) => a.id == assetId)) continue;
+      _account?.send<td.Ok>(td.CancelPreliminaryUploadFile(fileId: fileId)).ignore();
+    }
     _pages.dispose();
     super.dispose();
   }
@@ -105,6 +143,7 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   void _send() {
     // Sending from the viewer with nothing picked sends the photo on screen, like Telegram.
     if (widget.selection.selected.isEmpty) widget.selection.toggle(_current);
+    _sent = true;
     Navigator.pop(context, true);
   }
 
@@ -149,7 +188,10 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
                 child: PageView.builder(
                   controller: _pages,
                   itemCount: widget.assets.length,
-                  onPageChanged: (i) => setState(() => _index = i),
+                  onPageChanged: (i) {
+                    setState(() => _index = i);
+                    unawaited(_preUpload(_current));
+                  },
                   itemBuilder: (context, i) => _page(widget.assets[i]),
                 ),
               ),

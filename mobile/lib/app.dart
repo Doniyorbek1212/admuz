@@ -103,7 +103,7 @@ class AuthGate extends ConsumerWidget {
       final td.AuthorizationStateWaitPassword waiting => PasswordScreen(state: waiting),
       td.AuthorizationStateWaitRegistration(:final termsOfService) => RegistrationScreen(terms: termsOfService),
       td.AuthorizationStateWaitEmailAddress() => const EmailScreen(),
-      td.AuthorizationStateWaitEmailCode(:final codeInfo) => EmailScreen(codeInfo: codeInfo),
+      td.AuthorizationStateWaitEmailCode(:final codeInfo, :final emailAddressResetState) => EmailScreen(codeInfo: codeInfo, resetState: emailAddressResetState),
       td.AuthorizationStateWaitPremiumPurchase() => const UnsupportedAuthScreen(),
       _ => const _Splash(),
     };
@@ -270,6 +270,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
     final ghost = ref.read(settingsProvider).ghostMode;
     // Telegram expects clients to report offline when not visible.
     unawaited(_account.setOnline(state == AppLifecycleState.resumed && !ghost));
+    // Back from the background: the session may have been ended from another device meanwhile.
+    if (state == AppLifecycleState.resumed) unawaited(_account.refreshAuthState());
   }
 
   @override

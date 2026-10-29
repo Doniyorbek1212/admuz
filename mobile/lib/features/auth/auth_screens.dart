@@ -8,6 +8,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
+import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
@@ -493,6 +494,16 @@ class _CodeScreenState extends ConsumerState<CodeScreen> with _Submitting {
                     child: Text(s.t('resend_code')),
                   ),
           ),
+        if (_secondsLeft <= 0 && widget.info.type is td.AuthenticationCodeTypeSms)
+          Center(
+            child: TextButton(
+              onPressed: () async {
+                await submit(() => ref.read(accountProvider).send<td.Ok>(const td.ReportAuthenticationCodeMissing(mobileNetworkCode: '')));
+                if (mounted && errorMessage == null) showToast(this.context, s.t('code_missing_reported'));
+              },
+              child: Text(s.t('code_missing')),
+            ),
+          ),
       ],
     );
   }
@@ -528,6 +539,8 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> with _Submittin
     if (!mounted || errorMessage != null) return;
     final code = await _prompt(s.t('recovery_code_sent', {'email': widget.state.recoveryEmailAddressPattern}));
     if (code == null || code.isEmpty || !mounted) return;
+    await submit(() => account.send<td.Ok>(td.CheckAuthenticationPasswordRecoveryCode(recoveryCode: code)));
+    if (!mounted || errorMessage != null) return;
     await submit(() => account.send<td.Ok>(td.RecoverAuthenticationPassword(recoveryCode: code, newPassword: '', newHint: '')));
   }
 
@@ -664,10 +677,13 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> with _S
 // ------------------------------------------------------------------ email (required for some new accounts)
 
 class EmailScreen extends ConsumerStatefulWidget {
-  const EmailScreen({super.key, this.codeInfo});
+  const EmailScreen({super.key, this.codeInfo, this.resetState});
 
   /// Null while asking for the address, set while waiting for the emailed code.
   final td.EmailAddressAuthenticationCodeInfo? codeInfo;
+
+  /// Lets a user who lost access to the login email fall back to an SMS code.
+  final td.EmailAddressResetState? resetState;
 
   @override
   ConsumerState<EmailScreen> createState() => _EmailScreenState();
@@ -709,6 +725,16 @@ class _EmailScreenState extends ConsumerState<EmailScreen> with _Submitting {
           decoration: InputDecoration(errorText: errorMessage),
           onSubmitted: (_) => _submit(),
         ),
+        if (widget.resetState case td.EmailAddressResetStateAvailable() || td.EmailAddressResetStatePending(resetIn: 0))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: busy ? null : () => submit(() => ref.read(accountProvider).send<td.Ok>(const td.ResetAuthenticationEmailAddress())),
+              child: Text(context.t('email_reset')),
+            ),
+          )
+        else if (widget.resetState case td.EmailAddressResetStatePending(:final resetIn))
+          Text(context.t('email_reset_in', {'n': formatDuration(Duration(seconds: resetIn))}), style: TextStyle(color: Theme.of(context).hintColor)),
       ],
     );
   }

@@ -18,6 +18,17 @@ abstract final class KeepAliveService {
     }
   }
 
+  /// Active network kind ("wifi", "mobile", "roaming", "none", "other"); null off Android or on failure.
+  static Future<String?> networkType() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('networkType');
+    } on PlatformException catch (error) {
+      debugPrint('network type unavailable: $error');
+      return null;
+    }
+  }
+
   /// Battery charge in percent (Android only; null elsewhere or when unknown). Served by the same channel.
   static Future<int?> batteryLevel() async {
     if (!Platform.isAndroid) return null;

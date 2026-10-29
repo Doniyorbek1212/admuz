@@ -7,17 +7,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/formatters.dart';
+import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
+import 'sticker_extras.dart' show showAttachedStickerSets;
 import '../profile/chat_info_screen.dart';
 import 'media_viewers.dart';
 import 'message_content.dart';
+import 'sponsored_bubble.dart' show reportSponsored;
 
 /// Lets the media viewer hand chat actions (reply, forward, delete, show) back to the open chat.
 class MessageActionScope extends InheritedWidget {
@@ -209,6 +213,10 @@ class _MediaGalleryScreenState extends ConsumerState<MediaGalleryScreen> {
         if (ready) await SharePlus.instance.share(ShareParams(files: [XFile(current.local.path)]));
       case 'pip':
         await _videoKeys[message.id]?.currentState?.enterPip();
+      case 'stickers':
+        if (message.content case td.MessagePhoto(:final photo) when photo.sizes.isNotEmpty) {
+          await showAttachedStickerSets(context, account, photo.sizes.last.photo.id);
+        }
       case 'all_media':
         await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: message.chatId)));
       case 'reply' || 'forward' || 'delete' || 'show_in_chat':
@@ -300,6 +308,8 @@ class _MediaGalleryScreenState extends ConsumerState<MediaGalleryScreen> {
                       _menuItem('save', Icons.add_photo_alternate_outlined, s.t('save_to_gallery')),
                       _menuItem('open_with', Icons.open_in_new_rounded, s.t('open_with')),
                       if (isVideo && PictureInPicture.supported) _menuItem('pip', Icons.picture_in_picture_alt_rounded, s.t('pip')),
+                      if (message.content case td.MessagePhoto(:final photo) when photo.hasStickers)
+                        _menuItem('stickers', Icons.emoji_emotions_outlined, s.t('attached_stickers')),
                       _menuItem('all_media', Icons.grid_view_rounded, s.t('all_media')),
                       if (canChat) _menuItem('show_in_chat', Icons.visibility_outlined, s.t('show_in_chat')),
                       if (canChat) _menuItem('reply', Icons.reply_rounded, s.t('reply')),
@@ -414,6 +424,12 @@ class _GalleryVideoState extends ConsumerState<_GalleryVideo> with WidgetsBindin
   bool _landscape = false;
   String? _skipHint; // "« 10" / "10 »" shown briefly after a double tap.
   Timer? _hintTimer;
+  // Channel video ads: shown over the video after Telegram's start delay, one at a time.
+  List<td.VideoMessageAdvertisement> _ads = const [];
+  int _betweenDelay = 0;
+  td.VideoMessageAdvertisement? _ad;
+  bool _adClosable = false;
+  final List<Timer> _adTimers = [];
 
   td.File? get _file => mediaFileOf(widget.message);
 
@@ -445,6 +461,9 @@ class _GalleryVideoState extends ConsumerState<_GalleryVideo> with WidgetsBindin
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hintTimer?.cancel();
+    for (final timer in _adTimers) {
+      timer.cancel();
+    }
     _controller?.dispose();
     super.dispose();
   }
@@ -462,11 +481,97 @@ class _GalleryVideoState extends ConsumerState<_GalleryVideo> with WidgetsBindin
       }
       setState(() => _controller = controller);
       if (widget.active) unawaited(controller.play());
+      if (widget.message.isChannelPost) unawaited(_loadAds());
     } on Object catch (error) {
       await controller.dispose();
       debugPrint('video init failed: $error');
       if (mounted) showToast(context, context.t('err_GENERIC'));
     }
+  }
+
+  Future<void> _loadAds() async {
+    final account = ref.read(accountProvider);
+    try {
+      final result = await account.send<td.VideoMessageAdvertisements>(
+        td.GetVideoMessageAdvertisements(chatId: widget.message.chatId, messageId: widget.message.id),
+      );
+      if (!mounted || result.advertisements.isEmpty) return;
+      _ads = result.advertisements;
+      _betweenDelay = result.betweenDelay;
+      _adTimers.add(Timer(Duration(seconds: result.startDelay), () => _showAd(0)));
+    } on TdException catch (error) {
+      // Most videos have no ads; the error only means none can be shown.
+      debugPrint('video ads unavailable: $error');
+    }
+  }
+
+  void _showAd(int index) {
+    if (!mounted || index >= _ads.length) return;
+    final ad = _ads[index];
+    setState(() {
+      _ad = ad;
+      _adClosable = false;
+    });
+    unawaited(ref.read(accountProvider).send<td.Ok>(td.ViewVideoMessageAdvertisement(advertisementUniqueId: ad.uniqueId)).then<void>((_) {}, onError: (_) {}));
+    _adTimers
+      ..add(Timer(Duration(seconds: ad.minDisplayDuration), () {
+        if (mounted) setState(() => _adClosable = true);
+      }))
+      ..add(Timer(Duration(seconds: ad.maxDisplayDuration), () => _hideAd(next: index + 1)));
+  }
+
+  void _hideAd({required int next}) {
+    if (!mounted || _ad == null) return;
+    setState(() => _ad = null);
+    if (next < _ads.length) _adTimers.add(Timer(Duration(seconds: _betweenDelay), () => _showAd(next)));
+  }
+
+  Future<void> _openAd(td.VideoMessageAdvertisement ad) async {
+    final account = ref.read(accountProvider);
+    await guard(context, () => account.send<td.Ok>(td.ClickVideoMessageAdvertisement(advertisementUniqueId: ad.uniqueId)));
+    final uri = Uri.tryParse(ad.sponsor.url);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _adCard(td.VideoMessageAdvertisement ad) {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    return Material(
+      color: Colors.black.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openAd(ad),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(s.t('sponsored'), style: const TextStyle(color: Colors.white60, fontSize: 11.5, fontWeight: FontWeight.w600)),
+                Text(ad.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                if (ad.text.isNotEmpty) Text(ad.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              ]),
+            ),
+            if (ad.canBeReported)
+              IconButton(
+                icon: const Icon(Icons.flag_outlined, color: Colors.white70, size: 20),
+                tooltip: s.t('ad_report'),
+                onPressed: () => reportSponsored(
+                  context,
+                  (optionId) => account.send<td.ReportSponsoredResult>(
+                    td.ReportVideoMessageAdvertisement(advertisementUniqueId: ad.uniqueId, optionId: optionId),
+                  ),
+                ),
+              ),
+            IconButton(
+              icon: Icon(Icons.close_rounded, color: _adClosable ? Colors.white : Colors.white24, size: 20),
+              tooltip: s.t('close'),
+              onPressed: _adClosable ? () => _hideAd(next: _ads.indexOf(ad) + 1) : null,
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   Future<void> pickSpeed() async {
@@ -567,6 +672,7 @@ class _GalleryVideoState extends ConsumerState<_GalleryVideo> with WidgetsBindin
             Center(child: AspectRatio(aspectRatio: controller.value.aspectRatio, child: VideoPlayer(controller))),
             if (_skipHint != null) Center(child: _pill(_skipHint!, fontSize: 22)),
             if (_holdFast) Align(alignment: const Alignment(0, -0.6), child: _pill('2x ▶▶')),
+            if (_ad case final ad?) Positioned(left: 12, right: 12, bottom: 96, child: SafeArea(top: false, child: _adCard(ad))),
             if (widget.chrome) ...[
               Center(
                 child: ValueListenableBuilder<VideoPlayerValue>(

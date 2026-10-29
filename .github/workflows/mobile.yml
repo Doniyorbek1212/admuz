@@ -104,16 +104,32 @@ jobs:
           keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
           PROPS
 
-      - name: Build APKs
+      # Release APKs only with the release key; without it CI makes a clearly named debug build instead.
+      - name: Build release APKs
+        if: env.HAS_KEYSTORE == 'true'
         run: >
           flutter build apk --release --split-per-abi
           --dart-define=TG_API_ID=${{ secrets.TG_API_ID }}
           --dart-define=TG_API_HASH=${{ secrets.TG_API_HASH }}
 
       - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE == 'true'
         with:
-          name: sado-android
-          path: mobile/build/app/outputs/flutter-apk/*.apk
+          name: sado-android-release
+          path: mobile/build/app/outputs/flutter-apk/*-release.apk
+
+      - name: Build debug APK (no release key)
+        if: env.HAS_KEYSTORE != 'true'
+        run: >
+          flutter build apk --debug
+          --dart-define=TG_API_ID=${{ secrets.TG_API_ID }}
+          --dart-define=TG_API_HASH=${{ secrets.TG_API_HASH }}
+
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE != 'true'
+        with:
+          name: sado-android-DEBUG-not-for-release
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
 
   ios:
     name: iOS (unsigned)

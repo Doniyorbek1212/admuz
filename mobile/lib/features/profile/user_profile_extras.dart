@@ -128,6 +128,36 @@ class _UsernamesScreenState extends State<UsernamesScreen> {
 }
 
 /// Lets the user suggest a birthday to a contact who has not set one.
+/// Lets one person message the user without paying stars; optionally refunds what they already paid.
+Future<bool> allowFreeMessages(BuildContext context, TelegramAccount account, int userId) async {
+  final s = context.s;
+  var refund = false;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text(s.t('allow_free_messages')),
+        content: CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          value: refund,
+          title: Text(s.t('refund_paid_messages')),
+          onChanged: (v) => setState(() => refund = v ?? false),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(s.t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(s.t('ok'))),
+        ],
+      ),
+    ),
+  );
+  if (ok != true || !context.mounted) return false;
+  final done = await guard(context, () async {
+    await account.send<td.Ok>(td.AllowUnpaidMessagesFromUser(userId: userId, refundPayments: refund));
+    return true;
+  });
+  return done ?? false;
+}
+
 Future<void> suggestBirthdate(BuildContext context, TelegramAccount account, int userId) async {
   final now = DateTime.now();
   final day = await showDatePicker(context: context, firstDate: DateTime(1900), lastDate: now, initialDate: DateTime(now.year - 20));

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:intl/intl.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
@@ -112,7 +114,21 @@ String chatTitle(td.Chat chat, TelegramAccount account, Strings s) {
   if (account.isSavedMessages(chat)) return s.t('saved_messages');
   final user = account.privateUser(chat);
   if (user != null && user.type is td.UserTypeDeleted) return s.t('deleted_account');
+  final local = localChatName(chat);
+  if (local != null) return local;
   return chat.title.isEmpty ? s.t('deleted_account') : chat.title;
+}
+
+/// Name the user gave this chat on this device only (kept in TDLib's chat client_data), or null.
+String? localChatName(td.Chat chat) {
+  if (chat.clientData.isEmpty) return null;
+  try {
+    final data = jsonDecode(chat.clientData);
+    final name = data is Map ? data['name'] : null;
+    return name is String && name.trim().isNotEmpty ? name.trim() : null;
+  } on FormatException {
+    return null;
+  }
 }
 
 td.FormattedText? captionOf(td.MessageContent content) => switch (content) {
@@ -185,6 +201,11 @@ String? contentPreview(td.MessageContent content, Strings s) {
       return '🎮 ${game.title}';
     case td.MessageInvoice(:final productInfo):
       return '🧾 ${productInfo.title}';
+    case td.MessageGroupCall(:final isVideo):
+      return '${isVideo ? '📹' : '👥'} ${s.t('conference_call')}';
+    case td.MessageRichMessage(:final message):
+      final first = message.blocks.map(_richBlockText).firstWhere((t) => t.isNotEmpty, orElse: () => '');
+      return '📰 $first';
     default:
       return null;
   }
@@ -220,6 +241,12 @@ String? serviceMessageText(td.Message message, TelegramAccount account, Strings 
         : s.t('sys_autodelete_on', {'actor': actor}),
     td.MessageCustomServiceAction(:final text) => text,
     td.MessageGiftedPremium() => s.t('sys_gift'),
+    td.MessageChatHasProtectedContentDisableRequested(:final isExpired) =>
+      s.t(isExpired ? 'sys_protect_request_expired' : 'sys_protect_request', {'actor': actor}),
+    td.MessageChatHasProtectedContentToggled(:final requestMessageId, :final oldHasProtectedContent, :final newHasProtectedContent) =>
+      oldHasProtectedContent == newHasProtectedContent && requestMessageId != 0
+          ? s.t('sys_protect_request_declined', {'actor': actor})
+          : s.t(newHasProtectedContent ? 'sys_protect_on' : 'sys_protect_off', {'actor': actor}),
     _ => null,
   };
 }
@@ -241,7 +268,9 @@ bool isServiceMessage(td.Message message) => switch (message.content) {
       td.MessageScreenshotTaken() ||
       td.MessageChatSetMessageAutoDeleteTime() ||
       td.MessageCustomServiceAction() ||
-      td.MessageGiftedPremium() =>
+      td.MessageGiftedPremium() ||
+      td.MessageChatHasProtectedContentDisableRequested() ||
+      td.MessageChatHasProtectedContentToggled() =>
         true,
       _ => false,
     };
@@ -270,3 +299,18 @@ String? chatActionText(td.Chat chat, TelegramAccount account, Strings s) {
   if (actions.length > 1) return s.t('action_several', {'n': '${actions.length}'});
   return '$name $verb';
 }
+
+/// Plain text of a rich-message heading or paragraph, for chat-list previews.
+String _richBlockText(td.PageBlock block) => switch (block) {
+      td.PageBlockTitle(:final title) => _richPlain(title),
+      td.PageBlockHeader(:final header) => _richPlain(header),
+      td.PageBlockParagraph(:final text) => _richPlain(text),
+      _ => '',
+    };
+
+String _richPlain(td.RichText text) => switch (text) {
+      td.RichTextPlain(:final text) => text,
+      td.RichTexts(:final texts) => texts.map(_richPlain).join(),
+      td.RichTextBold(:final text) || td.RichTextItalic(:final text) || td.RichTextUnderline(:final text) || td.RichTextUrl(:final text) => _richPlain(text),
+      _ => '',
+    };

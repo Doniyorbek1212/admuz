@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/api/market_models.dart';
-import '../../l10n/strings.dart';
 import '../business/business_widgets.dart';
 
 /// A paid hub banner: picture or muted looping video, darkened at the bottom for the headline.
@@ -29,15 +28,6 @@ class AdBannerCard extends StatelessWidget {
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black87], stops: [0.35, 1]),
-              ),
-            ),
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8)),
-                child: Text(context.t('ad_label'), style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w600)),
               ),
             ),
             Positioned(

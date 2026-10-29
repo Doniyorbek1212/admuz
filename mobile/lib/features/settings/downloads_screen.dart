@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
@@ -9,6 +12,7 @@ import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 
 final _downloadFileProvider = StreamProvider.autoDispose.family<td.File, int>((ref, fileId) {
@@ -137,6 +141,8 @@ class _DownloadTile extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
           ),
           if (!done) Padding(padding: const EdgeInsets.only(top: 4), child: LinearProgressIndicator(value: progress, minHeight: 3)),
+          if (!done && file != null && file.local.downloadedPrefixSize > 0)
+            _PlayableNow(fileId: file.id),
         ],
       ),
       onTap: done && file != null ? () => openLocalFile(context, file.local.path) : null,
@@ -149,15 +155,60 @@ class _DownloadTile extends ConsumerWidget {
               await guard(context, () => account.setDownloadPaused(item.fileId, false));
             case 'remove':
               await guard(context, () => account.removeDownload(item.fileId, deleteFile: true));
+            case 'share':
+              await shareDownloadedFile(context, account, item.fileId);
           }
           onChanged();
         },
         itemBuilder: (context) => [
           if (!done && !item.isPaused) PopupMenuItem(value: 'pause', child: Text(s.t('pause'))),
           if (!done && item.isPaused) PopupMenuItem(value: 'resume', child: Text(s.t('resume'))),
+          if (done) PopupMenuItem(value: 'share', child: Text(s.t('share'))),
           PopupMenuItem(value: 'remove', child: Text(s.t('delete'))),
         ],
       ),
     );
   }
+}
+
+/// How much of a partly downloaded file can already be played from the start (TDLib's downloaded prefix).
+class _PlayableNow extends ConsumerWidget {
+  const _PlayableNow({required this.fileId});
+
+  final int fileId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prefix = ref.watch(_prefixProvider(fileId)).value ?? 0;
+    if (prefix <= 0) return const SizedBox.shrink();
+    return Text(context.t('download_playable', {'size': formatFileSize(prefix)}), style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor));
+  }
+}
+
+final _prefixProvider = FutureProvider.autoDispose.family<int, int>((ref, fileId) async {
+  try {
+    return (await ref.watch(accountProvider).send<td.FileDownloadedPrefixSize>(td.GetFileDownloadedPrefixSize(fileId: fileId, offset: 0))).size;
+  } on TdException {
+    return 0;
+  }
+});
+
+/// Shares a downloaded file under a clean, readable name (TDLib's suggested name, with an extension).
+Future<void> shareDownloadedFile(BuildContext context, TelegramAccount account, int fileId) async {
+  final file = await guard(context, () => account.send<td.File>(td.GetFile(fileId: fileId)));
+  if (file == null || !file.local.isDownloadingCompleted || !context.mounted) return;
+  final temp = await getTemporaryDirectory();
+  if (!context.mounted) return;
+  final name = await guard(context, () => account.send<td.Text>(td.GetSuggestedFileName(fileId: fileId, directory: temp.path)));
+  var clean = name?.text ?? '';
+  if (clean.isEmpty) clean = TdClient.executeStatic(td.CleanFileName(fileName: file.local.path))?['text'] as String? ?? '';
+  if (clean.isEmpty) return;
+  if (!clean.contains('.')) {
+    final mime = TdClient.executeStatic(td.GetFileMimeType(fileName: file.local.path))?['text'] as String? ?? '';
+    final ext = mime.isEmpty ? '' : TdClient.executeStatic(td.GetFileExtension(mimeType: mime))?['text'] as String? ?? '';
+    if (ext.isNotEmpty) clean = '$clean.$ext';
+  }
+  final copy = File('${temp.path}${Platform.pathSeparator}$clean');
+  await File(file.local.path).copy(copy.path);
+  await SharePlus.instance.share(ShareParams(files: [XFile(copy.path)]));
 }

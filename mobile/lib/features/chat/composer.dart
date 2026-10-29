@@ -24,16 +24,31 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../webapp/bot_extras.dart' show joinChatChecked;
 import '../webapp/web_app_screen.dart';
 import 'article_editor.dart';
+import '../settings/telegram_services_screens.dart' show PremiumInfoScreen;
+import 'ai_styles_screen.dart';
+import 'rich_message.dart';
 import 'attach_sheet.dart';
 import 'checklist_creator.dart';
 import '../settings/business_quick_replies.dart';
 import '../settings/business_settings.dart';
 import 'composer_panels.dart';
+import 'composer_suggestions.dart';
 import 'contact_picker.dart';
 import 'location_picker.dart';
+import 'message_tools.dart';
 import 'poll_creator.dart';
+
+
+final _canMessageUserProvider = FutureProvider.autoDispose.family<td.CanSendMessageToUserResult?, int>((ref, userId) async {
+  try {
+    return await ref.watch(accountProvider).send<td.CanSendMessageToUserResult>(td.CanSendMessageToUser(userId: userId, onlyLocal: false));
+  } on TdException {
+    return null;
+  }
+});
 
 class Composer extends ConsumerStatefulWidget {
   const Composer({
@@ -612,6 +627,23 @@ class ComposerState extends ConsumerState<Composer> {
         final file = await picker.pickVideo(source: ImageSource.camera);
         if (file != null && mounted) await guard(context, () => account.sendVideo(chatId, file.path, replyToId: replyId));
       case AttachAction(action: 'file'):
+        final recent = await pickRecentDocument(context, account);
+        if (!mounted) return;
+        if (recent case final td.Document document) {
+          await guard(
+            context,
+            () => account.sendContent(
+              chatId,
+              td.InputMessageDocument(
+                document: td.InputDocument(document: td.InputFileRemote(id: document.document.remote.id), thumbnail: null, disableContentTypeDetection: false),
+                caption: null,
+              ),
+              replyToId: replyId,
+            ),
+          );
+          return;
+        }
+        if (recent != pickFromDevice) return;
         final files = await FilePicker.pickFiles();
         for (final file in files) {
           final path = file.path;
@@ -742,6 +774,7 @@ class ComposerState extends ConsumerState<Composer> {
             poll.options,
             anonymous: poll.anonymous,
             multiple: poll.multiple,
+            allowAdding: poll.allowAdding,
             correctOption: poll.correctOption,
             explanation: poll.explanation,
           ),
@@ -1055,13 +1088,29 @@ class ComposerState extends ConsumerState<Composer> {
                   title: Text(style.title),
                   onTap: () => Navigator.pop(context, 'style:${style.name}'),
                 ),
+              ListTile(
+                leading: const Icon(Icons.tune_rounded),
+                title: Text(s.t('ai_styles_manage')),
+                onTap: () => Navigator.pop(context, 'manage'),
+              ),
+              const Divider(height: 8),
+              // Rich messages: article-like posts with headings and lists (Telegram Premium).
+              ListTile(leading: const Icon(Icons.article_outlined), title: Text(s.t('ai_rich_create')), onTap: () => Navigator.pop(context, 'rich_create')),
+              ListTile(leading: const Icon(Icons.auto_fix_high_rounded), title: Text(s.t('ai_rich_compose')), onTap: () => Navigator.pop(context, 'rich_compose')),
+              ListTile(leading: const Icon(Icons.spellcheck_rounded), title: Text(s.t('ai_rich_fix')), onTap: () => Navigator.pop(context, 'rich_fix')),
+              ListTile(leading: const Icon(Icons.g_translate_rounded), title: Text(s.t('ai_rich_translate')), onTap: () => Navigator.pop(context, 'rich_translate')),
             ],
           ),
         ),
       ),
     );
     if (choice == null || !mounted) return;
+    if (choice == 'manage') {
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AiStylesScreen()));
+      return;
+    }
     final settings = ref.read(settingsProvider);
+    if (choice.startsWith('rich_')) return _richWithAi(choice, text, settings.localeCode);
     final result = await guard(context, () {
       if (choice == 'fix') return account.fixWithAi(text);
       if (choice == 'translate') return account.translate(text, settings.localeCode);
@@ -1069,6 +1118,29 @@ class ComposerState extends ConsumerState<Composer> {
       return account.composeWithAi(text, styleName: choice.substring(6));
     });
     if (result != null && mounted) setText(result);
+  }
+
+  /// Turns the typed text into a rich message with Telegram AI, previews it, and sends it on confirmation.
+  Future<void> _richWithAi(String choice, String text, String language) async {
+    final account = ref.read(accountProvider);
+    final input = richInputFromText(text);
+    final rich = await guard(context, () => account.send<td.RichMessage>(switch (choice) {
+          'rich_create' => td.CreateRichMessageWithAi(prompt: text, languageCode: language, addEmojis: false),
+          'rich_fix' => td.FixRichMessageWithAi(message: input),
+          'rich_translate' => td.TranslateRichMessage(message: input, toLanguageCode: language, tone: ''),
+          _ => td.ComposeRichMessageWithAi(message: input, translateToLanguageCode: '', styleName: '', customPrompt: '', addEmojis: false),
+        }));
+    if (rich == null || !mounted) return;
+    final chatId = widget.chat.id;
+    final send = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (context) => RichMessageScreen(rich: rich, onSend: () => Navigator.pop(context, true)),
+    ));
+    if (send != true || !mounted) return;
+    final sent = await guard(context, () => account.sendContent(
+          chatId,
+          td.InputMessageRichMessage(message: richInputFromText(richToMarkdown(rich.blocks)), clearDraft: true),
+        ));
+    if (sent != null && mounted) setText('');
   }
 
   // ------------------------------------------------------------------ build
@@ -1085,7 +1157,7 @@ class ComposerState extends ConsumerState<Composer> {
         (account.isChannel(chat) || account.isGroup(chat))) {
       return _BottomAction(
         label: s.t(account.isChannel(chat) ? 'join_channel' : 'join_group'),
-        onTap: () => guard(context, () => account.send<td.Ok>(td.JoinChat(chatId: chat.id))),
+        onTap: () => joinChatChecked(context, account, td.JoinChat(chatId: chat.id)),
       );
     }
     if (!account.canSendMessages(chat)) {
@@ -1112,6 +1184,20 @@ class ComposerState extends ConsumerState<Composer> {
       return _BottomAction(label: s.t('cannot_send'), onTap: null);
     }
 
+    // People can refuse new chats from non-Premium users or charge stars per message; TDLib says which applies.
+    final privateUser = account.privateUser(chat);
+    final canMessage = privateUser != null && privateUser.id != account.myId && privateUser.type is! td.UserTypeBot
+        ? ref.watch(_canMessageUserProvider(privateUser.id)).value
+        : null;
+    if (canMessage is td.CanSendMessageToUserResultUserRestrictsNewChats) {
+      return _BottomAction(
+        label: s.t('user_premium_only'),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PremiumInfoScreen())),
+      );
+    }
+    if (canMessage is td.CanSendMessageToUserResultUserIsDeleted) return _BottomAction(label: s.t('deleted_account'), onTap: null);
+    final starsPerMessage = canMessage is td.CanSendMessageToUserResultUserHasPaidMessages ? canMessage.outgoingPaidMessageStarCount : 0;
+
     final reference = widget.editing ?? widget.replyTo;
     // Phones: the field floats as a pill over the chat (aka style); desktop keeps the docked bar.
     return Material(
@@ -1122,6 +1208,11 @@ class ComposerState extends ConsumerState<Composer> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (starsPerMessage > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: Text(s.t('paid_messages_cost', {'n': '$starsPerMessage'}), style: TextStyle(fontSize: 12.5, color: theme.hintColor), textAlign: TextAlign.center),
+              ),
             if (_commandMatches.isNotEmpty)
               _CommandList(commands: _commandMatches, onPick: _sendCommand)
             else if (_inlineResults != null)
@@ -1131,7 +1222,9 @@ class ComposerState extends ConsumerState<Composer> {
                 onLoadMore: _loadMoreInline,
               )
             else if (_mentions.isNotEmpty)
-              MentionSuggestions(members: _mentions, onPick: _pickMention),
+              MentionSuggestions(members: _mentions, onPick: _pickMention)
+            else if (widget.editing == null)
+              EmojiStickerSuggestions(controller: _controller, chatId: widget.chat.id, onSticker: _sendSticker),
             if (_preview case final preview? when !_previewClosed && widget.editing == null)
               Material(
                 color: theme.colorScheme.surfaceContainerHighest,

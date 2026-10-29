@@ -12,6 +12,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_screen.dart';
+import '../stories/story_extras.dart' show StoryNotificationExceptionsScreen;
 import 'notification_sounds.dart';
 
 const _scopes = <String, td.NotificationSettingsScope>{
@@ -147,6 +148,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           ]),
           SettingsGroup(title: s.t('notif_telegram'), children: [
             for (final key in _scopes.keys) _ScopeTile(scopeKey: key, onChanged: _setScope),
+            ListTile(
+              leading: const Icon(Icons.motion_photos_on_outlined),
+              title: Text(s.t('story_notification_exceptions')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const StoryNotificationExceptionsScreen())),
+            ),
             ListTile(
               leading: const Icon(Icons.library_music_outlined),
               title: Text(s.t('notification_sounds')),

@@ -55,6 +55,9 @@ class PushService {
       await _foreground?.cancel();
       // In the foreground TDLib is running: hand the payload to it and let normal updates drive the UI.
       _foreground = FirebaseMessaging.onMessage.listen((message) {
+        // Several accounts may share this device token; only the one the push is for processes it.
+        final receiver = pushReceiverId(jsonEncode(message.data));
+        if (receiver != null && _receiverId != null && receiver != _receiverId) return;
         unawaited(account
             .send<td.Ok>(td.ProcessPushNotification(payload: jsonEncode(message.data)))
             .catchError((Object _) => const td.Ok()));
@@ -66,14 +69,17 @@ class PushService {
 
   Future<void> _registerToken(TelegramAccount account, String token) async {
     try {
-      await account.send<td.PushReceiverId>(td.RegisterDevice(
+      final receiver = await account.send<td.PushReceiverId>(td.RegisterDevice(
         deviceToken: td.DeviceTokenFirebaseCloudMessaging(token: token, encrypt: false),
         otherUserIds: const [],
       ));
+      _receiverId = receiver.id;
     } on TdException catch (error) {
       debugPrint('registerDevice failed: $error');
     }
   }
+
+  int? _receiverId;
 
   Future<void> dispose() async {
     await _tokenRefresh?.cancel();
@@ -182,6 +188,13 @@ class PushContent {
 
 /// Runs in a background isolate when a push arrives while the app is not in the foreground.
 @pragma('vm:entry-point')
+/// Which signed-in account a push notification belongs to (several accounts share one device token).
+int? pushReceiverId(String payloadJson) {
+  final result = TdClient.executeStatic(td.GetPushReceiverId(payload: payloadJson));
+  final id = result?['id'];
+  return id is int ? id : (id is String ? int.tryParse(id) : null);
+}
+
 Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   final prefs = await SharedPreferences.getInstance();
   if (!(prefs.getBool('notifications') ?? true)) return;

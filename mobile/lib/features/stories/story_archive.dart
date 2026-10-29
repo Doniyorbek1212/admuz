@@ -10,6 +10,7 @@ import '../chat/message_content.dart';
 import '../profile/statistics_screen.dart';
 import '../settings/privacy_screen.dart';
 import 'stories.dart';
+import 'story_extras.dart' show openChatActiveStories;
 
 /// A chat's stories outside the 24-hour feed: posted to its page, the archive (owner/admins) and albums.
 class ChatStoriesScreen extends ConsumerStatefulWidget {
@@ -57,6 +58,32 @@ class _ChatStoriesScreenState extends ConsumerState<ChatStoriesScreen> {
         _albums = albums;
       });
     }
+  }
+
+  /// Drag to change the order albums appear in on the profile.
+  Future<void> _reorderAlbums() async {
+    var albums = [..._albums];
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+            child: ReorderableListView(
+              shrinkWrap: true,
+              onReorderItem: (from, to) {
+                setSheet(() => albums = [...albums]..insert(to, albums.removeAt(from)));
+                guard(context, () => _account.send<td.Ok>(td.ReorderStoryAlbums(chatId: widget.chatId, storyAlbumIds: [for (final a in albums) a.id])));
+              },
+              children: [for (final a in albums) ListTile(key: ValueKey(a.id), title: Text(a.name), trailing: const Icon(Icons.drag_handle_rounded))],
+            ),
+          ),
+        ),
+      ),
+    );
+    await _load();
   }
 
   Future<void> _storyMenu(td.Story story, td.Stories from) async {
@@ -142,6 +169,15 @@ class _ChatStoriesScreenState extends ConsumerState<ChatStoriesScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(s.t('stories')),
+          actions: [
+            IconButton(
+              tooltip: s.t('stories_active'),
+              icon: const Icon(Icons.play_circle_outline_rounded),
+              onPressed: () => openChatActiveStories(context, _account, widget.chatId),
+            ),
+            if (widget.canManage && _albums.length > 1)
+              IconButton(tooltip: s.t('pinned_reorder'), icon: const Icon(Icons.swap_vert_rounded), onPressed: _reorderAlbums),
+          ],
           bottom: TabBar(tabs: [for (final (label, _) in tabs) Tab(text: label), Tab(text: s.t('story_albums'))]),
         ),
         body: TabBarView(children: [
@@ -215,8 +251,30 @@ class _AlbumScreenState extends ConsumerState<_AlbumScreen> {
     if (mounted) setState(() => _stories = result?.stories ?? const []);
   }
 
+  /// Moves a story to the front of the album (album order = ReorderStoryAlbumStories list first, rest after).
+  Future<void> _moveFirst(td.Story story) async {
+    final album = await guard(
+      context,
+      () => ref.read(accountProvider).send<td.StoryAlbum>(td.ReorderStoryAlbumStories(chatId: widget.chatId, storyAlbumId: widget.album.id, storyIds: [story.id])),
+    );
+    if (album != null) await _load();
+  }
+
   Future<void> _remove(td.Story story) async {
     if (!widget.canManage) return;
+    final s = context.s;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.vertical_align_top_rounded), title: Text(s.t('story_album_first')), onTap: () => Navigator.pop(context, 'first')),
+          ListTile(leading: const Icon(Icons.remove_circle_outline_rounded), title: Text(s.t('story_album_remove')), onTap: () => Navigator.pop(context, 'remove')),
+        ]),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'first') return _moveFirst(story);
     final ok = await confirm(context, title: context.t('story_album_remove'), destructive: true);
     if (!ok || !mounted) return;
     await guard(

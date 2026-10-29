@@ -135,6 +135,8 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
                       selected: {_isVideo},
                       onSelectionChanged: (value) => setState(() => _isVideo = value.first),
                     ),
+                    const SizedBox(height: 10),
+                    _MediaSpecs(isVideo: _isVideo),
                     const SizedBox(height: 14),
                     TextFormField(
                       controller: _media,
@@ -231,6 +233,45 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
           ),
         ]);
       },
+    );
+  }
+}
+
+/// What the banner slot expects, so uploads are not cropped or rejected (server: 5 MB photos, 30 MB videos).
+class _MediaSpecs extends StatelessWidget {
+  const _MediaSpecs({required this.isVideo});
+
+  final bool isVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final lines = isVideo
+        ? [s.t('ad_spec_size'), s.t('ad_spec_video_format'), s.t('ad_spec_video_limit'), s.t('ad_spec_video_sound')]
+        : [s.t('ad_spec_size'), s.t('ad_spec_image_format'), s.t('ad_spec_image_limit')];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.25)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.aspect_ratio_rounded, size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(s.t(isVideo ? 'ad_spec_video_title' : 'ad_spec_image_title'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        ]),
+        const SizedBox(height: 6),
+        for (final line in lines)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('• $line', style: TextStyle(fontSize: 13, color: theme.textTheme.bodySmall?.color)),
+          ),
+        const SizedBox(height: 4),
+        Text(s.t('ad_spec_safe_zone'), style: TextStyle(fontSize: 12.5, color: theme.hintColor)),
+      ]),
     );
   }
 }

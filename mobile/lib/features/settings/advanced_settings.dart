@@ -16,6 +16,8 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../chat/message_content.dart';
 import 'storage_usage_screen.dart';
+import 'telegram_extras.dart';
+import 'two_step_recovery.dart';
 
 // ------------------------------------------------------------------ proxy
 
@@ -388,6 +390,17 @@ class _StorageScreenState extends ConsumerState<StorageScreen> {
           GroupHint(s.t('save_to_gallery_hint')),
           SettingsGroup(children: [
             ListTile(
+              title: Text(s.t('autosave_telegram')),
+              subtitle: Text(s.t('autosave_telegram_hint')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const AutosaveScreen())),
+            ),
+            ListTile(
+              title: Text(s.t('browser_settings')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WebBrowserSettingsScreen())),
+            ),
+            ListTile(
               title: Text(s.t('proxy_settings')),
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProxyScreen())),
             ),
@@ -567,7 +580,7 @@ class _TwoStepScreenState extends ConsumerState<TwoStepScreen> {
   Future<void> _setOrChange() async {
     final has = _state?.hasPassword ?? false;
     final result = await Navigator.of(context).push<(String, String, String, String)>(
-      MaterialPageRoute(builder: (_) => _PasswordForm(askOld: has, askEmail: !(_state?.hasRecoveryEmailAddress ?? false))),
+      MaterialPageRoute(builder: (_) => PasswordForm(askOld: has, askEmail: !(_state?.hasRecoveryEmailAddress ?? false))),
     );
     if (result == null || !mounted) return;
     final state = await guard(
@@ -622,12 +635,44 @@ class _TwoStepScreenState extends ConsumerState<TwoStepScreen> {
                   title: Text(s.t(state.hasPassword ? 'two_step_change' : 'two_step_set')),
                   onTap: _setOrChange,
                 ),
+                if (state.recoveryEmailAddressCodeInfo case final pending?)
+                  ...pendingRecoveryEmailTiles(context, ref, pending, (next) => setState(() => _state = next)),
                 if (state.hasPassword) ...[
                   ListTile(
                     leading: const Icon(Icons.email_rounded),
                     title: Text(s.t(state.hasRecoveryEmailAddress ? 'recovery_email_change' : 'recovery_email_set')),
                     onTap: _changeEmail,
                   ),
+                  if (state.hasRecoveryEmailAddress)
+                    ListTile(
+                      leading: const Icon(Icons.visibility_rounded),
+                      title: Text(s.t('recovery_email_show')),
+                      onTap: () => showRecoveryEmail(context, ref),
+                    ),
+                  if (state.pendingResetDate != 0)
+                    ListTile(
+                      leading: const Icon(Icons.timer_rounded),
+                      title: Text(s.t('two_step_reset_pending', {'date': formatChatTime(state.pendingResetDate, s.locale)})),
+                      subtitle: Text(s.t('two_step_reset_cancel')),
+                      onTap: () async {
+                        final next = await cancelPasswordReset(context, ref);
+                        if (next != null && mounted) setState(() => _state = next);
+                      },
+                    )
+                  else
+                    ListTile(
+                      leading: const Icon(Icons.help_outline_rounded),
+                      title: Text(s.t('forgot_password')),
+                      onTap: () async {
+                        if (!state.hasRecoveryEmailAddress) {
+                          await resetForgottenPassword(context, ref);
+                          await _load();
+                          return;
+                        }
+                        final next = await recoverForgottenPassword(context, ref);
+                        if (next != null && mounted) setState(() => _state = next);
+                      },
+                    ),
                   ListTile(
                     leading: Icon(Icons.no_encryption_rounded, color: Theme.of(context).colorScheme.error),
                     title: Text(s.t('two_step_disable'), style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -636,69 +681,6 @@ class _TwoStepScreenState extends ConsumerState<TwoStepScreen> {
                 ],
               ],
             ),
-    );
-  }
-}
-
-class _PasswordForm extends StatefulWidget {
-  const _PasswordForm({required this.askOld, required this.askEmail});
-
-  final bool askOld;
-  final bool askEmail;
-
-  @override
-  State<_PasswordForm> createState() => _PasswordFormState();
-}
-
-class _PasswordFormState extends State<_PasswordForm> {
-  final _old = TextEditingController();
-  final _new = TextEditingController();
-  final _repeat = TextEditingController();
-  final _hint = TextEditingController();
-  final _email = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    for (final c in [_old, _new, _repeat, _hint, _email]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _submit() {
-    final s = context.s;
-    if (_new.text.length < 4) {
-      setState(() => _error = s.t('password_too_short'));
-    } else if (_new.text != _repeat.text) {
-      setState(() => _error = s.t('passwords_mismatch'));
-    } else if (_hint.text.trim() == _new.text) {
-      setState(() => _error = s.t('hint_equals_password'));
-    } else {
-      Navigator.pop(context, (_old.text, _new.text, _hint.text.trim(), _email.text.trim()));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = context.s;
-    return Scaffold(
-      appBar: AppBar(title: Text(s.t('two_step'))),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (widget.askOld)
-            TextField(controller: _old, obscureText: true, decoration: InputDecoration(labelText: s.t('two_step_current'))),
-          TextField(controller: _new, obscureText: true, decoration: InputDecoration(labelText: s.t('two_step_new'))),
-          TextField(controller: _repeat, obscureText: true, decoration: InputDecoration(labelText: s.t('two_step_repeat'))),
-          TextField(controller: _hint, decoration: InputDecoration(labelText: s.t('two_step_hint'))),
-          if (widget.askEmail)
-            TextField(controller: _email, keyboardType: TextInputType.emailAddress, decoration: InputDecoration(labelText: s.t('recovery_email'))),
-          if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-          const SizedBox(height: 20),
-          FilledButton(onPressed: _submit, child: Text(s.t('save'))),
-        ],
-      ),
     );
   }
 }

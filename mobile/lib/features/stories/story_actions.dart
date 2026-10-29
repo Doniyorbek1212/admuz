@@ -8,6 +8,7 @@ import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../settings/privacy_screen.dart';
 import 'story_archive.dart';
+import 'story_extras.dart' show editStoryCover;
 
 /// Story "⋮" menu. Returns true when the story was deleted and the viewer should move on.
 Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Story story) async {
@@ -25,6 +26,7 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
               if (story.canGetInteractions) (Icons.visibility_rounded, 'story_viewers', 'viewers'),
               if (story.canGetStatistics) (Icons.insights_rounded, 'statistics', 'stats'),
               if (story.canBeEdited) (Icons.edit_rounded, 'story_edit_caption', 'caption'),
+              if (story.canBeEdited && story.content is td.StoryContentVideo) (Icons.image_outlined, 'story_cover', 'cover'),
               if (story.canSetPrivacySettings) (Icons.lock_outline_rounded, 'story_privacy', 'privacy'),
               if (story.canToggleIsPostedToChatPage)
                 (story.isPostedToChatPage ? Icons.bookmark_remove_outlined : Icons.bookmark_add_outlined,
@@ -48,6 +50,8 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
   switch (action) {
     case 'viewers':
       await _showViewers(context, account, story);
+    case 'cover':
+      await editStoryCover(context, account, story);
     case 'stats':
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => StoryStatisticsScreen(story: story)));
     case 'caption':
@@ -103,15 +107,18 @@ Future<void> _showViewers(BuildContext context, TelegramAccount account, td.Stor
   final s = context.s;
   final result = await guard(
     context,
-    () => account.send<td.StoryInteractions>(td.GetStoryInteractions(
-      storyId: story.id,
-      query: '',
-      onlyContacts: false,
-      preferForwards: false,
-      preferWithReaction: true,
-      offset: '',
-      limit: 100,
-    )),
+    // The user's own stories list viewers; a channel's or group's stories list reactions and reposts.
+    () => account.send<td.StoryInteractions>(story.posterChatId == account.myId
+        ? td.GetStoryInteractions(
+            storyId: story.id,
+            query: '',
+            onlyContacts: false,
+            preferForwards: false,
+            preferWithReaction: true,
+            offset: '',
+            limit: 100,
+          )
+        : td.GetChatStoryInteractions(storyPosterChatId: story.posterChatId, storyId: story.id, reactionType: null, preferForwards: false, offset: '', limit: 100)),
   );
   if (result == null || !context.mounted) return;
   await showModalBottomSheet<void>(

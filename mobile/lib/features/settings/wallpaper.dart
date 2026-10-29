@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/theme.dart';
@@ -13,6 +14,7 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/chat_pattern.dart';
 import '../../widgets/common.dart';
+import 'gifts_extras.dart' show giftChatThemesProvider;
 
 const _gradients = <List<Color>>[
   [Color(0xFFDCE8F5), Color(0xFFB7D3F0)],
@@ -119,6 +121,91 @@ class ChatBackground extends ConsumerWidget {
             )
           : child,
     );
+  }
+}
+
+final _installedBackgroundsProvider = FutureProvider.autoDispose.family<List<td.Background>, bool>(
+  (ref, dark) async => (await ref.watch(accountProvider).send<td.Backgrounds>(td.GetInstalledBackgrounds(forDarkTheme: dark))).backgrounds,
+);
+
+/// Backgrounds saved to the user's Telegram account; tap applies one, long press shares or removes it.
+class _InstalledBackgrounds extends ConsumerWidget {
+  const _InstalledBackgrounds({required this.onPick});
+
+  final ValueChanged<td.Background> onPick;
+
+  Future<void> _menu(BuildContext context, WidgetRef ref, td.Background background, bool dark) async {
+    final s = context.s;
+    final account = ref.read(accountProvider);
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.share_rounded), title: Text(s.t('share')), onTap: () => Navigator.pop(context, 'share')),
+          ListTile(leading: const Icon(Icons.delete_outline_rounded), title: Text(s.t('delete')), onTap: () => Navigator.pop(context, 'delete')),
+        ]),
+      ),
+    );
+    if (action == null || !context.mounted) return;
+    if (action == 'share') {
+      final url = await guard(context, () => account.send<td.HttpUrl>(td.GetBackgroundUrl(name: background.name, type: background.type)));
+      if (url != null) await SharePlus.instance.share(ShareParams(text: url.url));
+    } else {
+      await guard(context, () => account.send<td.Ok>(td.RemoveInstalledBackground(backgroundId: background.id)));
+    }
+    ref.invalidate(_installedBackgroundsProvider(dark));
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final backgrounds = ref.watch(_installedBackgroundsProvider(dark)).value ?? const [];
+    if (backgrounds.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: Text(s.t('telegram_backgrounds'), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600))),
+        TextButton(
+          onPressed: () async {
+            final ok = await confirm(context, title: s.t('telegram_backgrounds_reset'), destructive: true);
+            if (!ok || !context.mounted) return;
+            await guard(context, () => ref.read(accountProvider).send<td.Ok>(const td.ResetInstalledBackgrounds()));
+            ref.invalidate(_installedBackgroundsProvider(dark));
+          },
+          child: Text(s.t('wallpaper_reset')),
+        ),
+      ]),
+      SizedBox(
+        height: 120,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: backgrounds.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final b = backgrounds[index];
+            final thumb = b.document?.thumbnail?.file ?? b.document?.document;
+            return GestureDetector(
+              onTap: () => onPick(b),
+              onLongPress: () => _menu(context, ref, b, dark),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 80,
+                  child: DecoratedBox(
+                    decoration: switch (b.type) {
+                      td.BackgroundTypeFill(:final fill) || td.BackgroundTypePattern(:final fill) => _fillDecoration(fill),
+                      _ => BoxDecoration(color: context.chatColors.chatBackground),
+                    },
+                    child: b.type is td.BackgroundTypeWallpaper && thumb != null ? TdImage(file: thumb, fit: BoxFit.cover) : null,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    ]);
   }
 }
 
@@ -274,6 +361,35 @@ class WallpaperScreen extends ConsumerWidget {
               ]),
             ),
           ],
+          // Themes from unique gifts the user owns.
+          if (chatId != null)
+            if (ref.watch(giftChatThemesProvider).value case final themes? when themes.isNotEmpty)
+              SizedBox(
+                height: 56,
+                child: ListView(scrollDirection: Axis.horizontal, children: [
+                  for (final theme in themes)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ActionChip(
+                        label: Text('${theme.gift.title} #${theme.gift.number}'),
+                        onPressed: () => guard(context, () => account.send<td.Ok>(td.SetChatTheme(chatId: chatId, theme: td.InputChatThemeGift(name: theme.gift.name)))),
+                      ),
+                    ),
+                ]),
+              ),
+          if (chatId != null) _InstalledBackgrounds(onPick: (b) => _setChat(context, ref, input: td.InputBackgroundRemote(backgroundId: b.id), type: b.type))
+          else
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.layers_clear_rounded),
+              title: Text(s.t('telegram_default_bg_delete')),
+              subtitle: Text(s.t('telegram_default_bg_delete_hint')),
+              onTap: () async {
+                final dark = Theme.of(context).brightness == Brightness.dark;
+                await guard(context, () => account.send<td.Ok>(td.DeleteDefaultBackground(forDarkTheme: dark)));
+                if (context.mounted) showToast(context, s.t('done'));
+              },
+            ),
           const SizedBox(height: 8),
           GridView.count(
             crossAxisCount: 3,

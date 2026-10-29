@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:sado/core/app_lock.dart';
 import 'package:sado/core/formatters.dart';
 import 'package:sado/core/push.dart';
 import 'package:sado/features/chat/message_content.dart';
+import 'package:sado/features/webapp/web_app_screen.dart' show webAppOrigin;
 import 'package:sado/l10n/strings.dart';
 
 void main() {
@@ -54,12 +56,38 @@ void main() {
     });
   });
 
+  group('mini app origin', () {
+    test('only HTTPS pages have an origin the bridge trusts', () {
+      expect(webAppOrigin('https://Shop.Example.com/app?x=1'), 'https://shop.example.com');
+      expect(webAppOrigin('https://example.com:8443/a'), 'https://example.com:8443');
+      expect(webAppOrigin('http://example.com/'), isNull);
+      expect(webAppOrigin('javascript:alert(1)'), isNull);
+      expect(webAppOrigin('file:///sdcard/x.html'), isNull);
+      expect(webAppOrigin('https://example.com.evil.io/'), isNot(webAppOrigin('https://example.com/')));
+    });
+  });
+
   group('passcode hashing', () {
     test('salted and deterministic', () {
       expect(hashPasscode('1234', 'salt'), hashPasscode('1234', 'salt'));
       expect(hashPasscode('1234', 'salt'), isNot(hashPasscode('1234', 'other')));
       expect(hashPasscode('1234', 'salt'), isNot(hashPasscode('1235', 'salt')));
       expect(hashPasscode('1234', 'salt'), isNot(contains('1234')));
+    });
+
+    test('PBKDF2 key matches RFC 7914 vector and depends on salt and PIN', () {
+      // RFC 7914 §11: PBKDF2-HMAC-SHA256("passwd", "salt", 1, 64) starts with 55ac046e56e3089f.
+      final key = base64Decode(derivePasscodeKey('passwd', 'salt', rounds: 1));
+      expect(key.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(), '55ac046e56e3089f');
+      expect(derivePasscodeKey('123456', 'a', rounds: 10), isNot(derivePasscodeKey('123456', 'b', rounds: 10)));
+      expect(derivePasscodeKey('123456', 'a', rounds: 10), isNot(derivePasscodeKey('123457', 'a', rounds: 10)));
+    });
+
+    test('cooldown starts after five wrong PINs and doubles up to about an hour', () {
+      expect(passcodeCooldown(4), isNull);
+      expect(passcodeCooldown(5), const Duration(seconds: 30));
+      expect(passcodeCooldown(6), const Duration(seconds: 60));
+      expect(passcodeCooldown(40), const Duration(seconds: 30 * 128));
     });
   });
 

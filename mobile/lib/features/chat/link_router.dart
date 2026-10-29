@@ -12,8 +12,15 @@ import '../../state/providers.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
+import '../webapp/bot_extras.dart' show joinChatChecked, openWebAppLink;
 import '../settings/premium_extras.dart';
+import '../settings/business_extras.dart' show openBusinessChatLink;
+import '../settings/misc_extras.dart' show openExternalLoginLink;
+import '../settings/affiliate_programs.dart' show openAffiliateLink;
+import '../settings/stars_extras.dart' show openBoostLink;
+import '../settings/telegram_extras.dart' show installLanguagePack;
 import 'forward_picker.dart';
+import 'oauth_login.dart';
 import 'sticker_sets.dart';
 
 /// Explains why a link is risky. Blocked links cannot be opened at all; dangerous ones need a deliberate
@@ -83,7 +90,21 @@ Future<void> openLink(BuildContext context, String url, {String? shownText}) asy
   final handled = type != null && await _openInternal(context, account, type);
   if (handled || !context.mounted) return;
   final uri = Uri.tryParse(url.contains('://') ? url : 'https://$url');
-  if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (uri == null) return;
+  // Bot login links ask before signing the user in on the site.
+  if ((uri.scheme == 'http' || uri.scheme == 'https') && await openExternalLoginLink(context, account, uri.toString())) return;
+  if (!context.mounted) return;
+  // Telegram's browser setting (Settings → Data → Browser) decides in-app vs external, per site.
+  var mode = LaunchMode.externalApplication;
+  if (uri.scheme == 'http' || uri.scheme == 'https') {
+    try {
+      final type = await account.send<td.WebBrowserType>(td.GetLinkWebBrowserType(link: uri.toString()));
+      if (type is td.WebBrowserTypeInApp) mode = LaunchMode.inAppBrowserView;
+    } on TdException catch (error) {
+      debugPrint('browser type unknown: $error');
+    }
+  }
+  await launchUrl(uri, mode: mode);
 }
 
 /// Opens a public chat or user by @username.
@@ -142,6 +163,47 @@ Future<bool> _openInternal(BuildContext context, TelegramAccount account, td.Int
       if (picked is! int || !context.mounted) return true;
       await _setDraft(account, picked, text.text);
       if (context.mounted) openChat(context, picked);
+    case td.InternalLinkTypeBackground(:final backgroundName):
+      final background = await guard(context, () => account.send<td.Background>(td.SearchBackground(name: backgroundName)));
+      if (background == null || !context.mounted) return true;
+      final apply = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(context.t('chat_background')),
+          content: switch (background.document?.thumbnail) {
+            final thumb? => ClipRRect(borderRadius: BorderRadius.circular(12), child: AspectRatio(aspectRatio: 0.6, child: TdImage(file: thumb.file))),
+            null => Text(background.name),
+          },
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(context.t('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(context.t('background_apply'))),
+          ],
+        ),
+      );
+      if (apply != true || !context.mounted) return true;
+      await guard(
+        context,
+        () => account.send<td.Background>(td.SetDefaultBackground(
+          background: td.InputBackgroundRemote(backgroundId: background.id),
+          type: background.type,
+          forDarkTheme: Theme.of(context).brightness == Brightness.dark,
+        )),
+      );
+    case td.InternalLinkTypeChatAffiliateProgram(:final username, :final referrer):
+      await openAffiliateLink(context, account, username, referrer);
+    case td.InternalLinkTypeChatBoost(:final url):
+      await openBoostLink(context, account, url, (chatId) => showBoostSheet(context, account, chatId));
+    case td.InternalLinkTypeWebApp() && final link:
+      await openWebAppLink(context, account, link);
+    case td.InternalLinkTypeBusinessChat(:final linkName):
+      await openBusinessChatLink(context, account, linkName, (chatId, text) async {
+        await _setDraft(account, chatId, text);
+        if (context.mounted) openChat(context, chatId);
+      });
+    case td.InternalLinkTypeOauth(:final url):
+      await handleOauthLink(context, account, url);
+    case td.InternalLinkTypeLanguagePack(:final languagePackId):
+      await installLanguagePack(context, account, languagePackId);
     case td.InternalLinkTypeSavedMessages():
       final chat = await guard(context, () => account.openPrivateChat(account.myId));
       if (chat != null && context.mounted) openChat(context, chat.id);
@@ -213,18 +275,8 @@ Future<void> _joinByInvite(BuildContext context, TelegramAccount account, String
     ),
   );
   if (join != true || !context.mounted) return;
-  try {
-    final chat = await account.send<td.Chat>(td.JoinChatByInviteLink(inviteLink: inviteLink));
-    if (context.mounted) openChat(context, chat.id);
-  } on TdException catch (error) {
-    if (!context.mounted) return;
-    // TDLib answers a sent join request with this error.
-    if (error.message == 'INVITE_REQUEST_SENT') {
-      showToast(context, s.t('join_request_sent'));
-    } else {
-      showError(context, error);
-    }
-  }
+  final chatId = await joinChatChecked(context, account, td.JoinChatByInviteLink(inviteLink: inviteLink));
+  if (chatId != null && context.mounted) openChat(context, chatId);
 }
 
 /// Adds a shared folder (t.me/addlist/…) with all of its chats the user is not in yet.

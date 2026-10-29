@@ -3,21 +3,30 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:pointycastle/digests/sha256.dart';
+import 'package:pointycastle/key_derivators/api.dart';
+import 'package:pointycastle/key_derivators/pbkdf2.dart';
+import 'package:pointycastle/macs/hmac.dart';
 
 import '../l10n/strings.dart';
 import '../state/settings.dart';
 
-/// Local passcode that locks the Sado UI (Telegram's "Passcode Lock"). The PIN never leaves the
-/// device: only a salted, stretched SHA-256 is kept in the platform keystore.
+/// Local passcode that locks the UZARO UI (like Telegram's "Passcode Lock"). It is not the Telegram
+/// password and does not log the account out. The PIN never leaves the device: only a salted
+/// PBKDF2 hash is kept in the platform keystore (Android Keystore / iOS Keychain).
 class AppLockState {
-  const AppLockState({required this.enabled, required this.locked, required this.autoLockMinutes, this.lockedUntil});
+  const AppLockState({required this.enabled, required this.locked, required this.autoLockMinutes, this.lockedUntil, this.pinLength = newPinLength});
 
   final bool enabled;
   final bool locked;
+
+  /// Digits of the stored PIN: 6 for new PINs, 4 for ones set before the longer PIN.
+  final int pinLength;
 
   /// 0 = lock every time the app goes to the background.
   final int autoLockMinutes;
@@ -25,15 +34,23 @@ class AppLockState {
   /// Set after too many wrong attempts.
   final DateTime? lockedUntil;
 
-  AppLockState copyWith({bool? enabled, bool? locked, int? autoLockMinutes, DateTime? lockedUntil, bool clearCooldown = false}) =>
+  AppLockState copyWith({bool? enabled, bool? locked, int? autoLockMinutes, DateTime? lockedUntil, bool clearCooldown = false, int? pinLength}) =>
       AppLockState(
         enabled: enabled ?? this.enabled,
         locked: locked ?? this.locked,
         autoLockMinutes: autoLockMinutes ?? this.autoLockMinutes,
         lockedUntil: clearCooldown ? null : (lockedUntil ?? this.lockedUntil),
+        pinLength: pinLength ?? this.pinLength,
       );
 }
 
+/// Digits asked for a new PIN.
+const newPinLength = 6;
+
+/// PBKDF2-HMAC-SHA256 rounds; slow enough to hurt guessing, run off the UI isolate.
+const _pbkdf2Rounds = 150000;
+
+/// Legacy (before PBKDF2) hash: 20 000 rounds of salted SHA-256. Only checked to upgrade old PINs.
 String hashPasscode(String pin, String salt) {
   List<int> digest = utf8.encode('$salt:$pin');
   for (var i = 0; i < 20000; i++) {
@@ -42,37 +59,103 @@ String hashPasscode(String pin, String salt) {
   return base64Encode(digest);
 }
 
+/// PBKDF2-HMAC-SHA256 of [pin] with [salt] (base64 of the 32-byte key).
+String derivePasscodeKey(String pin, String salt, {int rounds = _pbkdf2Rounds}) {
+  final derivator = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))..init(Pbkdf2Parameters(Uint8List.fromList(utf8.encode(salt)), rounds, 32));
+  return base64Encode(derivator.process(Uint8List.fromList(utf8.encode(pin))));
+}
+
+String _deriveInIsolate((String, String) args) => derivePasscodeKey(args.$1, args.$2);
+
+/// Compares without stopping at the first different byte.
+bool _sameHash(String a, String b) {
+  if (a.length != b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+  }
+  return diff == 0;
+}
+
+/// Cooldown after [failed] wrong PINs: none for the first [AppLockNotifier.maxAttempts], then 30 s doubling up to about an hour.
+Duration? passcodeCooldown(int failed) {
+  if (failed < AppLockNotifier.maxAttempts) return null;
+  return Duration(seconds: 30 * (1 << (failed - AppLockNotifier.maxAttempts).clamp(0, 7)));
+}
+
 class AppLockNotifier extends Notifier<AppLockState> {
+  // Default options on purpose: PINs saved by older builds must stay readable.
   static const _storage = FlutterSecureStorage();
   static const _hashKey = 'sado.lock.hash';
   static const _saltKey = 'sado.lock.salt';
+  static const _kdfKey = 'sado.lock.kdf';
+  static const _failedKey = 'sado.lock.failed';
+  static const _untilKey = 'sado.lock.until';
   static const maxAttempts = 5;
 
   int _failedAttempts = 0;
+  bool _countersLoaded = false;
   DateTime? _backgroundedAt;
 
   @override
   AppLockState build() {
     final prefs = ref.watch(sharedPreferencesProvider);
     final enabled = prefs.getBool('lock.enabled') ?? false;
+    // Wrong-PIN counters live in the keystore so restarting the app does not reset the cooldown.
+    if (enabled) Future.microtask(_loadCounters);
     // Start locked so no chat content is visible before the PIN is entered.
-    return AppLockState(enabled: enabled, locked: enabled, autoLockMinutes: prefs.getInt('lock.autoMinutes') ?? 1);
+    return AppLockState(
+      enabled: enabled,
+      locked: enabled,
+      autoLockMinutes: prefs.getInt('lock.autoMinutes') ?? 1,
+      pinLength: prefs.getInt('lock.pinLength') ?? 4,
+    );
   }
 
-  Future<void> enable(String pin) async {
+  Future<void> _loadCounters() async {
+    if (_countersLoaded) return;
+    _countersLoaded = true;
+    _failedAttempts = int.tryParse(await _storage.read(key: _failedKey) ?? '') ?? 0;
+    final until = int.tryParse(await _storage.read(key: _untilKey) ?? '');
+    if (until != null) {
+      final at = DateTime.fromMillisecondsSinceEpoch(until);
+      if (at.isAfter(DateTime.now())) state = state.copyWith(lockedUntil: at);
+    }
+  }
+
+  Future<void> _saveCounters(DateTime? until) async {
+    await _storage.write(key: _failedKey, value: '$_failedAttempts');
+    if (until == null) {
+      await _storage.delete(key: _untilKey);
+    } else {
+      await _storage.write(key: _untilKey, value: '${until.millisecondsSinceEpoch}');
+    }
+  }
+
+  Future<void> _store(String pin) async {
     final random = Random.secure();
     final salt = base64Encode(List<int>.generate(16, (_) => random.nextInt(256)));
     await _storage.write(key: _saltKey, value: salt);
-    await _storage.write(key: _hashKey, value: hashPasscode(pin, salt));
+    await _storage.write(key: _hashKey, value: await compute(_deriveInIsolate, (pin, salt)));
+    await _storage.write(key: _kdfKey, value: 'pbkdf2');
+    await ref.read(sharedPreferencesProvider).setInt('lock.pinLength', pin.length);
+  }
+
+  Future<void> enable(String pin) async {
+    await _store(pin);
+    _failedAttempts = 0;
+    _countersLoaded = true;
+    await _saveCounters(null);
     await ref.read(sharedPreferencesProvider).setBool('lock.enabled', true);
-    state = state.copyWith(enabled: true, locked: false);
+    state = state.copyWith(enabled: true, locked: false, pinLength: pin.length, clearCooldown: true);
   }
 
   Future<void> disable() async {
-    await _storage.delete(key: _hashKey);
-    await _storage.delete(key: _saltKey);
+    for (final key in const [_hashKey, _saltKey, _kdfKey, _failedKey, _untilKey]) {
+      await _storage.delete(key: key);
+    }
     await ref.read(sharedPreferencesProvider).setBool('lock.enabled', false);
-    state = state.copyWith(enabled: false, locked: false);
+    state = state.copyWith(enabled: false, locked: false, clearCooldown: true);
   }
 
   Future<void> setAutoLock(int minutes) async {
@@ -80,29 +163,40 @@ class AppLockNotifier extends Notifier<AppLockState> {
     state = state.copyWith(autoLockMinutes: minutes);
   }
 
+  /// True while wrong PINs must wait; every check (unlock, change, disable, hidden chats) obeys it.
+  bool get coolingDown => state.lockedUntil?.isAfter(DateTime.now()) ?? false;
+
   /// Checks a PIN without unlocking (used before changing or disabling the passcode).
+  /// Counts as an attempt: wrong PINs here grow the same cooldown as on the lock screen.
   Future<bool> verify(String pin) async {
+    await _loadCounters();
+    if (coolingDown) return false;
     final salt = await _storage.read(key: _saltKey);
     final hash = await _storage.read(key: _hashKey);
     if (salt == null || hash == null) return false;
-    return hashPasscode(pin, salt) == hash;
+    final legacy = await _storage.read(key: _kdfKey) != 'pbkdf2';
+    final ok = _sameHash(legacy ? hashPasscode(pin, salt) : await compute(_deriveInIsolate, (pin, salt)), hash);
+    if (ok) {
+      // A PIN set before PBKDF2 is re-hashed now that we know it.
+      if (legacy) await _store(pin);
+      _failedAttempts = 0;
+      await _saveCounters(null);
+      state = state.copyWith(clearCooldown: true);
+      return true;
+    }
+    _failedAttempts++;
+    final wait = passcodeCooldown(_failedAttempts);
+    final until = wait == null ? null : DateTime.now().add(wait);
+    await _saveCounters(until);
+    if (until != null) state = state.copyWith(lockedUntil: until);
+    return false;
   }
 
   /// Returns true when unlocked; applies a growing cooldown after repeated failures.
   Future<bool> unlock(String pin) async {
-    final until = state.lockedUntil;
-    if (until != null && DateTime.now().isBefore(until)) return false;
-    if (await verify(pin)) {
-      _failedAttempts = 0;
-      state = state.copyWith(locked: false, clearCooldown: true);
-      return true;
-    }
-    _failedAttempts++;
-    if (_failedAttempts >= maxAttempts) {
-      final seconds = 30 * (1 << (_failedAttempts - maxAttempts).clamp(0, 5));
-      state = state.copyWith(lockedUntil: DateTime.now().add(Duration(seconds: seconds)));
-    }
-    return false;
+    if (!await verify(pin)) return false;
+    state = state.copyWith(locked: false);
+    return true;
   }
 
   void lockNow() {
@@ -220,12 +314,13 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
           pin: _pin,
           error: _error,
           enabled: wait <= 0,
+          length: ref.watch(appLockProvider.select((s) => s.pinLength)),
           onChanged: (pin) {
             setState(() {
               _pin = pin;
               _error = false;
             });
-            if (pin.length == PinPad.length) unawaited(_submit(pin));
+            if (pin.length == ref.read(appLockProvider).pinLength) unawaited(_submit(pin));
           },
         ),
       ),
@@ -235,9 +330,9 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
 
 /// Numeric keypad with dot indicators.
 class PinPad extends StatelessWidget {
-  const PinPad({super.key, required this.title, required this.pin, required this.onChanged, this.error = false, this.enabled = true});
+  const PinPad({super.key, required this.title, required this.pin, required this.onChanged, this.error = false, this.enabled = true, this.length = newPinLength});
 
-  static const length = 4;
+  final int length;
 
   final String title;
   final String pin;
@@ -304,9 +399,9 @@ class PasscodeSettingsScreen extends ConsumerWidget {
   const PasscodeSettingsScreen({super.key});
 
   Future<String?> _askNewPin(BuildContext context) async {
-    final first = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_new')));
+    final first = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_new', length: newPinLength)));
     if (first == null || !context.mounted) return null;
-    final second = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_repeat')));
+    final second = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_repeat', length: newPinLength)));
     if (second == null || !context.mounted) return null;
     if (first != second) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('passcode_mismatch'))));
@@ -315,13 +410,7 @@ class PasscodeSettingsScreen extends ConsumerWidget {
     return first;
   }
 
-  Future<bool> _checkCurrent(BuildContext context, WidgetRef ref) async {
-    final pin = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_enter')));
-    if (pin == null) return false;
-    final ok = await ref.read(appLockProvider.notifier).verify(pin);
-    if (!ok && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('passcode_wrong'))));
-    return ok;
-  }
+  Future<bool> _checkCurrent(BuildContext context, WidgetRef ref) => checkCurrentPasscode(context, ref);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -386,10 +475,27 @@ class PasscodeSettingsScreen extends ConsumerWidget {
   }
 }
 
+/// Asks for the current PIN (change, disable, hidden chats); wrong tries count toward the cooldown.
+Future<bool> checkCurrentPasscode(BuildContext context, WidgetRef ref) async {
+  final notifier = ref.read(appLockProvider.notifier);
+  if (notifier.coolingDown) {
+    final wait = ref.read(appLockProvider).lockedUntil!.difference(DateTime.now()).inSeconds;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('passcode_wait', {'seconds': '$wait'}))));
+    return false;
+  }
+  final length = ref.read(appLockProvider).pinLength;
+  final pin = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => PinEntryScreen(titleKey: 'passcode_enter', length: length)));
+  if (pin == null) return false;
+  final ok = await notifier.verify(pin);
+  if (!ok && context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('passcode_wrong'))));
+  return ok;
+}
+
 class PinEntryScreen extends StatefulWidget {
-  const PinEntryScreen({super.key, required this.titleKey});
+  const PinEntryScreen({super.key, required this.titleKey, this.length = newPinLength});
 
   final String titleKey;
+  final int length;
 
   @override
   State<PinEntryScreen> createState() => _PinEntryScreenState();
@@ -405,9 +511,10 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
       body: PinPad(
         title: context.t(widget.titleKey),
         pin: _pin,
+        length: widget.length,
         onChanged: (pin) {
           setState(() => _pin = pin);
-          if (pin.length == PinPad.length) Navigator.pop(context, pin);
+          if (pin.length == widget.length) Navigator.pop(context, pin);
         },
       ),
     );

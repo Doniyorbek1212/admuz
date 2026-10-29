@@ -13,7 +13,8 @@ if (file("google-services.json").exists()) {
 }
 
 // Release signing: create android/key.properties (storeFile, storePassword, keyAlias, keyPassword).
-// Without it, release builds are signed with the debug key so they still install for testing.
+// Without it a release build fails, so a debug-signed APK can't be shipped by mistake. For a local test
+// build only: flutter build apk --release --android-project-arg allowDebugSigning=true
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("key.properties")
     if (file.exists()) file.inputStream().use { load(it) }
@@ -55,7 +56,8 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+                ?: if (project.hasProperty("allowDebugSigning")) signingConfigs.getByName("debug") else null
         }
     }
 
@@ -88,4 +90,18 @@ dependencies {
 
 flutter {
     source = "../.."
+}
+
+// Fail before compiling, not after: a release artifact must carry the release key.
+gradle.taskGraph.whenReady {
+    val releaseArtifact = allTasks.any { task ->
+        task.project == project && task.name.endsWith("Release") &&
+            (task.name.startsWith("assemble") || task.name.startsWith("bundle") || task.name.startsWith("package"))
+    }
+    if (releaseArtifact && android.signingConfigs.findByName("release") == null && !project.hasProperty("allowDebugSigning")) {
+        throw GradleException(
+            "Release signing key missing: add android/key.properties (see the top of this file). " +
+                "Local test build only: --android-project-arg allowDebugSigning=true",
+        )
+    }
 }
