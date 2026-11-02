@@ -556,13 +556,24 @@ class _FolderRailItem extends ConsumerWidget {
                 child: Icon(icon, color: color, size: 26),
               ),
               const SizedBox(height: 5),
-              Text(
-                title,
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
-              ),
+              if (title.trim().contains(' '))
+                Text(
+                  title,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
+                )
+              else
+                // One long word ("O'qilmagan") shrinks a little instead of breaking mid-word.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
+                  ),
+                ),
             ],
           ),
         ),
