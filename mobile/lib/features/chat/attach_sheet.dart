@@ -273,7 +273,7 @@ class _AttachSheetState extends State<_AttachSheet> {
       child: GridView.builder(
         controller: scroll,
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2),
         itemCount: _assets.length + 1,
         itemBuilder: (context, index) => index == 0 ? _cameraTile() : _assetTile(_assets[index - 1]),
       ),

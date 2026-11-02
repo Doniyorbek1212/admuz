@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../business/profile_sharing.dart';
 import '../contacts/contacts_screen.dart';
@@ -33,15 +38,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) askProfileSharingOnce(context, ref);
     });
+    _recordActivity('app_open');
   }
 
   /// Tabs are built on first visit, then kept alive.
   final Set<int> _visited = {0};
 
-  void _select(int index) => setState(() {
-        _index = index;
-        _visited.add(index);
-      });
+  void _select(int index) {
+    if (index == 1) _recordActivity('hub_open');
+    setState(() {
+      _index = index;
+      _visited.add(index);
+    });
+  }
+
+  /// Anonymous daily-active counts for the admin statistics (once per day per event).
+  void _recordActivity(String event) => unawaited(ref.read(sadoApiProvider).recordActivity(ref.read(sharedPreferencesProvider), event));
 
   static const _tabs = <Widget>[
     HomeScreen(inShell: true),
@@ -133,6 +145,19 @@ class _BottomBar extends ConsumerWidget {
               label: s.t('tab_profile'),
               selected: index == 3,
               onTap: () => onSelect(3),
+              onLongPress: () {
+                HapticFeedback.mediumImpact();
+                showModalBottomSheet<void>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (_) => const SafeArea(
+                    child: Padding(padding: EdgeInsets.fromLTRB(12, 0, 12, 12), child: AccountSwitcherList()),
+                  ),
+                );
+              },
+              onDoubleTap: () {
+                if (ref.read(accountSlotsProvider.notifier).switchToNext()) HapticFeedback.selectionClick();
+              },
               icon: (color) => me == null
                   ? Icon(Icons.person_rounded, color: color)
                   : Container(
@@ -149,11 +174,13 @@ class _BottomBar extends ConsumerWidget {
 }
 
 class _BarItem extends StatelessWidget {
-  const _BarItem({required this.label, required this.selected, required this.onTap, required this.icon});
+  const _BarItem({required this.label, required this.selected, required this.onTap, required this.icon, this.onLongPress, this.onDoubleTap});
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
   final Widget Function(Color color) icon;
 
   @override
@@ -168,6 +195,8 @@ class _BarItem extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(27),
           onTap: onTap,
+          onLongPress: onLongPress,
+          onDoubleTap: onDoubleTap,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

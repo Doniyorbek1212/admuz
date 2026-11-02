@@ -253,7 +253,7 @@ class _MyShopScreenState extends ConsumerState<MyShopScreen> {
             padding: EdgeInsets.zero,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: shop.products.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.7),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.7),
             itemBuilder: (context, i) {
               final product = shop.products[i];
               return _OwnerProductCard(product: product, onTap: () => _open(ProductEditScreen(shopId: shop.id, product: product)));

@@ -102,7 +102,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
     return ListView(
         padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
         children: [
-          if (_showAccounts) _accounts(context),
+          if (_showAccounts) const Padding(padding: EdgeInsets.only(top: 6), child: AccountSwitcherList()),
           const SizedBox(height: 6),
           SettingsGroup(children: [
             _row(Icons.group_add_rounded, const Color(0xFF2E9BF0), s.t('new_group'), () => _push(const ContactsScreen(createGroup: true))),
@@ -158,14 +158,18 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
         ],
     );
   }
+}
 
-  Widget _accounts(BuildContext context) {
+/// Logged-in accounts plus "add account"; tapping one closes the enclosing drawer or sheet.
+class AccountSwitcherList extends ConsumerWidget {
+  const AccountSwitcherList({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final slots = ref.watch(accountSlotsProvider);
     final s = context.s;
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: SettingsGroup(children: [
+    return SettingsGroup(children: [
         for (final slot in slots.slots)
           ListTile(
             leading: CircleAvatar(child: Text(initialsOf(slots.labels[slot] ?? '$slot'))),
@@ -188,8 +192,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
               ref.read(accountSlotsProvider.notifier).addAccount();
             },
           ),
-      ]),
-    );
+      ]);
   }
 }
 

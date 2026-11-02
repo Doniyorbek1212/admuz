@@ -17,6 +17,7 @@ import '../settings/settings_screen.dart';
 import 'hub_banners.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
+import 'movies_screen.dart';
 import 'places_screen.dart';
 
 /// "Hub" tab of the bottom bar: banners, local services, entertainment and tools.
@@ -166,6 +167,9 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
       }
     case HubAction.search:
       push(HubResultsScreen(title: label, query: item.query ?? label));
+    case HubAction.movies:
+      // A build without the UZARO server falls back to public Telegram channels.
+      push(ref.read(sadoApiProvider).configured ? const MoviesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.themes:
       push(const AppearanceScreen());
     case HubAction.business:
@@ -214,13 +218,13 @@ class _HubSection extends ConsumerWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-          child: GridView.count(
-            crossAxisCount: 4,
+          // 4 tiles on a phone, more on an unfolded iPhone Duo or a tablet instead of stretched ones.
+          child: GridView(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 112, childAspectRatio: 0.82),
             shrinkWrap: true,
             // Without this the grid inherits the bottom bar's padding.
             padding: EdgeInsets.zero,
             physics: const NeverScrollableScrollPhysics(),
-            childAspectRatio: 0.82,
             children: [for (final item in items) _HubTile(item: item, onTap: () => openHubItem(context, ref, item))],
           ),
         ),

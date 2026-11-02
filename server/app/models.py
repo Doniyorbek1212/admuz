@@ -1,11 +1,12 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -486,5 +487,76 @@ class Place(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     # "osm:node/123" for imported places, so a re-import updates instead of duplicating; null for manual ones.
     source_ref: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ActivityDay(Base):
+    """One row per customer, Tashkent calendar day and app event ("app_open", "hub_open", "movies_open"):
+    distinct-user counts per day, week, month and year come from it."""
+
+    __tablename__ = "activity_days"
+    __table_args__ = (Index("ix_activity_days_event_day", "event", "day"),)
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    event: Mapped[str] = mapped_column(String(32), primary_key=True)
+
+
+class MovieKind(StrEnum):
+    MOVIE = "movie"
+    SERIES = "series"
+
+
+class VideoStatus(StrEnum):
+    UPLOADING = "uploading"  # the admin's browser is still sending chunks
+    QUEUED = "queued"  # whole file on disk, waiting for the compress + Telegram upload worker
+    PROCESSING = "processing"
+    READY = "ready"  # in the Telegram channel; the local copy is gone
+    FAILED = "failed"  # original kept on disk so the admin can retry
+
+
+class MovieTitle(Base):
+    """A film or a series in the hub's "Movies" section; its videos live in a public Telegram channel."""
+
+    __tablename__ = "movie_titles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    kind: Mapped[MovieKind] = mapped_column(_enum(MovieKind, "movie_kind"))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(String(3000), default="")
+    year: Mapped[int | None] = mapped_column(Integer)
+    genres: Mapped[str] = mapped_column(String(200), default="")
+    country: Mapped[str] = mapped_column(String(80), default="")
+    language: Mapped[str] = mapped_column(String(40), default="")
+    poster: Mapped[str | None] = mapped_column(String(64))  # public media name
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MovieVideo(Base):
+    """One playable file: the whole film, or one episode of a series."""
+
+    __tablename__ = "movie_videos"
+    __table_args__ = (Index("ix_movie_videos_title", "title_id"), Index("ix_movie_videos_status", "status"))
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("movie_titles.id", ondelete="CASCADE"))
+    season: Mapped[int] = mapped_column(Integer, default=0)
+    episode: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[VideoStatus] = mapped_column(_enum(VideoStatus, "video_status"), default=VideoStatus.UPLOADING)
+    error: Mapped[str] = mapped_column(String(500), default="")
+    original_name: Mapped[str] = mapped_column(String(255), default="")
+    original_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    uploaded_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    compressed_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    tg_channel: Mapped[str] = mapped_column(String(64), default="")
+    tg_message_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

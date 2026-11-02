@@ -129,6 +129,7 @@ const PAGES = {
   dashboard: { title: 'Bosh sahifa', role: 'viewer', render: renderDashboard },
   ads: { title: 'Reklamalar', role: 'viewer', render: renderAds, count: 'ads_pending' },
   shops: { title: 'Biznes profillar', role: 'viewer', render: renderShops, count: 'shops_pending' },
+  movies: { title: 'Kinolar', role: 'viewer', render: (el, arg) => renderMovies(el, arg) }, // admin_movies.js
   users: { title: 'Foydalanuvchilar', role: 'support', render: renderUsers },
   settings: { title: 'Sozlamalar', role: 'viewer', render: renderSettings },
   admins: { title: 'Adminlar', role: 'owner', render: renderAdmins },
@@ -172,7 +173,7 @@ function barChart(points, key, gold, format) {
 }
 
 async function renderDashboard(el) {
-  const s = await api('/v1/admin/stats');
+  const [s, activity] = await Promise.all([api('/v1/admin/stats'), api('/v1/admin/activity')]);
   const sum = state.summary;
   const shopsActive = s.shops.approved || 0;
   el.innerHTML = `
@@ -191,6 +192,22 @@ async function renderDashboard(el) {
     <div class="charts">
       <div class="card chart"><h3>Yangi foydalanuvchilar — 30 kun</h3>${barChart(s.daily, 'new_users', false, (v) => `${v} ta`)}</div>
       <div class="card chart"><h3>Reklama tushumi — 30 kun</h3>${barChart(s.daily, 'ad_income_uzs', true, som)}</div>
+    </div>
+    ${activityHtml(activity)}`;
+}
+
+const ACTIVITY_LABEL = { app_open: 'Ilovani ochganlar', hub_open: "Töplam bo'limini ko'rganlar", movies_open: "Kino bo'limini ko'rganlar" };
+
+function activityHtml(a) {
+  const rows = Object.entries(ACTIVITY_LABEL).map(([k, label]) => {
+    const t = a.totals[k];
+    return `<tr><td>${esc(label)}</td><td class="num"><b>${t.day}</b></td><td class="num">${t.week}</td><td class="num">${t.month}</td><td class="num">${t.year}</td></tr>`;
+  }).join('');
+  return `<div class="card"><h3>Faol foydalanuvchilar (har biri bir marta sanaladi)</h3><div class="table-wrap"><table>
+      <thead><tr><th></th><th class="num">Bugun</th><th class="num">7 kun</th><th class="num">30 kun</th><th class="num">1 yil</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="charts">
+      <div class="card chart"><h3>Kunlik faol foydalanuvchilar — 30 kun</h3>${barChart(a.daily, 'app_open', false, (v) => `${v} kishi`)}</div>
+      <div class="card chart"><h3>Töplam bo'limini kunlik ko'rganlar — 30 kun</h3>${barChart(a.daily, 'hub_open', true, (v) => `${v} kishi`)}</div>
     </div>`;
 }
 
@@ -485,6 +502,7 @@ const ACTION_LABEL = {
   ad_approved: 'Reklama tasdiqlandi', ad_rejected: 'Reklama rad etildi', shop_approved: "Do'kon tasdiqlandi", shop_rejected: "Do'kon rad etildi",
   shop_closed: "Do'kon yopildi", shop_close_declined: "Yopish so'rovi rad etildi", shop_viewed: "Do'kon ko'rildi", users_listed: "Foydalanuvchilar ko'rildi",
   customer_viewed: "Foydalanuvchi ko'rildi", override_granted: 'Imkoniyat berildi', override_revoked: 'Imkoniyat olib qo\'yildi', credits_adjusted: "Kreditlar o'zgartirildi",
+  movie_created: "Kino qo'shildi", movie_updated: 'Kino tahrirlandi', movie_deleted: "Kino o'chirildi", movie_video_started: 'Video yuklash boshlandi', movie_video_deleted: "Video o'chirildi",
   settings_updated: "Sozlamalar o'zgartirildi", admin_login: 'Panelga kirdi', admin_credentials_set: 'Login/parol berildi', admin_created: 'Admin yaratildi', admin_updated: "Admin o'zgartirildi", product_hidden: 'Mahsulot yashirildi', product_shown: "Mahsulot qayta ko'rsatildi",
 };
 

@@ -72,6 +72,13 @@ class AccountSlotsNotifier extends Notifier<AccountSlots> {
     _persist(state);
   }
 
+  /// Cycles to the next account; false when there is only one.
+  bool switchToNext() {
+    if (state.slots.length < 2) return false;
+    switchTo(state.slots[(state.slots.indexOf(state.active) + 1) % state.slots.length]);
+    return true;
+  }
+
   /// Opens a fresh slot that starts at the phone-number screen. Returns false at the account limit.
   bool addAccount() {
     if (state.slots.length >= maxAccounts) return false;

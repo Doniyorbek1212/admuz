@@ -2,9 +2,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 import 'market_models.dart';
+import 'movie_models.dart';
 import 'place_models.dart';
 
 /// Error from the Sado server, with its stable code (e.g. AD_NOT_FOUND) for localized messages.
@@ -205,6 +207,42 @@ class SadoApi {
       }) as Map<String, dynamic>);
 
   Future<Place> place(String id) async => Place.fromJson(await _get('/v1/places/$id') as Map<String, dynamic>);
+
+  // ------------------------------------------------------------------ movies
+
+  /// Categories with something to watch, most titles first: (name, count).
+  Future<List<(String, int)>> movieCategories({bool? series}) async => [
+        for (final c in await _get('/v1/movies/categories', query: {'kind': ?_kind(series)}) as List)
+          ((c as Map)['name'] as String, c['count'] as int),
+      ];
+
+  Future<MoviePage> movies({bool? series, String category = '', String query = '', int offset = 0}) async =>
+      MoviePage.fromJson(await _get('/v1/movies', query: {
+        'kind': ?_kind(series),
+        if (category.isNotEmpty) 'category': category,
+        if (query.isNotEmpty) 'q': query,
+        'offset': offset,
+      }) as Map<String, dynamic>);
+
+  Future<MovieTitle> movie(String id) async => MovieTitle.fromJson(await _get('/v1/movies/$id') as Map<String, dynamic>);
+
+  static String? _kind(bool? series) => series == null ? null : (series ? 'series' : 'movie');
+
+  // ------------------------------------------------------------------ usage statistics
+
+  /// Reports [event] ("app_open", "hub_open", "movies_open") at most once per calendar day; never throws.
+  Future<void> recordActivity(SharedPreferences prefs, String event) async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
+    final key = 'activity.$event';
+    if (!configured || prefs.getString(key) == today) return;
+    try {
+      await _post('/v1/activity', data: {'event': event});
+      await prefs.setString(key, today);
+    } on ApiException catch (error) {
+      debugPrint('activity $event not recorded: $error');
+    }
+  }
 
   // ------------------------------------------------------------------ ads
 

@@ -243,7 +243,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
     try {
       await _account.send<td.Ok>(td.CancelDownloadFile(fileId: attachment.file.id, onlyIfPending: false));
       if (attachment.file.local.downloadedSize > 0) await _account.send<td.Ok>(td.DeleteFile(fileId: attachment.file.id));
-      if (guard.autoDelete) {
+      // Scripts, macro documents and custom extensions are only folded: deleting those surprised people.
+      if (guard.autoDelete && (guard.checkMessage(message, _account.myId)?.deletable ?? false)) {
         final props = await _account.send<td.MessageProperties>(td.GetMessageProperties(chatId: message.chatId, messageId: message.id));
         if (props.canBeDeletedOnlyForSelf) {
           // Through the account so the archive does not keep the blocked file as "deleted".

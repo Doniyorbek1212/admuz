@@ -324,7 +324,7 @@ class StoryGrid extends StatelessWidget {
     if (stories.isEmpty) return Center(child: Text(context.t('nothing_here')));
     return GridView.builder(
       padding: const EdgeInsets.all(2),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2, childAspectRatio: 9 / 16),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2, childAspectRatio: 9 / 16),
       itemCount: stories.length,
       itemBuilder: (context, index) {
         final story = stories[index];

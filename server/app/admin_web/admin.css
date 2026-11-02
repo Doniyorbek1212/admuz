@@ -184,3 +184,14 @@ tr.clickable:hover td { background: var(--panel-2); }
 .no-image { aspect-ratio: 1; display: grid; place-items: center; background: var(--line); color: var(--muted); font-size: 13px; }
 .field-group { display: grid; gap: 8px; }
 .link-btn { background: none; border: 0; color: var(--brand); font-weight: 600; cursor: pointer; padding: 4px; justify-self: center; }
+
+/* movies page */
+.progress { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 6px 0 2px; }
+.progress span { display: block; height: 100%; background: var(--brand); transition: width .4s ease; }
+.videos { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.videos li { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 14px; }
+.chip:has(input:checked) { background: var(--brand-soft); border-color: var(--brand); }
+.warn-box { background: var(--warn-soft); color: var(--warn); }
+.bad-text { color: var(--bad); }

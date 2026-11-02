@@ -225,7 +225,8 @@ class ChatHistory extends ChangeNotifier {
   /// Marks messages as read on screen. Ghost mode only clears the badge on this phone; Telegram is not told.
   void markViewed(Iterable<int> messageIds) {
     if (ghostMode) {
-      account.markReadLocally(chatId);
+      // Called from the message list's item builder: notifying providers mid-build throws, so wait for the frame to end.
+      scheduleMicrotask(() => account.markReadLocally(chatId));
       return;
     }
     final fresh = messageIds.where((id) => id > 0 && _viewed.add(id)).toList();

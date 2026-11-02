@@ -24,6 +24,9 @@ enum HubAction {
 
   /// The region's directory of places (server), filtered to [HubItem.placeCategory].
   places,
+
+  /// Films and series an admin published (server + Telegram channel).
+  movies,
 }
 
 class HubItem {
@@ -57,7 +60,7 @@ const hubLocalItems = [
 ];
 
 const hubFunItems = [
-  HubItem('hub_movies', Icons.movie_rounded, Color(0xFFE53935), query: 'kino seriallar'),
+  HubItem('hub_movies', Icons.movie_rounded, Color(0xFFE53935), action: HubAction.movies, query: 'kino seriallar'),
   HubItem('hub_music', Icons.music_note_rounded, Color(0xFF2EC27E), query: 'musiqa'),
   HubItem('hub_games', Icons.sports_esports_rounded, Color(0xFF8B6CFF), query: "o'yinlar"),
   HubItem('hub_stickers', Icons.emoji_emotions_rounded, Color(0xFFFFC233), query: 'stikerlar'),

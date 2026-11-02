@@ -14,7 +14,7 @@ class AppConfig {
   static const String appName = 'UZARO';
   /// Shown in Telegram's device list next to the app name; keep in step with `version:` in pubspec.yaml.
   // Keep in sync with `version:` in pubspec.yaml.
-  static const String appVersion = '1.1.3';
+  static const String appVersion = '1.1.5';
 
   /// UZARO server (shops, hub ads, admin review): --dart-define=SADO_API_URL=https://api.example.uz
   /// Empty disables those features. Plain http is allowed only for the emulator host (network_security_config).

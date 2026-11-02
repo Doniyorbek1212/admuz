@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     max_image_bytes: int = 5 * 1024 * 1024
     max_video_bytes: int = 30 * 1024 * 1024
 
+    # Hub movies: an admin uploads a film in chunks, the worker compresses it with ffmpeg and a bot posts it to a
+    # public Telegram channel; the app streams it from there, so the server keeps no video once it is published.
+    tg_api_id: int = 0
+    tg_api_hash: str = ""
+    movies_bot_token: str = ""  # the bot must be an admin of the channel with "post messages"
+    movies_channel: str = ""  # public channel username without @
+    movie_max_upload_bytes: int = 8 * 1024 * 1024 * 1024
+    movie_chunk_bytes: int = 16 * 1024 * 1024
+    # Uploads are refused when they would leave less free disk than this (the compressed copy needs room too).
+    movie_disk_reserve_bytes: int = 10 * 1024 * 1024 * 1024
+    movie_max_height: int = 720
+    movie_crf: int = 26  # x264 quality: higher = smaller file; 23 near-transparent, 28 visibly soft
+    movie_ffmpeg_threads: int = 3  # the VPS is shared with other services
+
     # Online shops: the first ones are free, every further shop costs a one-time fee (manual transfer + admin check).
     shop_free_limit: int = 2
     extra_shop_price_uzs: int = 150_000
@@ -91,7 +105,7 @@ class Settings(BaseSettings):
             problems.append("FORWARDED_ALLOW_IPS must list the reverse proxy addresses, or per-IP rate limits see only the proxy")
         elif "*" in proxies:
             problems.append("FORWARDED_ALLOW_IPS='*' lets any client forge X-Forwarded-For")
-        if self.max_request_bytes < max(self.max_image_bytes, self.max_video_bytes):
+        if self.max_request_bytes < max(self.max_image_bytes, self.max_video_bytes, self.movie_chunk_bytes):
             problems.append("SADO_BILLING_MAX_REQUEST_BYTES is smaller than the biggest allowed upload")
         if problems:
             raise ValueError("unsafe staging/production configuration: " + "; ".join(problems))
@@ -100,6 +114,10 @@ class Settings(BaseSettings):
     @property
     def docs_enabled(self) -> bool:
         return self.environment in ("development", "test")
+
+    @property
+    def movies_configured(self) -> bool:
+        return bool(self.tg_api_id and self.tg_api_hash and self.movies_bot_token and self.movies_channel)
 
     @property
     def mock_allowed(self) -> bool:

@@ -827,7 +827,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 padding: const EdgeInsets.symmetric(horizontal: 2),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2),
                 itemCount: list.length,
                 itemBuilder: (context, index) => _MediaCell(message: list[index]),
               );

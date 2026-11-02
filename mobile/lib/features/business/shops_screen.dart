@@ -177,7 +177,7 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                   sliver: SliverGrid.builder(
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.62),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.62),
                     itemCount: products.length,
                     itemBuilder: (context, i) => _ProductCard(
                       product: products[i],

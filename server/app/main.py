@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -10,8 +11,26 @@ from app.config import get_settings
 from app.db import engine
 from app.deps import get_redis
 from app.limits import BodySizeLimit
-from app.routers import admin, admin_auth, admin_market, admin_panel, admin_places, ads, billing, customers, market, media, places, profile, public
+from app.routers import (
+    activity,
+    admin,
+    admin_auth,
+    admin_market,
+    admin_movies,
+    admin_panel,
+    admin_places,
+    ads,
+    billing,
+    customers,
+    market,
+    media,
+    movies,
+    places,
+    profile,
+    public,
+)
 from app.security import RedactingFilter
+from app.services import movies as movie_pipeline
 
 ADMIN_WEB_DIR = Path(__file__).resolve().parent / "admin_web"
 # Ad and product media may live on other https hosts; scripts and styles only from the panel itself.
@@ -27,7 +46,15 @@ for handler in logging.getLogger().handlers:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    stop = asyncio.Event()
+    # Tests drive the movie pipeline directly instead of racing a background worker.
+    worker = asyncio.create_task(movie_pipeline.worker(stop)) if get_settings().environment != "test" else None
     yield
+    stop.set()
+    if worker is not None:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
     await get_redis().aclose()
     await engine.dispose()
 
@@ -43,7 +70,9 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.docs_enabled else None,
         redoc_url=None,
     )
-    for module in (customers, profile, billing, admin, market, ads, media, places, admin_market, admin_places, admin_panel, admin_auth, public):
+    routers = (customers, profile, billing, admin, market, ads, media, places, movies, activity)
+    admin_routers = (admin_market, admin_places, admin_movies, admin_panel, admin_auth, public)
+    for module in routers + admin_routers:
         app.include_router(module.router)
     # The web admin panel: static files only; every action goes through the X-Admin-Key API.
     app.mount("/admin", StaticFiles(directory=ADMIN_WEB_DIR, html=True), name="admin")
