@@ -12,6 +12,8 @@ import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import 'members_grid.dart';
+import 'uzaro_username.dart';
 import '../../state/telegram.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
@@ -29,6 +31,10 @@ import '../webapp/bot_extras.dart' show BotProfileExtras;
 import '../settings/misc_extras.dart' show showCollectibleInfo;
 import '../settings/gifts_extras.dart' show OwnerGiftsScreen;
 import '../settings/stars_extras.dart' show paidMessageRevenueProvider;
+import '../../core/api/sado_api.dart';
+import '../gifts/gift_widgets.dart';
+import '../gifts/profile_background.dart';
+import 'profile_business.dart';
 import 'profile_media.dart';
 import 'profile_more.dart';
 import 'user_profile_extras.dart';
@@ -122,16 +128,30 @@ class ChatInfoScreen extends ConsumerWidget {
           // Usernames bought on Fragment show their purchase details.
           onInfo: () => showCollectibleInfo(context, account, td.CollectibleItemTypeUsername(username: username), '@$username'),
         ),
+      if (user != null && !account.isBot(user))
+        if (ref.watch(uzaroNameOfProvider(user.id)).value case final uzaroName?)
+          _InfoTile(icon: Icons.verified_rounded, title: '@$uzaroName', subtitle: s.t('uzaro_username'), copy: '@$uzaroName'),
       if (info?.birthdate case final birthdate?) _InfoTile(icon: Icons.cake_rounded, title: _birthdayText(birthdate, s), subtitle: s.t('birthday')),
       if (info?.inviteLink case final link?) _InfoTile(icon: Icons.link_rounded, title: link, subtitle: s.t('invite_link'), copy: link, share: true),
+      if (info?.userInfo?.businessInfo case final business?) ...[
+        if (business.openingHours?.openingHours.isNotEmpty ?? false) BusinessHoursTile(info: business),
+        if (business.location case final place? when place.address.isNotEmpty) BusinessLocationTile(location: place),
+      ],
     ];
 
+    // A person's UZARO extras: gifts around the avatar and the background they picked (not groups, bots, Saved Messages).
+    final giftsFor = user != null && !account.isBot(user) && !account.isSavedMessages(chat) ? user.id : null;
+    final background = giftsFor == null ? null : ref.watch(userGiftsProvider(giftsFor)).value?.background;
+    final onHeader = background == null ? theme.colorScheme.onSurface : Colors.white;
+    final headerTop = MediaQuery.paddingOf(context).top + kToolbarHeight;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        foregroundColor: theme.colorScheme.onSurface,
-        iconTheme: IconThemeData(color: theme.colorScheme.onSurface),
-        actionsIconTheme: IconThemeData(color: theme.colorScheme.onSurface),
+        foregroundColor: onHeader,
+        iconTheme: IconThemeData(color: onHeader),
+        actionsIconTheme: IconThemeData(color: onHeader),
         actions: [
           if (canEdit)
             IconButton(
@@ -140,21 +160,35 @@ class ChatInfoScreen extends ConsumerWidget {
             ),
         ],
       ),
-      body: CustomScrollView(
+      body: Stack(children: [
+      if (background != null)
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: headerTop + 400,
+          child: DecoratedBox(decoration: BoxDecoration(gradient: profileGradient(background, theme.scaffoldBackgroundColor))),
+        ),
+      CustomScrollView(
         slivers: [
           SliverList.list(
             children: [
+              // The app bar floats over the body (so a background reaches the top edge).
+              SizedBox(height: headerTop),
               // aka-style header: centered avatar, name, status, then quick actions.
               Center(
-                child: GestureDetector(
-                  onTap: chat.photo == null
-                      ? null
-                      : user != null
-                          ? () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(builder: (_) => _ProfilePhotosScreen(userId: user.id, chatId: chatId)))
-                          : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
-                  child: Hero(
-                    tag: 'avatar_$chatId',
-                    child: GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
+                child: _withGifts(
+                  giftsFor,
+                  GestureDetector(
+                    onTap: chat.photo == null
+                        ? null
+                        : user != null
+                            ? () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(builder: (_) => ProfilePhotosScreen(userId: user.id, chatId: chatId)))
+                            : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
+                    child: Hero(
+                      tag: 'avatar_$chatId',
+                      child: GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
+                    ),
                   ),
                 ),
               ),
@@ -166,14 +200,14 @@ class ChatInfoScreen extends ConsumerWidget {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: onHeader),
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 chatSubtitle(chat, account, s),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 15, color: theme.hintColor),
+                style: TextStyle(fontSize: 15, color: background == null ? theme.hintColor : Colors.white70),
               ),
               const SizedBox(height: 18),
               Padding(
@@ -189,6 +223,8 @@ class ChatInfoScreen extends ConsumerWidget {
                     if (callable) ...[
                       _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
                       _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => startTelegramCall(context, user.id, video: true)),
+                      if (ref.read(sadoApiProvider).configured)
+                        _ActionTile(icon: Icons.card_giftcard_rounded, label: s.t('gift_short'), onTap: () => sendUzaroGift(context, user)),
                     ] else if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
                       _ActionTile(
                         icon: Icons.logout_rounded,
@@ -204,11 +240,13 @@ class ChatInfoScreen extends ConsumerWidget {
                   ],
                 ),
               ),
+              // Telegram order: the profile track, the personal channel, then the details.
+              if (user != null && !account.isBot(user)) ProfileMusicChip(userId: user.id, color: background == null ? null : Colors.white),
+              if (user != null && (info?.personalChatId ?? 0) != 0)
+                _ProfileCard(children: [PersonalChannelCard(userId: user.id, channelChatId: info!.personalChatId)]),
               if (infoTiles.isNotEmpty) _ProfileCard(children: infoTiles),
               if (user != null && account.isBot(user) && !account.isSavedMessages(chat))
                 _ProfileCard(children: [BotProfileExtras(bot: user, chatId: chatId, info: info?.userInfo)]),
-              if (user != null && (info?.personalChatId ?? 0) != 0)
-                _ProfileCard(children: [PersonalChannelCard(userId: user.id, channelChatId: info!.personalChatId)]),
               _ProfileCard(
                 children: [
                   if (user == null && account.isAdmin(chat))
@@ -353,13 +391,21 @@ class ChatInfoScreen extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              _SharedMediaSection(chatId: chatId),
-              if (account.isChannel(chat)) _SimilarChannels(chatId: chatId),
-              if (info != null && info.members.isNotEmpty) ...[
-                const Divider(),
+              // Members are the first tab of the media strip, so big groups don't bury them under the media grid.
+              _SharedMediaSection(
+                chatId: chatId,
+                membersLabel: s.count('members', account.memberCount(chat)),
+                members: info == null || info.members.isEmpty
+                    ? null
+                    : Column(children: [
                 Row(
                   children: [
-                    Expanded(child: SectionHeader(s.count('members', account.memberCount(chat)))),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: s.t(ref.watch(membersGridProvider) ? 'members_list' : 'members_grid'),
+                      icon: Icon(ref.watch(membersGridProvider) ? Icons.view_list_rounded : Icons.grid_view_rounded),
+                      onPressed: () => ref.read(membersGridProvider.notifier).toggle(),
+                    ),
                     if (account.isAdmin(chat) || chat.permissions.canInviteUsers)
                       TextButton.icon(
                         icon: const Icon(Icons.person_add_alt_1_rounded),
@@ -380,15 +426,31 @@ class ChatInfoScreen extends ConsumerWidget {
                       ),
                   ],
                 ),
-                for (final member in info.members)
-                  if (member.memberId case td.MessageSenderUser(:final userId))
-                    _MemberTile(userId: userId, status: member.status, chat: chat, account: account, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
-              ],
+                if (ref.watch(membersGridProvider))
+                  MembersGrid(
+                    members: [for (final m in info.members) if (m.memberId is td.MessageSenderUser) m],
+                    cell: (member) => _MemberTile(
+                      userId: (member.memberId as td.MessageSenderUser).userId,
+                      status: member.status,
+                      chat: chat,
+                      account: account,
+                      onChanged: () => ref.invalidate(_detailsProvider(chatId)),
+                      grid: true,
+                    ),
+                  )
+                else
+                  for (final member in info.members)
+                    if (member.memberId case td.MessageSenderUser(:final userId))
+                      _MemberTile(userId: userId, status: member.status, chat: chat, account: account, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
+                    ]),
+              ),
+              if (account.isChannel(chat)) _SimilarChannels(chatId: chatId),
               const SizedBox(height: 32),
             ],
           ),
         ],
       ),
+      ]),
     );
   }
 }
@@ -455,8 +517,8 @@ class _SimilarChannels extends ConsumerWidget {
 }
 
 /// Swipeable history of a user's profile photos; on your own profile each one can be deleted.
-class _ProfilePhotosScreen extends ConsumerStatefulWidget {
-  const _ProfilePhotosScreen({required this.userId, required this.chatId});
+class ProfilePhotosScreen extends ConsumerStatefulWidget {
+  const ProfilePhotosScreen({super.key, required this.userId, required this.chatId});
 
   final int userId;
 
@@ -464,10 +526,10 @@ class _ProfilePhotosScreen extends ConsumerStatefulWidget {
   final int chatId;
 
   @override
-  ConsumerState<_ProfilePhotosScreen> createState() => _ProfilePhotosScreenState();
+  ConsumerState<ProfilePhotosScreen> createState() => ProfilePhotosScreenState();
 }
 
-class _ProfilePhotosScreenState extends ConsumerState<_ProfilePhotosScreen> {
+class ProfilePhotosScreenState extends ConsumerState<ProfilePhotosScreen> {
   List<td.ChatPhoto>? _photos;
   int _index = 0;
 
@@ -574,6 +636,11 @@ class _CommonGroupsScreen extends ConsumerWidget {
 }
 
 /// "14 fev 1992 (34 yosh)" like aka; without a year just the day and month.
+/// A person's UZARO gifts float around their avatar (their premium video plays on open);
+/// groups, bots and Saved Messages ([telegramId] null) get none.
+Widget _withGifts(int? telegramId, Widget avatar) =>
+    telegramId == null ? avatar : GiftOrbit(telegramId: telegramId, avatarSize: 116, playVideo: true, child: avatar);
+
 String _birthdayText(td.Birthdate birthdate, Strings s) {
   final year = birthdate.year > 0 ? birthdate.year : 2000;
   final date = DateTime(year, birthdate.month, birthdate.day);
@@ -690,13 +757,16 @@ class _InfoTile extends StatelessWidget {
 }
 
 class _MemberTile extends ConsumerWidget {
-  const _MemberTile({required this.userId, required this.status, required this.chat, required this.account, required this.onChanged});
+  const _MemberTile({required this.userId, required this.status, required this.chat, required this.account, required this.onChanged, this.grid = false});
 
   final int userId;
   final td.ChatMemberStatus status;
   final td.Chat chat;
   final TelegramAccount account;
   final VoidCallback onChanged;
+
+  /// Avatar-and-name cell of the members grid instead of a list row.
+  final bool grid;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -709,36 +779,53 @@ class _MemberTile extends ConsumerWidget {
       _ => null,
     };
     final canKick = account.isAdmin(chat) && userId != account.myId && status is! td.ChatMemberStatusCreator;
+    final onTap = userId == account.myId
+        ? null
+        : () async {
+            final private = await guard(context, () => account.openPrivateChat(userId));
+            if (private != null && context.mounted) openChat(context, private.id);
+          };
+    final onLongPress = !canKick ? null : () => _remove(context, user);
+    if (grid) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Column(
+          children: [
+            UserAvatar(userId: userId, size: 54),
+            const SizedBox(height: 6),
+            Text(user.firstName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+          ],
+        ),
+      );
+    }
     return ListTile(
       leading: UserAvatar(userId: userId, size: 42),
       title: Text('${user.firstName} ${user.lastName}'.trim(), maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(formatUserStatus(user, s)),
       trailing: role != null ? Text(role, style: TextStyle(color: Theme.of(context).hintColor)) : null,
-      onTap: userId == account.myId
-          ? null
-          : () async {
-              final private = await guard(context, () => account.openPrivateChat(userId));
-              if (private != null && context.mounted) openChat(context, private.id);
-            },
-      onLongPress: !canKick
-          ? null
-          : () async {
-              final ok = await confirm(context, title: s.t('remove_member'), message: user.firstName, destructive: true);
-              if (!ok || !context.mounted) return;
-              await guard(
-                context,
-                () => account.send<td.Ok>(
-                  td.BanChatMember(
-                    chatId: chat.id,
-                    memberId: td.MessageSenderUser(userId: userId),
-                    bannedUntilDate: 0,
-                    revokeMessages: false,
-                  ),
-                ),
-              );
-              onChanged();
-            },
+      onTap: onTap,
+      onLongPress: onLongPress,
     );
+  }
+
+  Future<void> _remove(BuildContext context, td.User user) async {
+    final s = context.s;
+    final ok = await confirm(context, title: s.t('remove_member'), message: user.firstName, destructive: true);
+    if (!ok || !context.mounted) return;
+    await guard(
+      context,
+      () => account.send<td.Ok>(
+        td.BanChatMember(
+          chatId: chat.id,
+          memberId: td.MessageSenderUser(userId: userId),
+          bannedUntilDate: 0,
+          revokeMessages: false,
+        ),
+      ),
+    );
+    onChanged();
   }
 }
 
@@ -768,21 +855,27 @@ final _sharedMediaProvider = FutureProvider.autoDispose.family<List<td.Message>,
 });
 
 class _SharedMediaSection extends ConsumerStatefulWidget {
-  const _SharedMediaSection({required this.chatId});
+  const _SharedMediaSection({required this.chatId, this.members, this.membersLabel = ''});
 
   final int chatId;
+
+  /// The group's member list, shown under a leading "members" tab when present.
+  final Widget? members;
+  final String membersLabel;
 
   @override
   ConsumerState<_SharedMediaSection> createState() => _SharedMediaSectionState();
 }
 
 class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
-  String _tab = 'media';
+  String? _picked;
 
   @override
   Widget build(BuildContext context) {
     final s = context.s;
-    final messages = ref.watch(_sharedMediaProvider((widget.chatId, _tab)));
+    final members = widget.members;
+    // Groups open on their members, like Telegram; everything else on media.
+    final tab = _picked ?? (members != null ? 'members' : 'media');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -791,23 +884,39 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              for (final tab in const ['media', 'files', 'links', 'voice', 'music'])
+              if (members != null)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
-                    label: Text(switch (ref.watch(_sharedCountProvider((widget.chatId, tab))).value) {
-                      final n? when n > 0 => '${s.t('shared_$tab')} $n',
-                      _ => s.t('shared_$tab'),
+                    label: Text(widget.membersLabel),
+                    selected: tab == 'members',
+                    onSelected: (_) => setState(() => _picked = 'members'),
+                  ),
+                ),
+              for (final kind in const ['media', 'files', 'links', 'voice', 'music'])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(switch (ref.watch(_sharedCountProvider((widget.chatId, kind))).value) {
+                      final n? when n > 0 => '${s.t('shared_$kind')} $n',
+                      _ => s.t('shared_$kind'),
                     }),
-                    selected: _tab == tab,
-                    onSelected: (_) => setState(() => _tab = tab),
+                    selected: tab == kind,
+                    onSelected: (_) => setState(() => _picked = kind),
                   ),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 8),
-        messages.when(
+        if (tab == 'members' && members != null) members else _messages(context, tab),
+      ],
+    );
+  }
+
+  Widget _messages(BuildContext context, String tab) {
+    final s = context.s;
+    return ref.watch(_sharedMediaProvider((widget.chatId, tab))).when(
           loading: () => const Padding(
             padding: EdgeInsets.all(24),
             child: Center(child: CircularProgressIndicator()),
@@ -822,7 +931,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                 ),
               );
             }
-            if (_tab == 'media') {
+            if (tab == 'media') {
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -837,7 +946,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                 for (final message in list)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    child: _tab == 'links'
+                    child: tab == 'links'
                         ? FormattedTextView(
                             text: (message.content is td.MessageText)
                                 ? (message.content as td.MessageText).text
@@ -851,9 +960,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
               ],
             );
           },
-        ),
-      ],
-    );
+        );
   }
 }
 

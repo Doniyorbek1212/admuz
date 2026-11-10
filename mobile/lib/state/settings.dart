@@ -36,7 +36,7 @@ class AppSettings {
     this.showTranslateButton = true,
     this.chatTypeTabs = false,
     this.keepMediaDays = 0,
-    this.autoDownloadPhotos = true,
+    this.autoDownloadPhotos = false,
     this.autoplayGifs = true,
     this.hiddenChatIds = const {},
     this.wallpaper = '',
@@ -246,7 +246,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
       chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,
       keepMediaDays: _prefs.getInt('keepMediaDays') ?? 0,
-      autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? true,
+      // Off until the user turns it on: saves traffic; photos load on tap.
+      autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? false,
       autoplayGifs: _prefs.getBool('autoplayGifs') ?? true,
       hiddenChatIds: {for (final id in _prefs.getStringList('hiddenChats') ?? const <String>[]) ?int.tryParse(id)},
       wallpaper: _prefs.getString('wallpaper') ?? '',

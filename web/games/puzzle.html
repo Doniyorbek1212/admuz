@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Boshqotirma</title>
+<link rel="stylesheet" href="games.css?v=2">
+<style>
+  .tiles { display: grid; gap: 6px; width: 100%; aspect-ratio: 1; padding: 6px; background: var(--line); border-radius: var(--radius); touch-action: manipulation; }
+  .tile { border: 0; border-radius: 10px; background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 800; font-size: min(9vw, 40px); cursor: pointer; }
+  .tile.home { background: var(--ok); }
+  .tile.gap { background: transparent; cursor: default; }
+  .stats { display: flex; justify-content: space-around; margin: 12px 0; font-weight: 600; }
+</style>
+<script src="common.js?v=2" defer></script>
+<script src="puzzle.js?v=3" defer></script>
+</head>
+<body>
+<h1 data-t="puzzle">Boshqotirma</h1>
+<div class="bar">
+  <span class="muted" data-t="size"></span>
+  <button class="btn" type="button" data-size="3">3×3</button>
+  <button class="btn" type="button" data-size="4">4×4</button>
+  <button class="btn" type="button" data-size="5">5×5</button>
+  <span class="grow"></span>
+  <button class="btn primary" type="button" id="shuffle" data-t="shuffle"></button>
+</div>
+<div class="tiles" id="tiles"></div>
+<div class="stats">
+  <span><span data-t="moves"></span>: <b id="moves">0</b></span>
+  <span><span data-t="time"></span>: <b id="time">0:00</b></span>
+  <span><span data-t="best"></span>: <b id="best">—</b></span>
+</div>
+</body>
+</html>

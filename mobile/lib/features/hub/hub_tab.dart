@@ -4,20 +4,26 @@ import 'package:geolocator/geolocator.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/api/sado_api.dart';
+import '../../core/interests.dart';
+import '../../core/store_rules.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
+import '../business/ads_screen.dart';
 import '../business/business_screen.dart';
 import '../business/shops_screen.dart';
+import '../gifts/gifts_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_screen.dart';
 import 'hub_banners.dart';
+import 'games_screen.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
 import 'movies_screen.dart';
+import 'music_screen.dart';
 import 'places_screen.dart';
 
 /// "Hub" tab of the bottom bar: banners, local services, entertainment and tools.
@@ -28,6 +34,8 @@ class HubTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = context.s;
     final region = ref.watch(hubRegionProvider);
+    // iOS store builds cannot sell ads (paid outside the App Store), so the tile is hidden there.
+    final toolItems = [for (final item in hubToolItems) if (item.action != HubAction.ads || !storeBlocksExternalPayments) item];
     return Scaffold(
       backgroundColor: groupedBackground(context),
       appBar: BrandTabBar(title: s.t('tab_hub')),
@@ -68,8 +76,8 @@ class HubTab extends ConsumerWidget {
               icon: Icons.handyman_rounded,
               color: const Color(0xFF2EC27E),
               title: s.t('hub_tools'),
-              trailing: _count(context, hubToolItems.length),
-              items: hubToolItems,
+              trailing: _count(context, toolItems.length),
+              items: toolItems,
             ),
           ],
         ),
@@ -144,11 +152,10 @@ class HubTab extends ConsumerWidget {
       if (context.mounted) showToast(context, s.t('hub_region_failed'));
       return;
     }
-    final region = regionForPosition(position.latitude, position.longitude);
+    final area = await locateArea(ref, position);
     if (!context.mounted) return;
-    if (region == null) return showToast(context, s.t('hub_region_outside'));
-    ref.read(hubRegionProvider.notifier).select(region);
-    showToast(context, s.t('hub_region_detected', {'region': region}));
+    if (area == null) return showToast(context, s.t('hub_region_outside'));
+    showToast(context, s.t('hub_region_detected', {'region': area}));
   }
 }
 
@@ -156,6 +163,7 @@ class HubTab extends ConsumerWidget {
 Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) async {
   final label = context.t(item.labelKey);
   void push(Widget screen) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+  trackInterest(ref, item.topic);
   switch (item.action) {
     case HubAction.places:
       if (ref.read(sadoApiProvider).configured) {
@@ -170,10 +178,18 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
     case HubAction.movies:
       // A build without the UZARO server falls back to public Telegram channels.
       push(ref.read(sadoApiProvider).configured ? const MoviesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+    case HubAction.music:
+      push(ref.read(sadoApiProvider).configured ? const MusicScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+    case HubAction.games:
+      push(ref.read(sadoApiProvider).configured ? const GamesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+    case HubAction.gifts:
+      push(ref.read(sadoApiProvider).configured ? const GiftsScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.themes:
       push(const AppearanceScreen());
     case HubAction.business:
       push(const BusinessScreen());
+    case HubAction.ads:
+      push(const AdsScreen());
     case HubAction.shops:
       push(ShopsScreen(region: ref.read(hubRegionProvider)));
     case HubAction.support:

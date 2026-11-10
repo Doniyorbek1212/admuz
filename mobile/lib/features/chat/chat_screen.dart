@@ -22,6 +22,7 @@ import '../../widgets/common.dart';
 import '../../widgets/message_context_menu.dart';
 import '../../widgets/playback_bar.dart';
 import '../../widgets/swipe_to_reply.dart';
+import '../gifts/gift_widgets.dart' show playArrivedGift;
 import '../home/home_screen.dart';
 import '../profile/profile_media.dart' show isProfileAudio, toggleProfileAudio;
 import 'sticker_extras.dart';
@@ -37,6 +38,8 @@ import 'composer.dart';
 import 'forward_picker.dart';
 import 'link_router.dart';
 import 'marked_messages_screen.dart';
+import 'album_editor.dart';
+import 'saved_collections.dart';
 import 'saved_topics_screen.dart';
 import 'media_calendar.dart';
 import 'media_gallery.dart';
@@ -45,6 +48,7 @@ import 'message_bubble.dart';
 import 'message_content.dart';
 import '../calls/conference_calls.dart' show PendingBotMessageBar;
 import 'message_tools.dart';
+import 'screen_effects.dart';
 import 'message_extras.dart';
 import 'scheduled_screen.dart';
 import 'sponsored_bubble.dart';
@@ -97,6 +101,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _replyKeyboardHidden = false;
   int? _seenMarkupId;
   final _composerKey = GlobalKey<ComposerState>();
+  final _effectsKey = GlobalKey<ScreenEffectsOverlayState>();
   late final OpenChatNotifier _openChat = ref.read(openChatProvider.notifier);
 
   /// Where the last click/tap landed: desktop context menus open there.
@@ -118,10 +123,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           threadId: widget.threadId,
           threadRoots: widget.threadRoots,
         );
-    _history.addListener(_onHistory);
+    _history
+      ..addListener(_onHistory)
+      ..onLiveMessage = ((message) {
+        if (message.content case td.MessageText(:final text)) _playEffect(effectForText(text.text));
+      })
+      ..onInteractionChanged = ((before, after) => _playEffect(effectForNewReaction(before, after)));
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _openChat.set(widget.chatId));
-    if (widget.debugHistory == null) unawaited(_load());
+    if (widget.debugHistory == null) {
+      unawaited(_load());
+      // A premium gift this person sent that this device has not shown yet plays over the chat, after the page slides in.
+      Future<void>.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) unawaited(playArrivedGift(context, ref, widget.chatId));
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -163,6 +179,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _refreshPinned() async {
     final pinned = await _account.pinnedMessage(widget.chatId);
     if (mounted) setState(() => _pinned = pinned);
+  }
+
+  void _playEffect(ScreenEffect? effect) {
+    if (effect == null || ref.read(powerSavingProvider)) return;
+    _effectsKey.currentState?.play(effect);
   }
 
   void _onHistory() {
@@ -290,8 +311,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (props?.canBeEdited ?? false) (Icons.edit_rounded, s.t('edit'), 'edit'),
       if ((props?.canEditMedia ?? false) && (message.content is td.MessagePhoto || message.content is td.MessageVideo))
         (Icons.photo_library_outlined, s.t('replace_media'), 'replace_media'),
+      if ((props?.canEditMedia ?? false) && message.mediaAlbumId != 0 && _albumOf(message).length > 1)
+        (Icons.dashboard_customize_outlined, s.t('edit_album'), 'edit_album'),
       if (hasVersions) (Icons.history_rounded, s.t('edit_history'), 'history'),
       (marked ? Icons.star_rounded : Icons.star_outline_rounded, s.t(marked ? 'unmark_message' : 'mark_message'), 'mark'),
+      if (_account.isSavedMessages(chat)) (Icons.collections_bookmark_outlined, s.t('collection_add'), 'collection'),
       if (props?.canBePinned ?? false)
         (message.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded, s.t(message.isPinned ? 'unpin' : 'pin'), 'pin'),
       if (props?.canBeForwarded ?? true) (Icons.forward_rounded, s.t('forward'), 'forward'),
@@ -465,6 +489,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         await _refreshPinned();
       case 'forward':
         await _forward(_albumOf(message));
+      case 'edit_album':
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => AlbumEditorScreen(album: _albumOf(message))));
+      case 'collection':
+        await pickCollections(context, ref, [for (final m in _albumOf(message)) m.id]);
       case 'link':
         final link = await guard(context, () => _account.messageLink(message));
         if (link != null) {
@@ -717,6 +745,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 child: Stack(
                   children: [
                     _messageList(chat),
+                    ScreenEffectsOverlay(key: _effectsKey),
                     if (replyKeyboard != null && !selecting)
                       Positioned(
                         left: 12,
@@ -940,6 +969,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (chat.videoChat.groupCallId == 0 && canManageVideoChats(account, chat)) item('video_chat', Icons.graphic_eq_rounded, s.t('video_chat_start')),
         item('search', Icons.search_rounded, s.t('search')),
         if (account.isSavedMessages(chat)) item('saved_topics', Icons.folder_shared_outlined, s.t('saved_by_chat')),
+        if (account.isSavedMessages(chat)) item('collections', Icons.collections_bookmark_outlined, s.t('collections')),
         item('marked', Icons.star_outline_rounded, s.t('find_marked')),
         item('first', Icons.vertical_align_top_rounded, s.t('go_to_first')),
         item('date', Icons.calendar_month_rounded, s.t('go_to_date')),
@@ -981,6 +1011,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (id != null && mounted) await _jumpTo(id);
       case 'saved_topics':
         final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => const SavedTopicsScreen()));
+        if (id != null && mounted) await _jumpTo(id);
+      case 'collections':
+        final id = await Navigator.of(context).push<int>(MaterialPageRoute(builder: (_) => const SavedCollectionsScreen()));
         if (id != null && mounted) await _jumpTo(id);
       case 'first':
         await _jumpToFirst(chat);

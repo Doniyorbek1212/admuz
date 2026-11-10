@@ -23,6 +23,7 @@ import 'features/home/home_screen.dart';
 import 'features/home/home_shell.dart';
 import 'l10n/strings.dart';
 import 'state/actions.dart';
+import 'state/banned_channels.dart';
 import 'state/providers.dart';
 import 'state/settings.dart';
 import 'state/telegram.dart';
@@ -287,6 +288,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   @override
   Widget build(BuildContext context) {
     ref.listen(settingsProvider, (_, settings) => _configureArchive(settings));
+    // Loaded (and refreshed from the server) at start, so the first search is already filtered.
+    ref.listen(bannedChannelsProvider, (_, _) {});
     ref.listen(meProvider, (_, me) {
       if (me != null) {
         ref.read(accountSlotsProvider.notifier).setLabel(_account.slot, '${me.firstName} ${me.lastName}'.trim());

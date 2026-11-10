@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Rational
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -22,9 +23,31 @@ class MainActivity : FlutterActivity() {
         FlutterEngineCache.getInstance().get(MainApplication.ENGINE_ID)
 
     private var pipChannel: MethodChannel? = null
+    private var privacyChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applySecureWindow()
+        // Passcode on: FLAG_SECURE hides the chats from the recents thumbnail and from screenshots/recording.
+        privacyChannel = flutterEngine?.let { engine ->
+            MethodChannel(engine.dartExecutor.binaryMessenger, PRIVACY_CHANNEL).apply {
+                setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "setSecure" -> {
+                            secureWindow = call.argument<Boolean>("enabled") == true
+                            applySecureWindow()
+                            result.success(null)
+                        }
+                        // Gift shows stay quiet when the phone is on silent or vibrate.
+                        "isSilent" -> result.success(
+                            (getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager)
+                                ?.ringerMode?.let { it != android.media.AudioManager.RINGER_MODE_NORMAL } ?: false
+                        )
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+        }
         askBatteryExemptionOnce()
         // Picture-in-picture for the video viewer ("Kichraytirish"); Dart learns about mode changes over the same channel.
         pipChannel = flutterEngine?.let { engine ->
@@ -41,7 +64,16 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         pipChannel?.setMethodCallHandler(null)
+        privacyChannel?.setMethodCallHandler(null)
         super.onDestroy()
+    }
+
+    private fun applySecureWindow() {
+        if (secureWindow) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     private fun enterPip(width: Int, height: Int): Boolean {
@@ -85,5 +117,10 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val PIP_CHANNEL = "uz.sado.app/pip"
+        const val PRIVACY_CHANNEL = "uz.sado.app/privacy"
+
+        // Process-wide like the cached engine: a recreated activity (rotation) keeps the flag Dart last sent.
+        @Volatile
+        private var secureWindow = false
     }
 }

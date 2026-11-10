@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/phone_numbers.dart';
 import '../../core/tdlib/td_client.dart';
@@ -9,6 +10,7 @@ import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../home/home_screen.dart';
+import '../profile/chat_info_screen.dart';
 
 /// Telegram user behind a phone number, or null when the number has no account or hides it (privacy:
 /// "Who can find me by my number"). Kept for the session: Telegram rate-limits phone lookups hard.
@@ -23,49 +25,42 @@ final phoneUserProvider = FutureProvider.family<int?, String>((ref, phone) async
   }
 });
 
-/// Under a Saved Messages note that holds phone numbers: one "Write a message" button per number that has Telegram.
-class PhoneChatButtons extends ConsumerWidget {
-  const PhoneChatButtons({super.key, required this.text, required this.color});
-
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final buttons = [
-      for (final phone in phoneNumbersIn(text))
-        if (ref.watch(phoneUserProvider(phone)).value case final userId?) _button(context, ref, phone, userId),
-    ];
-    if (buttons.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons),
-    );
-  }
-
-  Widget _button(BuildContext context, WidgetRef ref, String phone, int userId) {
-    final account = ref.watch(accountProvider);
-    final name = account.userName(userId);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: color,
-          side: BorderSide(color: color.withValues(alpha: 0.45)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          visualDensity: VisualDensity.compact,
-        ),
-        icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-        label: Text(
-          '${context.t('send_message')}${name.isEmpty ? '' : ' · $name'}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        onPressed: () async {
-          final chat = await guard(context, () => account.openPrivateChat(userId));
-          if (chat != null && context.mounted) openChat(context, chat.id);
-        },
+/// A phone number tapped in a message: when it has Telegram, offer to write to that person or open their
+/// profile (calling stays one tap away); otherwise the phone's dialer opens, as before.
+Future<void> openPhoneNumber(BuildContext context, String written) async {
+  Future<void> dial() => launchUrl(Uri(scheme: 'tel', path: written));
+  final phone = phoneNumbersIn(written).firstOrNull ?? written.replaceAll(RegExp(r'\D'), '');
+  final container = ProviderScope.containerOf(context, listen: false);
+  final userId = await container.read(phoneUserProvider(phone).future);
+  if (!context.mounted) return;
+  if (userId == null) return dial();
+  final account = container.read(accountProvider);
+  final s = context.s;
+  final name = account.userName(userId);
+  final choice = await showModalBottomSheet<_PhoneAction>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(title: Text(name.isEmpty ? written : name, style: const TextStyle(fontWeight: FontWeight.w600)), subtitle: Text(written)),
+          for (final (action, icon, key) in [
+            (_PhoneAction.chat, Icons.chat_bubble_outline_rounded, 'send_message'),
+            (_PhoneAction.profile, Icons.person_outline_rounded, 'tab_profile'),
+            (_PhoneAction.call, Icons.call_outlined, 'call'),
+          ])
+            ListTile(leading: Icon(icon), title: Text(s.t(key)), onTap: () => Navigator.pop(context, action)),
+        ],
       ),
-    );
-  }
+    ),
+  );
+  if (choice == null || !context.mounted) return;
+  if (choice == _PhoneAction.call) return dial();
+  final chat = await guard(context, () => account.openPrivateChat(userId));
+  if (chat == null || !context.mounted) return;
+  if (choice == _PhoneAction.chat) return openChat(context, chat.id);
+  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id)));
 }
+
+enum _PhoneAction { chat, profile, call }

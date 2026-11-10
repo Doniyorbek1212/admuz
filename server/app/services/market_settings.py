@@ -19,6 +19,15 @@ class MarketSettings:
     app_version: str = ""
     app_build: int = 0
     app_release_notes: str = ""
+    # Interest-based ads ("AI reklama"): 1 on, 0 plain rotation; how much the match counts vs. random rotation (%);
+    # after how many days an interest counts half as much.
+    ads_personalization: int = 1
+    ads_interest_weight: int = 70
+    ads_interest_half_life_days: int = 14
+    # Short UZARO usernames by length, in so'm; 0 = that length is not on sale (5+ characters are always free).
+    username_price_2_uzs: int = 0
+    username_price_3_uzs: int = 0
+    username_price_4_uzs: int = 0
 
 
 EDITABLE = tuple(f.name for f in fields(MarketSettings))

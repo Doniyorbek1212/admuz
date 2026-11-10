@@ -5,6 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../l10n/strings.dart';
 import '../state/telegram.dart';
+import 'time_capsule.dart';
 
 DateTime fromUnix(int seconds) => DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
 
@@ -121,11 +122,21 @@ String chatTitle(td.Chat chat, TelegramAccount account, Strings s) {
 
 /// Name the user gave this chat on this device only (kept in TDLib's chat client_data), or null.
 String? localChatName(td.Chat chat) {
+  final name = _clientData(chat)?['name'];
+  return name is String && name.trim().isNotEmpty ? name.trim() : null;
+}
+
+/// Row tint the user picked for this chat on this device (ARGB, in client_data), or null.
+int? localChatColor(td.Chat chat) => switch (_clientData(chat)?['color']) {
+      final int argb => argb,
+      _ => null,
+    };
+
+Map<dynamic, dynamic>? _clientData(td.Chat chat) {
   if (chat.clientData.isEmpty) return null;
   try {
     final data = jsonDecode(chat.clientData);
-    final name = data is Map ? data['name'] : null;
-    return name is String && name.trim().isNotEmpty ? name.trim() : null;
+    return data is Map ? data : null;
   } on FormatException {
     return null;
   }
@@ -143,7 +154,8 @@ td.FormattedText? captionOf(td.MessageContent content) => switch (content) {
 
 /// Plain text of a message (text or caption), used for copy, search, translation.
 String messageText(td.Message message) => switch (message.content) {
-      td.MessageText(:final text) => text.text,
+      td.MessageText(:final text) when isSealedCapsule(text) => '',
+      td.MessageText(:final text) => capsuleBody(text).text,
       final content => captionOf(content)?.text ?? '',
     };
 
@@ -160,7 +172,8 @@ String messagePreview(td.Message message, TelegramAccount account, Strings s) =>
 String? contentPreview(td.MessageContent content, Strings s) {
   switch (content) {
     case td.MessageText(:final text):
-      return text.text;
+      if (isSealedCapsule(text)) return '⏳ ${s.t('time_capsule')}';
+      return capsuleUnlockAt(text) == null ? text.text : capsuleBody(text).text;
     case td.MessagePhoto(:final caption):
       return _withCaption('🖼', s.t('photo'), caption);
     case td.MessageVideo(:final caption):

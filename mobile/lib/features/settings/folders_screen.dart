@@ -161,6 +161,7 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
         ListTile(leading: const Icon(Icons.push_pin_outlined), title: Text(s.t('pinned_reorder')), onTap: () => Navigator.pop(context, 'pinned')),
         if (folderId != null) ...[
           ListTile(leading: const Icon(Icons.edit_rounded), title: Text(s.t('edit_folder')), onTap: () => Navigator.pop(context, 'edit')),
+          ListTile(leading: const Icon(Icons.emoji_symbols_rounded), title: Text(s.t('folder_icon')), onTap: () => Navigator.pop(context, 'icon')),
           ListTile(leading: const Icon(Icons.playlist_add_rounded), title: Text(s.t('folder_new_chats')), onTap: () => Navigator.pop(context, 'new')),
           ListTile(
             leading: Icon(Icons.delete_outline_rounded, color: Theme.of(context).colorScheme.error),
@@ -179,11 +180,97 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PinnedOrderScreen(listKey: listKey)));
     case 'edit':
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => FolderEditScreen(folderId: folderId)));
+    case 'icon':
+      await _pickFolderIcon(context, account, folderId!);
     case 'new':
       await addFolderNewChats(context, account, folderId!);
     case 'delete':
       await deleteChatFolder(context, account, folderId!, title);
   }
+}
+
+/// Telegram's folder icon names (ChatFolderIcon.name), in the order the picker shows them.
+const folderIconNames = [
+  'Love', 'Favorite', 'Work', 'Home', 'Study', 'Game', 'Sport', 'Travel', 'Money', 'Party', 'Cat', 'Flower', //
+  'Crown', 'Light', 'Note', 'Palette', 'Airplane', 'Book', 'Like', 'Mask', 'Trade', 'Setup', 'Unread', 'Bots', //
+  'Channels', 'Groups', 'Private', 'Unmuted', 'All', 'Custom',
+];
+
+/// Tab key or Telegram folder icon name to a Material icon.
+IconData folderIconData(String key) => switch (key) {
+      'main' || 'All' => Icons.forum_rounded,
+      'type:private' || 'Private' => Icons.person_rounded,
+      'type:group' || 'Groups' => Icons.groups_rounded,
+      'type:channel' || 'Channels' => Icons.campaign_rounded,
+      'type:bot' || 'Bots' => Icons.smart_toy_rounded,
+      'type:unread' || 'Unread' => Icons.mark_chat_unread_rounded,
+      'Unmuted' => Icons.notifications_active_rounded,
+      'Favorite' => Icons.star_rounded,
+      'Crown' => Icons.workspace_premium_rounded,
+      'Work' => Icons.work_rounded,
+      'Trade' => Icons.trending_up_rounded,
+      'Money' => Icons.payments_rounded,
+      'Home' => Icons.home_rounded,
+      'Love' => Icons.favorite_rounded,
+      'Like' => Icons.thumb_up_rounded,
+      'Study' => Icons.school_rounded,
+      'Book' => Icons.menu_book_rounded,
+      'Note' => Icons.music_note_rounded,
+      'Game' => Icons.sports_esports_rounded,
+      'Party' => Icons.celebration_rounded,
+      'Mask' => Icons.theater_comedy_rounded,
+      'Sport' => Icons.sports_soccer_rounded,
+      'Travel' => Icons.luggage_rounded,
+      'Airplane' => Icons.flight_rounded,
+      'Setup' => Icons.settings_rounded,
+      'Light' => Icons.lightbulb_rounded,
+      'Palette' => Icons.palette_rounded,
+      'Flower' => Icons.local_florist_rounded,
+      'Cat' => Icons.pets_rounded,
+      _ => Icons.folder_rounded,
+    };
+
+/// Grid of folder icons; saves the picked one on the folder (synced by Telegram to all devices).
+Future<void> _pickFolderIcon(BuildContext context, TelegramAccount account, int folderId) async {
+  final folder = await guard(context, () => account.send<td.ChatFolder>(td.GetChatFolder(chatFolderId: folderId)));
+  if (folder == null || !context.mounted) return;
+  final s = context.s;
+  final current = folder.icon?.name ?? 'Custom';
+  final picked = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) {
+      final accent = Theme.of(context).colorScheme.primary;
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(s.t('folder_icon'), style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Flexible(
+              child: GridView.count(
+                crossAxisCount: 6,
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                children: [
+                  for (final name in folderIconNames)
+                    IconButton(
+                      tooltip: name,
+                      isSelected: name == current,
+                      style: IconButton.styleFrom(backgroundColor: name == current ? accent.withValues(alpha: 0.14) : null),
+                      icon: Icon(folderIconData(name), color: accent, size: 28),
+                      onPressed: () => Navigator.pop(context, name),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+  if (picked == null || picked == current || !context.mounted) return;
+  await guard(context, () => account.send<td.ChatFolderInfo>(td.EditChatFolder(chatFolderId: folderId, folder: folder.copyWith(icon: td.ChatFolderIcon(name: picked)))));
 }
 
 /// Chats the owner of a shared (added by link) folder put in it after it was added here; joins the picked ones.

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../state/telegram.dart';
+import '../chat_sounds.dart';
 import 'call_session.dart';
 import 'group_call_session.dart';
 
@@ -126,9 +127,11 @@ class CallService {
           _sessions[call.id] = session;
           await session.init();
           current.value = session;
-          if (!call.isOutgoing) _startRinging(session);
+          _startRinging(session);
         }
         final wasEnded = session.phase == CallPhase.ended;
+        // Leaving the ringing state: silence the tone before the call opens the microphone.
+        if (call.state is! td.CallStatePending) _stopRinging();
         await session.onCallUpdate(call);
         if (session.phase != CallPhase.ringing) _stopRinging();
         // TDLib may repeat the final state; schedule the close only on the transition.
@@ -174,9 +177,12 @@ class CallService {
     session.dispose();
   }
 
-  /// shortcut: vibration only; a real ringtone and a full-screen notification for a locked phone come later.
+  /// Incoming: ringtone + vibration; outgoing: the ringback tone while the other side rings.
+  /// shortcut: in-app only; a full-screen notification for a locked phone or a killed app comes later.
   void _startRinging(CallSession session) {
     _ringTimer?.cancel();
+    unawaited(ChatSounds.instance.loop(session.isOutgoing ? 'ringback' : 'ringtone'));
+    if (session.isOutgoing) return;
     _ringTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       if (session.phase == CallPhase.ringing) {
         unawaited(HapticFeedback.vibrate());
@@ -189,5 +195,6 @@ class CallService {
   void _stopRinging() {
     _ringTimer?.cancel();
     _ringTimer = null;
+    unawaited(ChatSounds.instance.stopLoop());
   }
 }

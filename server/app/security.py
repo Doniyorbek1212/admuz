@@ -83,6 +83,8 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]+"),
     re.compile(r"(?i)((?:token|purchase_token|refresh_token|access_token|api_hash|secret|password|key)[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
     re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"),  # JWT / JWS
+    # Hub "near me" coordinates arrive as query parameters; the privacy policy promises they are not stored.
+    re.compile(r"((?<![A-Za-z0-9_])(?:lat|lon)=)[-+0-9.eE]+"),
 ]
 
 

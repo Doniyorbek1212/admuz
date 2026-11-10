@@ -251,7 +251,8 @@ async def test_products_are_private_to_their_shop_owner(new_customer):
 
 async def test_shop_input_is_validated(new_customer):
     c = await new_customer()
-    for patch in ({"region": "Paris"}, {"logo_url": "http://x.com/a.png"}, {"telegram": "@bad name"}, {"name": "x"}):
+    patches = ({"region": "Paris"}, {"logo_url": "http://x.com/a.png"}, {"logo_url": "https://tracker.example/a.png"}, {"telegram": "@bad name"}, {"name": "x"})
+    for patch in patches:
         resp = await c.post("/v1/market/me/shops", json=SHOP | patch)
         assert resp.status_code == 422, (patch, resp.text)
 
@@ -275,8 +276,42 @@ async def test_product_gallery_uses_own_uploads_only(new_customer, client):
     other_shop = await _shop(other)
     stolen = await other.post(f"/v1/market/me/shops/{other_shop['id']}/products", json=PRODUCT | {"media": media})
     assert stolen.status_code == 400
+    # Unreviewed product media never points at an outside host that could log viewers.
+    outside = [{"type": "image", "url": "https://tracker.example/pixel.png"}]
+    assert (await owner.post(f"/v1/market/me/shops/{shop['id']}/products", json=PRODUCT | {"media": outside})).status_code == 422
     assert (await _upload(owner, "/v1/media", b"MZ\x90\x00 an exe", "x.exe")).status_code == 400
     assert (await client.get("/media/..%2F..%2Fsecret.png")).status_code == 404
+
+
+async def test_search_ignores_wildcards_and_backslash(new_customer):
+    c = await new_customer()
+    for q in ("gul\\", "%", "_", "a\\%b"):
+        resp = await c.get("/v1/market/shops", params={"region": "Andijon", "q": q})
+        assert resp.status_code == 200, (q, resp.text)
+    for path in ("/v1/places", "/v1/movies"):
+        assert (await c.get(path, params={"region": "Andijon", "q": "x\\"})).status_code == 200, path
+
+
+async def test_account_deletion_removes_profile_and_closes_shops(new_customer, client, session_factory):
+    import uuid
+
+    from app.models import CustomerProfile, ListingStatus, Shop
+
+    owner, viewer = await new_customer(), await new_customer()
+    profile = await _put(owner, "/v1/customers/me/profile", {"first_name": "Ali", "phone": "+998901234567"})
+    assert profile.status_code == 200, profile.text
+    shop = await _shop(owner)
+    shop_id = uuid.UUID(shop["id"])
+    async with session_factory() as db:
+        (await db.get(Shop, shop_id)).status = ListingStatus.APPROVED
+        await db.commit()
+    assert (await viewer.get(f"/v1/market/shops/{shop['id']}")).status_code == 200
+
+    assert (await owner.delete("/v1/customers/me")).status_code == 204
+    assert (await viewer.get(f"/v1/market/shops/{shop['id']}")).status_code == 404
+    async with session_factory() as db:
+        assert await db.get(CustomerProfile, uuid.UUID(owner.id)) is None
+        assert (await db.get(Shop, shop_id)).status == ListingStatus.CLOSED
 
 
 async def test_discount_must_be_higher_than_price(new_customer):

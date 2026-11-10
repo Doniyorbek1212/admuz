@@ -195,3 +195,17 @@ tr.clickable:hover td { background: var(--panel-2); }
 .chip:has(input:checked) { background: var(--brand-soft); border-color: var(--brand); }
 .warn-box { background: var(--warn-soft); color: var(--warn); }
 .bad-text { color: var(--bad); }
+
+/* gifts page (admin_gifts.js) */
+.gift-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.gift-card { display: grid; justify-items: center; gap: 6px; padding: 16px; text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.gift-card img { width: 96px; height: 96px; object-fit: contain; }
+
+/* AI ads: topic checkboxes in the ad-topics modal and the audience-interest meter on the dashboard. */
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; margin: 12px 0 16px; }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input { width: 18px; height: 18px; accent-color: var(--brand); }
+progress.meter { width: 100%; min-width: 80px; height: 8px; border: 0; border-radius: 999px; background: var(--brand-soft); overflow: hidden; appearance: none; }
+progress.meter::-webkit-progress-bar { background: var(--brand-soft); border-radius: 999px; }
+progress.meter::-webkit-progress-value { background: var(--brand); border-radius: 999px; }
+progress.meter::-moz-progress-bar { background: var(--brand); border-radius: 999px; }

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from pydantic import StringConstraints
 from sqlalchemy import String, exists, func, or_, select
 
+from app.db import like_pattern
 from app.deps import CustomerDep, DbDep
 from app.errors import not_found
 from app.models import MovieKind, MovieTitle, MovieVideo, VideoStatus
@@ -86,7 +87,7 @@ async def list_titles(
         padded = func.concat(",", func.regexp_replace(MovieTitle.genres, r"\s*,\s*", ",", "g"), ",")
         stmt = stmt.where(func.lower(padded).contains(f",{category.lower()},", autoescape=True))
     for word in q.split()[:5]:
-        pattern = f"%{word.replace('%', '').replace('_', '')}%"
+        pattern = like_pattern(word)
         stmt = stmt.where(or_(MovieTitle.title.ilike(pattern), MovieTitle.genres.ilike(pattern), MovieTitle.country.ilike(pattern),
                               MovieTitle.description.ilike(pattern), func.cast(MovieTitle.year, String).ilike(pattern)))
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0

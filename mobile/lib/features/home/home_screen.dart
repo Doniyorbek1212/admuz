@@ -315,11 +315,17 @@ class _FolderTabLabel extends ConsumerWidget {
     final unread = ref.watch(unreadCountProvider(listKey));
     // Follows the tab's animated label color: white on the selected pill, muted ink elsewhere.
     final color = DefaultTextStyle.of(context).style.color ?? context.onAppBar;
+    final iconName = ref.watch(foldersProvider.select((folders) => folders.where((f) => 'folder:${f.id}' == listKey).firstOrNull?.icon.name));
     return GestureDetector(
       onLongPress: () => showFolderMenu(context, ref.read(accountProvider), listKey, title),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Telegram's default "Custom" icon stays hidden; a chosen one shows before the name.
+          if (iconName != null && iconName.isNotEmpty && iconName != 'Custom') ...[
+            Icon(folderIconData(iconName), size: 17, color: color),
+            const SizedBox(width: 6),
+          ],
           Text(title),
           if (unread > 0) ...[
             const SizedBox(width: 8),
@@ -461,28 +467,7 @@ class _FolderRail extends StatelessWidget {
   final List<(String, String)> tabs;
   final List<td.ChatFolderInfo> folders;
 
-  /// Tab key or Telegram folder icon name (ChatFolderIcon.name) to a Material icon.
-  static IconData _icon(String key) => switch (key) {
-    'main' || 'All' => Icons.forum_rounded,
-    'type:private' || 'Private' => Icons.person_rounded,
-    'type:group' || 'Groups' => Icons.groups_rounded,
-    'type:channel' || 'Channels' => Icons.campaign_rounded,
-    'type:bot' || 'Bots' => Icons.smart_toy_rounded,
-    'type:unread' || 'Unread' => Icons.mark_chat_unread_rounded,
-    'Unmuted' => Icons.notifications_active_rounded,
-    'Favorite' || 'Crown' => Icons.star_rounded,
-    'Work' || 'Trade' || 'Money' => Icons.work_rounded,
-    'Home' => Icons.home_rounded,
-    'Love' || 'Like' => Icons.favorite_rounded,
-    'Study' || 'Book' || 'Note' => Icons.menu_book_rounded,
-    'Game' || 'Party' || 'Mask' => Icons.sports_esports_rounded,
-    'Sport' => Icons.sports_soccer_rounded,
-    'Travel' || 'Airplane' => Icons.flight_rounded,
-    'Setup' => Icons.settings_rounded,
-    'Light' => Icons.lightbulb_rounded,
-    'Palette' || 'Flower' || 'Cat' => Icons.palette_rounded,
-    _ => Icons.folder_rounded,
-  };
+  static IconData _icon(String key) => folderIconData(key);
 
   @override
   Widget build(BuildContext context) {

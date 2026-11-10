@@ -7,7 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
-import '../business/business_screen.dart';
+import '../../core/interests.dart';
+import '../business/ads_screen.dart';
 import 'ad_banner_card.dart';
 import 'hub_catalog.dart';
 
@@ -40,7 +41,7 @@ const _promos = [
     textKey: 'banner_ad_text',
     icon: Icons.campaign_rounded,
     colors: [Color(0xFFFF8A3D), Color(0xFFFF4D7A)],
-    screen: BusinessScreen(),
+    screen: AdsScreen(),
   ),
 ];
 
@@ -76,7 +77,17 @@ class _HubBannersState extends ConsumerState<HubBanners> {
     super.dispose();
   }
 
+  /// Ads already reported as seen on this screen; the server also counts each viewer once per few hours.
+  final _seen = <String>{};
+
+  void _markSeen(List<Ad> ads, int index) {
+    if (index >= ads.length || !_seen.add(ads[index].id)) return;
+    unawaited(ref.read(sadoApiProvider).adEvent(ads[index].id, 'view'));
+  }
+
   void _openAd(Ad ad) {
+    // Taps are counted for the advertiser and, with personalised ads on, teach the ad's topics.
+    unawaited(ref.read(sadoApiProvider).adEvent(ad.id, 'click', learn: ref.read(personalizedAdsProvider)));
     if (ad.linkUrl.isNotEmpty) launchUrl(Uri.parse(ad.linkUrl), mode: LaunchMode.externalApplication);
   }
 
@@ -88,6 +99,7 @@ class _HubBannersState extends ConsumerState<HubBanners> {
     final promos = ads.isEmpty ? _promos : const <_Promo>[];
     _count = ads.length + promos.length;
     if (_page >= _count) _page = 0;
+    _markSeen(ads, _page);
     return Column(
       children: [
         Padding(

@@ -8,6 +8,15 @@ const AD_STATUS = {
   pending_review: ['Tekshiruvda', 'warn'], awaiting_payment: ["To'lov kutilmoqda", 'info'],
   approved: ['Tasdiqlangan', 'ok'], rejected: ['Rad etilgan', 'bad'],
 };
+// Interest topics of hub ads (server: app.services.interests.TOPICS).
+const TOPIC_LABEL = {
+  taxi: 'Taksi', pharmacy: 'Dorixona', hotel: 'Mehmonxona', doctor: 'Shifokor', car_service: 'Avtoservis', bank: 'Bank',
+  travel: 'Sayohat', food: 'Taom', shops: "Do'konlar", movies: 'Kino', music: 'Musiqa', games: "O'yinlar", gifts: "Sovg'alar",
+  tech: 'Texnika', fashion: 'Kiyim', beauty: "Go'zallik", education: "Ta'lim", real_estate: "Ko'chmas mulk", sport: 'Sport', kids: 'Bolalar',
+};
+const MAX_AD_TOPICS = 3;
+const topicPills = (topics) => (topics?.length ? topics.map((t) => `<span class="pill info">${esc(TOPIC_LABEL[t] || t)}</span>`).join(' ') : '<span class="muted">Mavzu yo\'q</span>');
+const ctr = (views, clicks) => (views ? `${((100 * clicks) / views).toFixed(1)}%` : '—');
 const SHOP_STATUS = {
   pending: ['Tekshiruvda', 'warn'], awaiting_payment: ["To'lov kutilmoqda", 'info'], approved: ['Faol', 'ok'],
   rejected: ['Rad etilgan', 'bad'], closed: ['Yopilgan', 'bad'], close_requested: ['Yopish so\'ralgan', 'gold'],
@@ -130,6 +139,9 @@ const PAGES = {
   ads: { title: 'Reklamalar', role: 'viewer', render: renderAds, count: 'ads_pending' },
   shops: { title: 'Biznes profillar', role: 'viewer', render: renderShops, count: 'shops_pending' },
   movies: { title: 'Kinolar', role: 'viewer', render: (el, arg) => renderMovies(el, arg) }, // admin_movies.js
+  music: { title: 'Musiqa', role: 'viewer', render: (el, arg) => renderMusic(el, arg) }, // admin_music.js
+  gifts: { title: "Sovg'alar", role: 'viewer', render: (el, arg) => renderGifts(el, arg) }, // admin_gifts.js
+  banned: { title: 'Taqiqlangan kanallar', role: 'viewer', render: (el) => renderBanned(el) }, // admin_banned.js
   users: { title: 'Foydalanuvchilar', role: 'support', render: renderUsers },
   settings: { title: 'Sozlamalar', role: 'viewer', render: renderSettings },
   admins: { title: 'Adminlar', role: 'owner', render: renderAdmins },
@@ -173,7 +185,7 @@ function barChart(points, key, gold, format) {
 }
 
 async function renderDashboard(el) {
-  const [s, activity] = await Promise.all([api('/v1/admin/stats'), api('/v1/admin/activity')]);
+  const [s, activity, interests] = await Promise.all([api('/v1/admin/stats'), api('/v1/admin/activity'), api('/v1/admin/interests')]);
   const sum = state.summary;
   const shopsActive = s.shops.approved || 0;
   el.innerHTML = `
@@ -193,7 +205,20 @@ async function renderDashboard(el) {
       <div class="card chart"><h3>Yangi foydalanuvchilar — 30 kun</h3>${barChart(s.daily, 'new_users', false, (v) => `${v} ta`)}</div>
       <div class="card chart"><h3>Reklama tushumi — 30 kun</h3>${barChart(s.daily, 'ad_income_uzs', true, som)}</div>
     </div>
-    ${activityHtml(activity)}`;
+    ${activityHtml(activity)}
+    ${interestsHtml(interests)}`;
+}
+
+// What the audience is interested in (learnt by the AI ads engine) and how ads on each topic perform.
+function interestsHtml(data) {
+  const max = Math.max(1, ...data.topics.map((t) => t.users));
+  const rows = data.topics.map((t) => `<tr><td>${esc(TOPIC_LABEL[t.topic] || t.topic)}</td>
+      <td><progress class="meter" max="${max}" value="${t.users}" aria-label="${t.users} kishi"></progress></td>
+      <td class="num"><b>${t.users}</b></td><td class="num">${t.ads}</td><td class="num">${t.views}</td><td class="num">${t.clicks}</td><td class="num">${t.ctr ? `${t.ctr}%` : '—'}</td></tr>`).join('');
+  return `<div class="card"><h3>AI reklama: foydalanuvchilar qiziqishlari</h3>
+    <p class="muted">${data.profiled_users} kishining qiziqishi aniqlangan. Faqat Töplam bo'limidagi harakatlar va reklama bosishlari hisobga olinadi, chatlar o'qilmaydi.</p>
+    <div class="table-wrap"><table><thead><tr><th>Mavzu</th><th></th><th class="num">Qiziqqanlar</th><th class="num">Faol reklama</th><th class="num">Ko'rish</th><th class="num">Bosish</th><th class="num">CTR</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
 }
 
 const ACTIVITY_LABEL = { app_open: 'Ilovani ochganlar', hub_open: "Töplam bo'limini ko'rganlar", movies_open: "Kino bo'limini ko'rganlar" };
@@ -222,7 +247,26 @@ async function renderAds(el, status = 'pending_review') {
   const tabs = Object.entries(AD_STATUS).map(([k, [label]]) => `<button class="tab" data-status="${k}" aria-pressed="${k === status}">${esc(label)}</button>`).join('');
   el.innerHTML = `<div class="tabs">${tabs}</div>` + (ads.length ? `<div class="grid-cards">${ads.map(adCard).join('')}</div>` : '<div class="empty">Bu holatda reklama yo\'q</div>');
   el.querySelectorAll('.tab').forEach((b) => { b.onclick = () => { location.hash = `ads/${b.dataset.status}`; }; });
-  el.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => adAction(b.dataset.act, b.dataset.id, status); });
+  el.querySelectorAll('[data-act]').forEach((b) => {
+    b.onclick = () => (b.dataset.act === 'topics' ? editAdTopics(b.dataset.id, b.dataset.topics, status) : adAction(b.dataset.act, b.dataset.id, status));
+  });
+}
+
+// Which interests an ad is shown to: the advertiser's pick or the automatic guess, corrected here.
+function editAdTopics(id, current, status) {
+  const chosen = new Set((current || '').split(',').filter(Boolean));
+  const boxes = Object.entries(TOPIC_LABEL).map(([k, label]) =>
+    `<label class="check"><input type="checkbox" value="${k}" ${chosen.has(k) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
+  const body = openModal('Reklama qiziqishlari', `<p class="muted">Reklama shu mavzularga qiziqqan foydalanuvchilarga ko'proq ko'rsatiladi. Ko'pi bilan ${MAX_AD_TOPICS} ta.</p>
+    <div class="checks">${boxes}</div>
+    <div class="toolbar"><button class="btn primary" id="t-ok" type="button">Saqlash</button><button class="btn" id="t-no" type="button">Bekor qilish</button></div>`);
+  body.querySelector('#t-no').onclick = closeModal;
+  body.querySelector('#t-ok').onclick = async () => {
+    const topics = [...body.querySelectorAll('input:checked')].map((i) => i.value);
+    if (topics.length > MAX_AD_TOPICS) { toast(`Ko'pi bilan ${MAX_AD_TOPICS} ta mavzu`, true); return; }
+    const ok = await run(() => api(`/v1/admin/ads/${id}/topics`, { method: 'PUT', body: { topics } }), 'Qiziqishlar saqlandi');
+    if (ok) { closeModal(); location.hash = `ads/${status}`; route(); }
+  };
 }
 
 function adCard(ad) {
@@ -235,6 +279,8 @@ function adCard(ad) {
       ${ad.text ? `<p class="text">${esc(ad.text)}</p>` : ''}
       <dl class="facts">
         <dt>Hududlar</dt><dd>${esc(ad.regions.join(', '))}</dd>
+        <dt>Qiziqishlar</dt><dd>${topicPills(ad.topics)}</dd>
+        ${ad.status === 'approved' ? `<dt>Natija</dt><dd>${ad.views} ko'rish · ${ad.clicks} bosish · CTR ${esc(ctr(ad.views, ad.clicks))}</dd>` : ''}
         <dt>Muddat</dt><dd>${ad.days} kun</dd>
         ${ad.link_url ? `<dt>Havola</dt><dd><a href="${esc(ad.link_url)}" target="_blank" rel="noopener">${esc(ad.link_url)}</a></dd>` : ''}
         <dt>Yuborilgan</dt><dd>${esc(date(ad.created_at))}</dd>
@@ -244,6 +290,7 @@ function adCard(ad) {
     </div>
     <div class="actions">
       ${ad.has_receipt && support ? `<button class="btn" data-act="receipt" data-id="${esc(ad.id)}">Chekni ko'rish</button>` : ''}
+      ${support ? `<button class="btn" data-act="topics" data-id="${esc(ad.id)}" data-topics="${esc((ad.topics || []).join(','))}">Qiziqishlar</button>` : ''}
       ${ad.status === 'pending_review' && support ? `<button class="btn ok" data-act="approve" data-id="${esc(ad.id)}">Tasdiqlash</button><button class="btn bad" data-act="reject" data-id="${esc(ad.id)}">Rad etish</button>` : ''}
       ${ad.status === 'approved' && support ? `<button class="btn bad" data-act="stop" data-id="${esc(ad.id)}">To'xtatish</button>` : ''}
     </div>
@@ -421,10 +468,25 @@ async function renderSettings(el) {
         ${field('extra_shop_price_uzs', "Qo'shimcha do'kon narxi (so'm)", s.extra_shop_price_uzs, 'number')}
         ${field('shop_free_limit', "Bepul do'konlar soni", s.shop_free_limit, 'number')}
       </div>
+      <h3>Qisqa UZARO username</h3>
+      <div class="form-grid">
+        ${field('username_price_2_uzs', "2 harfli nom (so'm)", s.username_price_2_uzs, 'number', '0 — sotilmaydi')}
+        ${field('username_price_3_uzs', "3 harfli nom (so'm)", s.username_price_3_uzs, 'number', '0 — sotilmaydi')}
+        ${field('username_price_4_uzs', "4 harfli nom (so'm)", s.username_price_4_uzs, 'number', "0 — sotilmaydi. 5+ harfli nomlar bepul. Sotib olish: ilova, uzaromessenger.uz/nom va bot.")}
+      </div>
       <h3>To'lov kartasi</h3>
       <div class="form-grid">
         ${field('ad_payment_card', 'Karta raqami', s.ad_payment_card, 'text', 'Reklama va do\'kon egalari shu kartaga pul o\'tkazadi')}
         ${field('ad_payment_card_holder', 'Karta egasi', s.ad_payment_card_holder)}
+      </div>
+      <h3>AI reklama (qiziqishga qarab)</h3>
+      <div class="form-grid">
+        <div class="field"><label for="ads_personalization">Holati</label><select id="ads_personalization" ${owner ? '' : 'disabled'}>
+          <option value="1" ${s.ads_personalization ? 'selected' : ''}>Yoqilgan: har kimga qiziqishiga mos reklama</option>
+          <option value="0" ${s.ads_personalization ? '' : 'selected'}>O'chirilgan: hammaga navbat bilan</option></select>
+          <small>O'chirilganda yangi qiziqishlar yig'ilmaydi.</small></div>
+        ${field('ads_interest_weight', "Qiziqish ta'siri (%)", s.ads_interest_weight, 'number', "0 — oddiy navbat, 100 — faqat qiziqish. Tavsiya: 70. Mos kelmagan reklama ham baribir ko'rinadi.")}
+        ${field('ads_interest_half_life_days', 'Qiziqish eskirishi (kun)', s.ads_interest_half_life_days, 'number', "Shuncha kundan keyin eski qiziqish ikki baravar kuchsizlanadi. Tavsiya: 14.")}
       </div>
       <h3>Ilova versiyasi</h3>
       <div class="form-grid">
@@ -438,8 +500,10 @@ async function renderSettings(el) {
   el.querySelector('#settings-form').onsubmit = async (e) => {
     e.preventDefault();
     const body = {};
-    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
+    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build', 'ads_personalization', 'ads_interest_weight',
+      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
     ['ad_payment_card', 'ad_payment_card_holder', 'app_version', 'app_release_notes'].forEach((k) => { body[k] = el.querySelector(`#${k}`).value.trim(); });
+    body.ads_interest_half_life_days = Math.max(1, Number(el.querySelector('#ads_interest_half_life_days').value || 14));
     await run(() => api('/v1/admin/settings', { method: 'PUT', body }), 'Sozlamalar saqlandi');
   };
 }
@@ -466,19 +530,23 @@ async function renderAdmins(el) {
     e.preventDefault();
     const created = await run(() => api('/v1/admin/admins', { method: 'POST', body: { name: $('#na-name').value.trim(), role: $('#na-role').value } }));
     if (!created) return;
+    renderAdmins(el);
+    if (!created.key) {
+      toast(`${created.name} yaratildi: endi «Login/parol» tugmasi bilan kirish ma'lumotini bering`);
+      return;
+    }
     const body = openModal('Admin yaratildi', `<p><b>${esc(created.name)}</b> uchun kalit. U faqat hozir ko'rsatiladi — nusxa olib, xavfsiz yo'l bilan bering.</p>
       <div class="keybox" id="new-key">${esc(created.key)}</div><button class="btn primary" id="copy-key" type="button">Nusxa olish</button>`);
     body.querySelector('#copy-key').onclick = async () => {
       try { await navigator.clipboard.writeText(created.key); toast('Nusxa olindi'); } catch (_) { getSelection().selectAllChildren(body.querySelector('#new-key')); }
     };
-    renderAdmins(el);
   };
   el.querySelectorAll('[data-role]').forEach((s) => { s.onchange = () => run(() => api(`/v1/admin/admins/${s.dataset.role}`, { method: 'PATCH', body: { role: s.value } }), 'Rol o\'zgartirildi'); });
   el.querySelectorAll('[data-creds]').forEach((b) => {
     b.onclick = () => {
       const body = openModal('Panelga kirish uchun login va parol', `
         <div class="field"><label for="cr-login">Login</label><input id="cr-login" value="${esc(b.dataset.login)}" pattern="[A-Za-z0-9._@+-]+" minlength="3"></div>
-        <div class="field"><label for="cr-pass">Yangi parol</label><input id="cr-pass" type="password" minlength="6"><small>Kamida 6 belgi. Uzun va tasodifiy parol xavfsizroq.</small></div>
+        <div class="field"><label for="cr-pass">Yangi parol</label><input id="cr-pass" type="password" minlength="10"><small>Kamida 10 belgi, logindan (telefon raqamidan) farqli. Uzun va tasodifiy parol xavfsizroq.</small></div>
         <button class="btn primary" id="cr-save" type="button">Saqlash</button>`);
       body.querySelector('#cr-save').onclick = async () => {
         const ok = await run(() => api(`/v1/admin/admins/${b.dataset.creds}/credentials`, { method: 'PUT', body: { login: body.querySelector('#cr-login').value.trim(), password: body.querySelector('#cr-pass').value } }), 'Login va parol saqlandi');

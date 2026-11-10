@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 
 from app.config import get_settings
+from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import bad_request, conflict, not_found
 from app.models import AdminRole, AdminUser, MovieKind, MovieTitle, MovieVideo, VideoStatus
@@ -105,7 +106,7 @@ async def list_titles(
 ) -> dict[str, Any]:
     stmt = select(MovieTitle)
     if q:
-        stmt = stmt.where(MovieTitle.title.ilike(f"%{q.replace('%', '').replace('_', '')}%"))
+        stmt = stmt.where(MovieTitle.title.ilike(like_pattern(q)))
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     titles = list(await db.scalars(stmt.order_by(MovieTitle.created_at.desc()).offset(offset).limit(limit)))
     videos = await db.scalars(select(MovieVideo).where(MovieVideo.title_id.in_([t.id for t in titles])).order_by(MovieVideo.season, MovieVideo.episode))

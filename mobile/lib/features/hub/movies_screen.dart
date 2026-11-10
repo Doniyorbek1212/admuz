@@ -11,6 +11,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart';
+import 'movie_downloads.dart';
 import 'movie_player.dart';
 
 /// Hub "Movies": films and series an admin published, by kind and category, with search.
@@ -99,7 +100,13 @@ class _MoviesScreenState extends ConsumerState<MoviesScreen> {
     final bottom = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: AppBar(title: Text(s.t('hub_movies'))),
+      appBar: AppBar(title: Text(s.t('hub_movies')), actions: [
+        IconButton(
+          icon: const Icon(Icons.download_for_offline_rounded),
+          tooltip: s.t('downloads'),
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MovieDownloadsScreen())),
+        ),
+      ]),
       body: RefreshIndicator(
         onRefresh: _reload,
         child: CustomScrollView(controller: _scroll, slivers: [
@@ -391,7 +398,11 @@ class _MovieDetailScreenState extends ConsumerState<MovieDetailScreen> {
         ),
       ]),
       const SizedBox(height: 16),
-      if (!title.isSeries && title.videos.isNotEmpty) _playButton(context, title, 0),
+      if (!title.isSeries && title.videos.isNotEmpty) ...[
+        _playButton(context, title, 0),
+        const SizedBox(height: 8),
+        _DownloadButton(title: title, video: title.videos.first),
+      ],
       if (title.description.isNotEmpty) ...[
         const SizedBox(height: 16),
         Text(title.description, style: const TextStyle(height: 1.45)),
@@ -443,12 +454,119 @@ class _MovieDetailScreenState extends ConsumerState<MovieDetailScreen> {
                   if (v.durationSeconds > 0) _length(context, v.durationSeconds),
                   if (moviePosition(prefs, v.id) case final at?) '▶ ${formatDuration(at)}',
                 ].join(' · ')),
-                trailing: const Icon(Icons.play_circle_fill_rounded),
+                trailing: _DownloadButton(title: title, video: v, compact: true),
                 onTap: () => _play(title, i),
               ),
         ]),
       ],
     ];
+  }
+}
+
+/// Save a video to the phone, show its progress (tap stops it), or delete the saved copy.
+class _DownloadButton extends ConsumerWidget {
+  const _DownloadButton({required this.title, required this.video, this.compact = false});
+
+  final MovieTitle title;
+  final MovieVideo video;
+
+  /// Icon only (episode rows) instead of a full-width button.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final downloads = ref.watch(movieDownloadsProvider);
+    final notifier = ref.read(movieDownloadsProvider.notifier);
+    final progress = downloads.active[video.id];
+    final saved = downloads.saved.containsKey(video.id);
+
+    Future<void> start() async {
+      final messenger = ScaffoldMessenger.of(context);
+      final failed = s.t('movies_download_failed');
+      if (!await notifier.download(title, video)) messenger.showSnackBar(SnackBar(content: Text(failed)));
+    }
+
+    final (Widget icon, String label, VoidCallback onTap) = switch ((saved, progress)) {
+      (true, _) => (const Icon(Icons.download_done_rounded), s.t('movies_saved'), () => confirmMovieDelete(context, ref, video.id)),
+      (_, final p?) => (
+          SizedBox.square(
+            dimension: 22,
+            child: Stack(alignment: Alignment.center, children: [
+              CircularProgressIndicator(value: p > 0 ? p : null, strokeWidth: 2.5),
+              const Icon(Icons.stop_rounded, size: 14),
+            ]),
+          ),
+          s.t('movies_downloading', {'n': '${(p * 100).floor()}'}),
+          () => notifier.cancel(video.id),
+        ),
+      _ => (
+          const Icon(Icons.download_rounded),
+          [s.t('download'), if (video.sizeBytes > 0) formatFileSize(video.sizeBytes)].join(' · '),
+          () => unawaited(start()),
+        ),
+    };
+    if (compact) return IconButton(icon: icon, tooltip: label, onPressed: onTap);
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+        icon: icon,
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        onPressed: onTap,
+      ),
+    );
+  }
+}
+
+Future<void> confirmMovieDelete(BuildContext context, WidgetRef ref, String videoId) async {
+  final s = context.s;
+  final notifier = ref.read(movieDownloadsProvider.notifier);
+  if (await confirm(context, title: s.t('movies_delete_saved'), confirmLabel: s.t('delete'), destructive: true)) {
+    await notifier.delete(videoId);
+  }
+}
+
+/// Films and episodes saved on the phone; opens without internet.
+class MovieDownloadsScreen extends ConsumerWidget {
+  const MovieDownloadsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final downloads = ref.watch(movieDownloadsProvider);
+    final saved = downloads.saved.entries.toList();
+    return Scaffold(
+      backgroundColor: groupedBackground(context),
+      appBar: AppBar(title: Text(s.t('downloads'))),
+      body: saved.isEmpty
+          ? EmptyState(icon: Icons.download_for_offline_outlined, title: s.t('movies_downloads_empty'))
+          : ListView(padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.paddingOf(context).bottom + 16), children: [
+              SettingsGroup(children: [
+                for (final MapEntry(key: videoId, value: title) in saved)
+                  ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(width: 40, height: 60, child: NetImage(title.posterUrl ?? '', icon: Icons.movie_rounded)),
+                    ),
+                    title: Text(title.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    subtitle: Text([
+                      if (title.isSeries) ...[
+                        if (title.videos.first.season > 0) s.t('movies_season', {'n': '${title.videos.first.season}'}),
+                        if (title.videos.first.episode > 0) s.t('movies_episode', {'n': '${title.videos.first.episode}'}),
+                      ],
+                      if (title.videos.first.sizeBytes > 0) formatFileSize(title.videos.first.sizeBytes),
+                    ].join(' · ')),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      tooltip: s.t('delete'),
+                      onPressed: () => confirmMovieDelete(context, ref, videoId),
+                    ),
+                    onTap: () => openMoviePlayer(context, title, 0),
+                  ),
+              ]),
+            ]),
+    );
   }
 }
 

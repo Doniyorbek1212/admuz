@@ -11,7 +11,7 @@ from app.errors import bad_request
 
 # Magic bytes of accepted images.
 _IMAGE_TYPES = ((b"\xff\xd8\xff", "jpg"), (b"\x89PNG\r\n\x1a\n", "png"))
-PUBLIC_NAME_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp|mp4)$"
+PUBLIC_NAME_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp|gif|mp4|mp3|m4a)$"
 
 
 def sniff(data: bytes) -> tuple[str, str] | None:
@@ -64,6 +64,50 @@ async def save_public(file: UploadFile) -> tuple[str, str, int]:
     name = f"{uuid.uuid4()}.{kind[1]}"
     await asyncio.to_thread(_write, public_dir() / name, data)
     return name, kind[0], len(data)
+
+
+def sniff_audio(data: bytes) -> str | None:
+    """Returns "mp3" (ID3 tag or MPEG frame sync) or "m4a" (MP4 with an M4A brand), else None."""
+    if data.startswith(b"ID3") or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return "mp3"
+    if data[4:8] == b"ftyp" and data[8:11] in (b"M4A", b"M4B"):
+        return "m4a"
+    return None
+
+
+async def save_audio(file: UploadFile) -> tuple[str, int]:
+    """Stores a song publicly; returns (name, size)."""
+    data = await read_limited(file, get_settings().max_audio_bytes)
+    ext = sniff_audio(data[:16])
+    if ext is None:
+        raise bad_request("NOT_AN_AUDIO")
+    name = f"{uuid.uuid4()}.{ext}"
+    await asyncio.to_thread(_write, public_dir() / name, data)
+    return name, len(data)
+
+
+async def save_gift_animation(file: UploadFile) -> str:
+    """Stores a gift's animated WebP or GIF publicly; returns its name."""
+    data = await read_limited(file, get_settings().max_gift_bytes)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        ext = "webp"
+    elif data[:6] in (b"GIF87a", b"GIF89a"):
+        ext = "gif"
+    else:
+        raise bad_request("NOT_A_GIFT_ANIMATION")
+    name = f"{uuid.uuid4()}.{ext}"
+    await asyncio.to_thread(_write, public_dir() / name, data)
+    return name
+
+
+async def save_gift_video(file: UploadFile) -> str:
+    """Stores a premium gift's MP4 publicly; returns its name."""
+    data = await read_limited(file, get_settings().max_gift_video_bytes)
+    if data[4:8] != b"ftyp":
+        raise bad_request("NOT_A_GIFT_VIDEO")
+    name = f"{uuid.uuid4()}.mp4"
+    await asyncio.to_thread(_write, public_dir() / name, data)
+    return name
 
 
 def public_dir() -> Path:

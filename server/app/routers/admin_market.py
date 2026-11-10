@@ -7,14 +7,16 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, or_, select
 
+from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
 from app.market import ad_out, profile_out, shop_out
 from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop
 from app.services.audit import audit
+from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics
 from app.uploads import private_file
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -89,6 +91,20 @@ async def approve_ad(ad_id: uuid.UUID, admin: Support, db: DbDep) -> dict[str, A
     ad.ends_at = now + timedelta(days=ad.days)
     ad.reviewed_by = admin.name
     audit(db, f"admin:{admin.name}", "ad_approved", str(ad.id), price_uzs=ad.price_uzs, regions=",".join(ad.regions), days=ad.days)
+    await db.commit()
+    return ad_out(ad, private=True)
+
+
+class TopicsIn(BaseModel):
+    topics: Annotated[list[Literal[TOPICS]], Field(max_length=MAX_AD_TOPICS)]  # type: ignore[valid-type]
+
+
+@router.put("/ads/{ad_id}/topics")
+async def set_ad_topics(ad_id: uuid.UUID, body: TopicsIn, admin: Support, db: DbDep) -> dict[str, Any]:
+    """Corrects which interests an ad is shown to (the advertiser's pick or the automatic guess)."""
+    ad = await _ad(db, ad_id)
+    ad.topics = clean_topics(body.topics)
+    audit(db, f"admin:{admin.name}", "ad_topics_set", str(ad.id), topics=",".join(ad.topics))
     await db.commit()
     return ad_out(ad, private=True)
 
@@ -214,7 +230,7 @@ async def list_users(
         .where(Customer.deleted_at.is_(None))
     )
     if q:
-        like = f"%{q.lstrip('@').replace('%', '').replace('_', '')}%"
+        like = like_pattern(q.lstrip("@"))
         stmt = stmt.where(
             or_(
                 CustomerProfile.phone.ilike(like),

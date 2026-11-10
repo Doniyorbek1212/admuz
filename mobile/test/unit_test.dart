@@ -66,6 +66,7 @@ void main() {
         'as_messages', 'by_date', 'chin', 'cover', 'cover_reset', 'emojis', 'eyes', 'forehead', 'key', 'keywords', 'mask', 'mouth',
         'new', 'order', 'revenue', 'strings', 'tag',
         'card', 'collections', 'export', 'gift', 'inline', 'live', 'prize', 'rate', 'size', 'text', 'top',
+        'clicks', 'collapse', 'collection', 'icon', 'mono', 'serif', 'strike', 'underline',
       };
       final missing = used.where((k) => !notKeys.contains(k) && !en.containsKey(k) && !en.containsKey('${k}_one')).toList()..sort();
       expect(missing, isEmpty);

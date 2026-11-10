@@ -791,6 +791,7 @@ class TelegramAccount {
   static const _keyStorage = FlutterSecureStorage(iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device));
 
   static String _keyName(int slot) => 'sado.tdlib.dbkey.$slot';
+  static const _keystoreAttempts = 3;
 
   /// Forgets the database key of a removed account slot.
   static Future<void> forgetDatabaseKey(int slot) async {
@@ -808,22 +809,29 @@ class TelegramAccount {
   Future<String> _databaseKey() async {
     final file = File('$databaseDirectory${Platform.pathSeparator}.key');
     final name = _keyName(slot);
-    try {
-      final stored = await _keyStorage.read(key: name);
-      if (stored != null && stored.isNotEmpty) {
-        if (await file.exists()) await file.delete();
-        return stored;
+    // The keystore can fail transiently right after boot or an update; retry before falling back to the file.
+    for (var attempt = 1; attempt <= _keystoreAttempts; attempt++) {
+      try {
+        final stored = await _keyStorage.read(key: name);
+        if (stored != null && stored.isNotEmpty) {
+          if (await file.exists()) await file.delete();
+          return stored;
+        }
+        final key = await file.exists() ? (await file.readAsString()).trim() : _newDatabaseKey();
+        await _keyStorage.write(key: name, value: key);
+        // Delete the file only once the keystore really holds the key, or the database would be lost.
+        if (await _keyStorage.read(key: name) == key && await file.exists()) await file.delete();
+        return key;
+      } on PlatformException catch (error) {
+        debugPrint('keystore unavailable (attempt $attempt): $error');
+        if (attempt < _keystoreAttempts) await Future<void>.delayed(const Duration(milliseconds: 400));
+      } on MissingPluginException {
+        // Tests and platforms without a keystore plugin.
+        break;
       }
-      final key = await file.exists() ? (await file.readAsString()).trim() : _newDatabaseKey();
-      await _keyStorage.write(key: name, value: key);
-      // Delete the file only once the keystore really holds the key, or the database would be lost.
-      if (await _keyStorage.read(key: name) == key && await file.exists()) await file.delete();
-      return key;
-    } on PlatformException catch (error) {
-      debugPrint('keystore unavailable, using the key file: $error');
-    } on MissingPluginException {
-      // Tests and platforms without a keystore plugin.
     }
+    // Last resort so the account still opens: the file sits in the app's private storage, and the next start that
+    // reaches the keystore moves the key there and deletes the file (above).
     if (await file.exists()) return (await file.readAsString()).trim();
     final key = _newDatabaseKey();
     await file.writeAsString(key, flush: true);
@@ -890,7 +898,14 @@ class TelegramAccount {
   }
 
   /// Sets the chat's on-device name (empty clears it); stored by TDLib in the chat's client_data.
-  Future<void> setLocalChatName(int chatId, String name) async {
+  Future<void> setLocalChatName(int chatId, String name) =>
+      _setClientData(chatId, (data) => name.trim().isEmpty ? data.remove('name') : data['name'] = name.trim());
+
+  /// Tint of the chat's row in the list (ARGB), this device only; null clears it.
+  Future<void> setLocalChatColor(int chatId, int? argb) =>
+      _setClientData(chatId, (data) => argb == null ? data.remove('color') : data['color'] = argb);
+
+  Future<void> _setClientData(int chatId, void Function(Map<String, dynamic> data) change) async {
     final chat = chats[chatId];
     if (chat == null) return;
     Map<String, dynamic> data = {};
@@ -900,7 +915,7 @@ class TelegramAccount {
     } on FormatException {
       data = {};
     }
-    name.trim().isEmpty ? data.remove('name') : data['name'] = name.trim();
+    change(data);
     final value = data.isEmpty ? '' : jsonEncode(data);
     await client.send<td.Ok>(td.SetChatClientData(chatId: chatId, clientData: value));
     // TDLib sends no update for client_data; patch the cached chat ourselves.
@@ -928,12 +943,13 @@ class TelegramAccount {
   /// Tells TDLib whether we are on Wi-Fi or mobile data (auto-download presets, data usage).
   Future<void> reportNetworkType() async {
     final kind = await KeepAliveService.networkType();
-    if (kind == null || _disposed) return;
+    // Never "none": TDLib then stops connecting, and this is only re-sent once connected, so a moment offline
+    // (started at boot before Wi-Fi, Doze) left the app stuck on "Waiting for network". TDLib retries on its own.
+    if (kind == null || kind == 'none' || _disposed) return;
     final td.NetworkType type = switch (kind) {
       'wifi' => const td.NetworkTypeWiFi(),
       'mobile' => const td.NetworkTypeMobile(),
       'roaming' => const td.NetworkTypeMobileRoaming(),
-      'none' => const td.NetworkTypeNone(),
       _ => const td.NetworkTypeOther(),
     };
     try {

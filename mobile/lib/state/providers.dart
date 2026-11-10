@@ -47,7 +47,8 @@ class AccountSlots {
 }
 
 class AccountSlotsNotifier extends Notifier<AccountSlots> {
-  static const maxAccounts = 5;
+  // Only the active slot runs a TDLib client; the others are just databases on disk, so more slots cost disk, not memory.
+  static const maxAccounts = 12;
 
   @override
   AccountSlots build() {

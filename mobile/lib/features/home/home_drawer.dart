@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_lock.dart';
 import '../../core/config.dart';
+import '../../core/store_rules.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/link_policy.dart';
@@ -13,6 +14,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../admin/admin_panel_screen.dart';
+import '../business/ads_screen.dart';
 import '../business/business_screen.dart';
 import '../chat/marked_messages_screen.dart';
 import '../calls/calls_screen.dart';
@@ -143,6 +145,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
           ]),
           SettingsGroup(children: [
             _row(Icons.work_rounded, const Color(0xFFFF7A59), s.t('hub_business'), () => _push(const BusinessScreen())),
+            if (!storeBlocksExternalPayments) _row(Icons.campaign_rounded, const Color(0xFFFF4D7A), s.t('hub_ads'), () => _push(const AdsScreen())),
             if (ref.watch(hasAdminKeyProvider).value ?? false)
               _row(Icons.admin_panel_settings_rounded, const Color(0xFF5A6B7F), s.t('admin_title'), () => _push(const AdminPanelScreen())),
             _row(Icons.settings_rounded, const Color(0xFF8E8E93), s.t('settings'), () => _openPanel(const SettingsScreen())),

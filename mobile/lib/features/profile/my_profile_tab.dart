@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -11,11 +12,14 @@ import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../chat/marked_messages_screen.dart';
-import '../chat/media_viewers.dart';
+import '../gifts/gift_widgets.dart';
+import '../gifts/profile_background.dart';
 import '../home/home_screen.dart';
 import '../settings/downloads_screen.dart';
 import '../settings/settings_screen.dart';
 import '../stories/story_archive.dart';
+import 'chat_info_screen.dart';
+import 'uzaro_username.dart';
 
 /// Bio and birthday of the signed-in user; refreshed after editing the profile.
 final _myFullInfoProvider = FutureProvider.autoDispose<td.UserFullInfo?>((ref) async {
@@ -43,7 +47,7 @@ class MyProfileTab extends ConsumerWidget {
               // Clears the shell's floating bottom bar (reported as bottom padding).
               padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
               children: [
-                _header(context, me),
+                _header(context, ref, me),
                 _actions(context, ref),
                 _infoCard(context, ref, me),
                 _spaces(context, ref),
@@ -52,29 +56,53 @@ class MyProfileTab extends ConsumerWidget {
     );
   }
 
-  Widget _header(BuildContext context, td.User me) {
+  Widget _header(BuildContext context, WidgetRef ref, td.User me) {
     final theme = Theme.of(context);
     final online = isOnline(me);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+    // The background UZARO users see on this profile, shown here as a card.
+    final background = ref.watch(userGiftsProvider(me.id)).value?.background;
+    final onHeader = background == null ? null : Colors.white;
+    return Container(
+      margin: background == null ? EdgeInsets.zero : const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: background == null
+          ? null
+          : BoxDecoration(borderRadius: BorderRadius.circular(28), gradient: profileGradient(background, groupedBackground(context))),
+      padding: EdgeInsets.fromLTRB(16, background == null ? 12 : 20, 16, background == null ? 8 : 10),
       child: Column(
         children: [
-          GestureDetector(
-            onTap: me.profilePhoto == null ? null : () => openPhotoViewer(context, me.profilePhoto!.big, me.profilePhoto!.minithumbnail),
-            // The profile photo is the one avatar that keeps the brand's gold ring.
-            child: GoldRing(width: 2.2, child: UserAvatar(userId: me.id, size: 104, showOnline: false)),
+          GiftOrbit(
+            telegramId: me.id,
+            avatarSize: 104,
+            child: GestureDetector(
+              // All photos ever set (swipe, delete), not just the current one.
+              onTap: me.profilePhoto == null
+                  ? null
+                  : () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(builder: (_) => ProfilePhotosScreen(userId: me.id, chatId: me.id))),
+              // The profile photo is the one avatar that keeps the brand's gold ring.
+              child: GoldRing(width: 2.2, child: UserAvatar(userId: me.id, size: 104, showOnline: false)),
+            ),
           ),
           const SizedBox(height: 14),
           Text(
             '${me.firstName} ${me.lastName}'.trim(),
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+            style: TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: onHeader),
           ),
           const SizedBox(height: 3),
           Text(
             formatUserStatus(me, context.s),
-            style: TextStyle(color: online ? theme.colorScheme.primary : theme.hintColor, fontSize: 14.5),
+            style: TextStyle(
+              color: background != null ? Colors.white70 : (online ? theme.colorScheme.primary : theme.hintColor),
+              fontSize: 14.5,
+            ),
           ),
+          if (ref.watch(sadoApiProvider).configured)
+            TextButton.icon(
+              onPressed: () => showProfileBackgroundPicker(context, ref),
+              style: TextButton.styleFrom(foregroundColor: onHeader),
+              icon: const Icon(Icons.palette_rounded, size: 18),
+              label: Text(context.t('gifts_background')),
+            ),
         ],
       ),
     );
@@ -141,8 +169,29 @@ class MyProfileTab extends ConsumerWidget {
       row(Icons.phone_outlined, '+${me.phoneNumber}', s.t('mobile')),
       if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio')),
       if (username != null) row(Icons.alternate_email_rounded, '@$username', s.t('username')),
+      _uzaroNameRow(context, ref, hint),
       if (birthdate != null) row(Icons.cake_outlined, _formatBirthdate(birthdate, s), s.t('birthday')),
     ]);
+  }
+
+  /// The UZARO @name, next to the Telegram username; tap to choose or change it.
+  Widget _uzaroNameRow(BuildContext context, WidgetRef ref, Color hint) {
+    final s = context.s;
+    final name = ref.watch(myUzaroNameProvider).value;
+    return ListTile(
+      visualDensity: const VisualDensity(vertical: -2),
+      leading: Icon(Icons.verified_rounded, color: Theme.of(context).colorScheme.primary, size: 22),
+      title: Text(name == null ? s.t('uzaro_username_none') : '@$name', style: const TextStyle(fontSize: 16, height: 1.25)),
+      subtitle: Text(s.t('uzaro_username'), style: TextStyle(fontSize: 13, color: hint)),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () => _push(context, UzaroUsernameScreen(current: name)),
+      onLongPress: name == null
+          ? null
+          : () {
+              Clipboard.setData(ClipboardData(text: '@$name'));
+              showToast(context, s.t('copied'));
+            },
+    );
   }
 
   Widget _spaces(BuildContext context, WidgetRef ref) {

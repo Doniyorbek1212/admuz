@@ -125,7 +125,7 @@ void main() {
     });
 
     test('TDLib parses bold, italic, spoiler and links', () {
-      final text = formattedText('**bold** __it__ ||hide|| [site](https://sado.uz)');
+      final text = formattedText('**bold** __it__ ||hide|| [site](https://uzaromessenger.uz)');
       expect(text.text, 'bold it hide site');
       final types = text.entities.map((e) => e.type.runtimeType).toSet();
       expect(types, containsAll([td.TextEntityTypeBold, td.TextEntityTypeItalic, td.TextEntityTypeSpoiler, td.TextEntityTypeTextUrl]));

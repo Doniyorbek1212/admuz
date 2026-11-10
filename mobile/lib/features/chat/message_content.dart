@@ -18,6 +18,7 @@ import '../../core/link_safety.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/live_location.dart';
+import '../../core/time_capsule.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -39,11 +40,13 @@ import 'bot_keyboard.dart';
 import 'link_router.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
+import 'phone_chat_button.dart' show openPhoneNumber;
 import 'message_extras.dart';
 import 'message_tools.dart';
 import 'rich_message.dart';
 import '../calls/conference_calls.dart' show GroupCallMessageView;
 import 'sticker_sets.dart';
+import 'time_capsule_view.dart';
 import 'video_note_view.dart';
 
 /// Picks the photo size best suited for a bubble (around 800px wide).
@@ -71,6 +74,7 @@ class FormattedTextView extends StatefulWidget {
 class _FormattedTextViewState extends State<FormattedTextView> {
   final List<TapGestureRecognizer> _recognizers = [];
   final Set<int> _revealedSpoilers = {};
+  final Set<int> _openSections = {};
 
   @override
   void dispose() {
@@ -118,8 +122,14 @@ class _FormattedTextViewState extends State<FormattedTextView> {
       r.dispose();
     }
     _recognizers.clear();
-    final text = widget.text.text;
-    final entities = [...widget.text.entities]..sort((a, b) => a.offset.compareTo(b.offset));
+    final unlockAt = capsuleUnlockAt(widget.text);
+    if (unlockAt != null && DateTime.now().isBefore(unlockAt)) {
+      return CapsuleSealedView(unlockAt: unlockAt, onOpen: () => setState(() {}));
+    }
+    final formatted = unlockAt == null ? widget.text : capsuleBody(widget.text);
+    final text = formatted.text;
+    // Same start: the longer (outer) entity first, so a section keeps its bold headline inside it.
+    final entities = [...formatted.entities]..sort((a, b) => a.offset != b.offset ? a.offset.compareTo(b.offset) : b.length.compareTo(a.length));
     final linkColor = Theme.of(context).colorScheme.primary;
     final base = widget.style ?? DefaultTextStyle.of(context).style;
     final spans = <InlineSpan>[];
@@ -149,7 +159,7 @@ class _FormattedTextViewState extends State<FormattedTextView> {
       case td.TextEntityTypeEmailAddress():
         return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'mailto', path: part))));
       case td.TextEntityTypePhoneNumber():
-        return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'tel', path: part))));
+        return TextSpan(text: part, style: link, recognizer: _tap(() => openPhoneNumber(context, part)));
       case td.TextEntityTypeBankCardNumber():
         return TextSpan(text: part, style: link, recognizer: _tap(() => showBankCardInfo(context, ProviderScope.containerOf(context, listen: false).read(accountProvider), part)));
       case td.TextEntityTypeMention():
@@ -190,7 +200,22 @@ class _FormattedTextViewState extends State<FormattedTextView> {
           style: revealed ? null : TextStyle(color: Colors.transparent, backgroundColor: base.color?.withValues(alpha: 0.35)),
           recognizer: _tap(() => setState(() => _revealedSpoilers.add(index))),
         );
-      case td.TextEntityTypeBlockQuote() || td.TextEntityTypeExpandableBlockQuote():
+      case td.TextEntityTypeExpandableBlockQuote():
+        // Collapsed section: its first line is the headline; a tap opens or closes the rest.
+        final cut = part.indexOf('\n');
+        final headline = cut < 0 ? part : part.substring(0, cut);
+        final rest = cut < 0 ? '' : part.substring(cut);
+        final open = _openSections.contains(index);
+        final toggle = _tap(() => setState(() => open ? _openSections.remove(index) : _openSections.add(index)));
+        return TextSpan(
+          recognizer: toggle,
+          children: [
+            TextSpan(text: headline, style: const TextStyle(fontWeight: FontWeight.w700), recognizer: toggle),
+            if (rest.isNotEmpty) TextSpan(text: open ? '  ▴' : '  ▾', style: TextStyle(color: linkColor, fontWeight: FontWeight.w700), recognizer: toggle),
+            if (open) TextSpan(text: rest, recognizer: toggle),
+          ],
+        );
+      case td.TextEntityTypeBlockQuote():
         return TextSpan(text: part, style: const TextStyle(fontStyle: FontStyle.italic));
       default:
         return TextSpan(text: part);
@@ -412,9 +437,12 @@ class _VideoThumb extends ConsumerWidget {
     Widget preview = thumb != null && thumb.format is! td.ThumbnailFormatMpeg4
         ? TdImage(file: thumb.file, minithumbnail: minithumbnail, width: box.width, height: box.height)
         : Container(width: box.width, height: box.height, color: Colors.black26);
+    // Auto-download off: nothing is fetched until tapped; files already on the device still play inline.
+    final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
+    td.File watchFile(bool download) => (download ? ref.watch(fileProvider(file.id)).value : ref.watch(fileStateProvider(file.id)).value) ?? file;
     if (isGif && ref.watch(motionProvider.select((m) => m.gifs))) {
       // GIFs are small MP4s: download and loop them inline like Telegram.
-      final current = ref.watch(fileProvider(file.id)).value ?? file;
+      final current = watchFile(auto);
       if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
         return GestureDetector(
           onTap: () => openVideoPlayer(context, file, loop: true),
@@ -431,7 +459,7 @@ class _VideoThumb extends ConsumerWidget {
     if (!isGif && ref.watch(motionProvider.select((m) => m.videos))) {
       // Like Telegram/aka: videos play muted in the bubble; small ones download for it on their own.
       final small = (file.size == 0 ? file.expectedSize : file.size) <= _inlineAutoplayMaxBytes;
-      final current = (small ? ref.watch(fileProvider(file.id)).value : ref.watch(_fileStateProvider(file.id)).value) ?? file;
+      final current = watchFile(small && auto);
       if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
         return GestureDetector(
           onTap: open,
@@ -485,7 +513,7 @@ class _VideoThumb extends ConsumerWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Not on this device yet: the arrow says tapping downloads it (aka/Telegram pill).
-                  if (!isGif && !(ref.watch(fileProvider(file.id)).value ?? file).local.isDownloadingCompleted)
+                  if (!isGif && !watchFile(false).local.isDownloadingCompleted)
                     const Padding(padding: EdgeInsets.only(right: 3), child: Icon(Icons.arrow_downward_rounded, size: 14, color: Colors.white)),
                   Text(
                     isGif ? 'GIF' : '${formatDuration(Duration(seconds: duration))}  ${formatFileSize(file.size == 0 ? file.expectedSize : file.size)}',
@@ -893,7 +921,9 @@ class VoiceNoteView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
-    final file = ref.watch(fileProvider(voiceNote.voice.id)).value ?? voiceNote.voice;
+    // Playing downloads it anyway (Playback.playMessage); fetch ahead only with auto-download on.
+    final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
+    final file = (auto ? ref.watch(fileProvider(voiceNote.voice.id)).value : ref.watch(fileStateProvider(voiceNote.voice.id)).value) ?? voiceNote.voice;
     final primary = Theme.of(context).colorScheme.primary;
     final samples = decodeWaveform(voiceNote.waveform);
     final playback = Playback.instance;

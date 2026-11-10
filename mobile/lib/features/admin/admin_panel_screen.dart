@@ -29,11 +29,13 @@ class AdminLoginScreen extends ConsumerStatefulWidget {
 
 class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
   final _key = TextEditingController();
+  final _password = TextEditingController();
   bool _busy = false;
 
   @override
   void dispose() {
     _key.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -41,7 +43,7 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
     final key = _key.text.trim();
     if (key.isEmpty) return;
     setState(() => _busy = true);
-    final name = await apiGuard(context, () => ref.read(sadoApiProvider).adminLogin(key));
+    final name = await apiGuard(context, () => ref.read(sadoApiProvider).adminLogin(key, _password.text));
     if (!mounted) return;
     setState(() => _busy = false);
     if (name == null) return;
@@ -67,7 +69,16 @@ class _AdminLoginScreenState extends ConsumerState<AdminLoginScreen> {
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
+            textInputAction: TextInputAction.next,
             decoration: InputDecoration(labelText: s.t('admin_key'), helperText: s.t('admin_key_hint'), prefixIcon: const Icon(Icons.key_rounded), border: const OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(labelText: s.t('admin_password'), prefixIcon: const Icon(Icons.lock_rounded), border: const OutlineInputBorder()),
             onSubmitted: (_) => _login(),
           ),
           const SizedBox(height: 20),

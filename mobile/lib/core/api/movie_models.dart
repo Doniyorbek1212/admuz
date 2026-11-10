@@ -28,6 +28,20 @@ class MovieTitle {
         videos: [for (final v in j['videos'] as List? ?? const []) MovieVideo.fromJson(v as Map<String, dynamic>)],
       );
 
+  /// Same shape as the server's, so a saved copy reads back through [MovieTitle.fromJson] (offline downloads).
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'kind': isSeries ? 'series' : 'film',
+        'title': title,
+        'description': description,
+        'year': year,
+        'categories': categories,
+        'country': country,
+        'language': language,
+        'poster_url': posterUrl,
+        'videos': [for (final v in videos) v.toJson()],
+      };
+
   final String id;
   final bool isSeries;
   final String title;
@@ -66,6 +80,18 @@ class MovieVideo {
         channel: j['channel'] as String? ?? '',
         messageId: j['message_id'] as int? ?? 0,
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'season': season,
+        'episode': episode,
+        'name': name,
+        'duration_seconds': durationSeconds,
+        'height': height,
+        'size_bytes': sizeBytes,
+        'channel': channel,
+        'message_id': messageId,
+      };
 
   final String id;
   final int season;

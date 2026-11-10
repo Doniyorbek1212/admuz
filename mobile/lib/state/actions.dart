@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../core/tdlib/td_client.dart';
+import '../core/time_capsule.dart';
 import 'telegram.dart';
 
 td.FormattedText plainText(String text) => td.FormattedText(text: text, entities: const []);
@@ -11,20 +12,47 @@ td.FormattedText plainText(String text) => td.FormattedText(text: text, entities
 /// Telegram's human-friendly markdown (**bold**, __italic__, ~~strike~~, ||spoiler||, `code`, ```pre```,
 /// [text](url), [name](tg://user?id=1)) parsed synchronously by TDLib; falls back to plain text.
 td.FormattedText formattedText(String text) {
+  // Underline and collapsed sections have no markdown: the composer writes them as <u> / <blockquote expandable>.
+  final tagged = composerTags(text);
   // Pasted HTML (<b>, <a href>…) keeps its formatting too.
-  if (_hasHtml.hasMatch(text)) {
+  if (_hasHtml.hasMatch(tagged.text)) {
     final parsed = TdClient.executeStatic(td.ParseTextEntities(text: text, parseMode: const td.TextParseModeHTML()))?.toTdObject();
     if (parsed is td.FormattedText) return parsed;
   }
-  if (!_hasMarkup.hasMatch(text)) return plainText(text);
+  if (!_hasMarkup.hasMatch(tagged.text)) return tagged;
   try {
-    final result = TdClient.executeStatic(td.ParseMarkdown(text: plainText(text)));
+    final result = TdClient.executeStatic(td.ParseMarkdown(text: tagged));
     final parsed = result?.toTdObject();
     if (parsed is td.FormattedText) return parsed;
   } on Object catch (_) {
     // Malformed markup or TDLib unavailable: send the text as typed.
   }
   return plainText(text);
+}
+
+const underlineTags = ('<u>', '</u>');
+const collapsedTags = ('<blockquote expandable>', '</blockquote>');
+final _composerTag = RegExp(r'<u>(.*?)</u>|<blockquote expandable>(.*?)</blockquote>', dotAll: true);
+
+/// Removes the composer's `<u>` and `<blockquote expandable>` tags, turning them into entities (nesting allowed).
+td.FormattedText composerTags(String text) {
+  final out = StringBuffer();
+  final entities = <td.TextEntity>[];
+  void walk(String source) {
+    var cursor = 0;
+    for (final match in _composerTag.allMatches(source)) {
+      out.write(source.substring(cursor, match.start));
+      final start = out.length;
+      walk(match.group(1) ?? match.group(2)!);
+      final type = match.group(1) != null ? const td.TextEntityTypeUnderline() : const td.TextEntityTypeExpandableBlockQuote();
+      if (out.length > start) entities.add(td.TextEntity(offset: start, length: out.length - start, type: type));
+      cursor = match.end;
+    }
+    out.write(source.substring(cursor));
+  }
+
+  walk(text);
+  return td.FormattedText(text: out.toString(), entities: entities);
 }
 
 final _hasMarkup = RegExp(r'\*\*|__|~~|\|\||`|\[[^\]]+\]\(');
@@ -191,11 +219,19 @@ extension ChatActions on TelegramAccount {
         inputMessageContent: content,
       ));
 
-  Future<td.Message> sendText(int chatId, String text, {int? replyToId, bool silent = false, bool disablePreview = false, int? scheduleAt}) =>
+  Future<td.Message> sendText(
+    int chatId,
+    String text, {
+    int? replyToId,
+    bool silent = false,
+    bool disablePreview = false,
+    int? scheduleAt,
+    ({DateTime until, String label})? capsule,
+  }) =>
       sendContent(
         chatId,
         td.InputMessageText(
-          text: formattedText(text),
+          text: capsule == null ? formattedText(text) : sealCapsule(formattedText(text), capsule.until, capsule.label),
           linkPreviewOptions: disablePreview
               ? const td.LinkPreviewOptions(
                   isDisabled: true, url: '', forceSmallMedia: false, forceLargeMedia: false, showAboveText: false)
@@ -742,6 +778,8 @@ String toMarkdown(td.FormattedText text) {
       td.TextEntityTypeItalic() => ('__', '__'),
       td.TextEntityTypeStrikethrough() => ('~~', '~~'),
       td.TextEntityTypeSpoiler() => ('||', '||'),
+      td.TextEntityTypeUnderline() => underlineTags,
+      td.TextEntityTypeExpandableBlockQuote() => collapsedTags,
       td.TextEntityTypeCode() => ('`', '`'),
       td.TextEntityTypePre() || td.TextEntityTypePreCode() => ('```', '```'),
       td.TextEntityTypeTextUrl(:final url) => ('[', ']($url)'),

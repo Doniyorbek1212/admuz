@@ -5,8 +5,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
+import 'gift_models.dart';
 import 'market_models.dart';
 import 'movie_models.dart';
+import 'music_models.dart';
 import 'place_models.dart';
 
 /// Error from the Sado server, with its stable code (e.g. AD_NOT_FOUND) for localized messages.
@@ -22,8 +24,9 @@ class ApiException implements Exception {
 
 final sadoApiProvider = Provider<SadoApi>((ref) => SadoApi());
 
-/// Client of the Sado server (shops, ads, admin review). The app gets an anonymous,
-/// device-bound customer account on first use; nothing from Telegram is sent.
+/// Client of the Sado server (shops, ads, admin review, gifts). The app gets an anonymous,
+/// device-bound customer account on first use. Telegram data goes only where the user acts:
+/// a shared profile, or for gifts the user's own Telegram id (proven via the bot) and the recipient's id.
 class SadoApi {
   SadoApi() : _dio = Dio(BaseOptions(baseUrl: AppConfig.apiUrl, connectTimeout: _timeout, receiveTimeout: _timeout, sendTimeout: _timeout));
 
@@ -208,6 +211,12 @@ class SadoApi {
 
   Future<Place> place(String id) async => Place.fromJson(await _get('/v1/places/$id') as Map<String, dynamic>);
 
+  /// Region and district (tuman) of a position, as the directory names them; nulls when no known place is near.
+  Future<({String? region, String? district})> locate(double lat, double lon) async {
+    final j = await _get('/v1/places/locate', query: {'lat': lat, 'lon': lon}) as Map<String, dynamic>;
+    return (region: j['region'] as String?, district: j['district'] as String?);
+  }
+
   // ------------------------------------------------------------------ movies
 
   /// Categories with something to watch, most titles first: (name, count).
@@ -226,7 +235,93 @@ class SadoApi {
 
   Future<MovieTitle> movie(String id) async => MovieTitle.fromJson(await _get('/v1/movies/$id') as Map<String, dynamic>);
 
+  Future<MusicPage> music({String category = '', String query = '', int offset = 0}) async =>
+      MusicPage.fromJson(await _get('/v1/music', query: {
+        if (category.isNotEmpty) 'category': category,
+        if (query.isNotEmpty) 'q': query,
+        'offset': offset,
+      }) as Map<String, dynamic>);
+
   static String? _kind(bool? series) => series == null ? null : (series ? 'series' : 'movie');
+
+  // ------------------------------------------------------------------ gifts and balance
+
+  /// The Telegram id this customer proved through the gifts bot, or null.
+  Future<int?> telegramId() async => (await _get('/v1/telegram/me') as Map<String, dynamic>)['telegram_user_id'] as int?;
+
+  Future<TelegramLinkCode> telegramLinkCode() async => TelegramLinkCode.fromJson(await _post('/v1/telegram/link') as Map<String, dynamic>);
+
+  // ------------------------------------------------------------------ UZARO usernames
+
+  /// This customer's UZARO @name (lowercase, no "@"), or null.
+  Future<String?> myUzaroUsername() async => (await _get('/v1/usernames/me') as Map<String, dynamic>)['username'] as String?;
+
+  /// Claims or renames; throws ApiException USERNAME_TAKEN / _PAID / _INVALID / _RESERVED / TELEGRAM_NOT_LINKED.
+  Future<UzaroName> claimUzaroUsername(String username) async =>
+      UzaroName.fromJson(await _put('/v1/usernames/me', {'username': username}) as Map<String, dynamic>);
+
+  /// Price of a short (2–4 character) name: (status, price). Status is free / for_sale / closed / taken / yours.
+  Future<(String, int)> uzaroUsernameQuote(String username) async {
+    final json = await _get('/v1/usernames/check', query: {'username': username}) as Map<String, dynamic>;
+    return (json['status'] as String, (json['price_uzs'] as num?)?.toInt() ?? 0);
+  }
+
+  /// Buys a short name for the UZARO balance; throws INSUFFICIENT_BALANCE / USERNAME_TAKEN / USERNAME_SALE_CLOSED.
+  Future<UzaroName> buyUzaroUsername(String username) async =>
+      UzaroName.fromJson(await _post('/v1/usernames/buy', data: {'username': username}) as Map<String, dynamic>);
+
+  Future<void> releaseUzaroUsername() => _delete('/v1/usernames/me');
+
+  /// Stores this account's Telegram contact-link token so people without a shared chat can open it.
+  Future<void> setUzaroContact(String token, int expiresIn) => _put('/v1/usernames/me/contact', {'token': token, 'expires_in': expiresIn});
+
+  Future<List<UzaroName>> searchUzaroUsernames(String query) async => [
+        for (final item in (await _get('/v1/usernames/search', query: {'q': query}) as Map<String, dynamic>)['items'] as List)
+          UzaroName.fromJson(item as Map<String, dynamic>),
+      ];
+
+  /// The UZARO @name of Telegram user [telegramId], or null.
+  Future<String?> uzaroUsernameOf(int telegramId) async =>
+      (await _get('/v1/usernames/of/$telegramId') as Map<String, dynamic>)['username'] as String?;
+
+  /// Banned Telegram sources: usernames, and titles of entries known only by name.
+  Future<({List<String> usernames, List<String> titles})> bannedChannels() async {
+    final j = await _get('/v1/banned-channels') as Map<String, dynamic>;
+    return (usernames: (j['usernames'] as List).cast<String>(), titles: (j['titles'] as List).cast<String>());
+  }
+
+  Future<List<GiftItem>> giftCatalog() async =>
+      [for (final g in (await _get('/v1/gifts/catalog') as Map<String, dynamic>)['items'] as List) GiftItem.fromJson(g as Map<String, dynamic>)];
+
+  /// Sends [giftId] to Telegram user [recipientId]; returns the balance left.
+  Future<int> sendGift(String giftId, int recipientId, String text) async {
+    final result = await _post('/v1/gifts/send', data: {'gift_id': giftId, 'recipient_telegram_id': recipientId, 'text': text}) as Map<String, dynamic>;
+    return result['balance_uzs'] as int? ?? 0;
+  }
+
+  Future<ProfileGifts> userGifts(int telegramId) async =>
+      ProfileGifts.fromJson(await _get('/v1/gifts/users/$telegramId') as Map<String, dynamic>);
+
+  /// "#rrggbb" or "#rrggbb,#rrggbb"; null removes it.
+  Future<void> setProfileBackground(String? background) => _put('/v1/profile/background', {'background': background});
+
+  /// Every gift this account received, newest first, and whether the profile hides them all.
+  Future<(List<SentGift>, bool)> receivedGifts() async {
+    final j = await _get('/v1/gifts/received') as Map<String, dynamic>;
+    return ([for (final g in j['items'] as List) SentGift.fromJson(g as Map<String, dynamic>)], j['hide_all'] as bool? ?? false);
+  }
+
+  Future<void> setGiftHidden(String sentId, bool hidden) => _post('/v1/gifts/$sentId/visibility', data: {'hidden': hidden});
+
+  /// Hides all received gifts, also later ones, from people opening this profile.
+  Future<void> setAllGiftsHidden(bool hidden) => _put('/v1/profile/gifts-visibility', {'hidden': hidden});
+
+  Future<Wallet> wallet() async => Wallet.fromJson(await _get('/v1/wallet') as Map<String, dynamic>);
+
+  Future<void> requestTopup(int amountUzs, String receiptPath) async {
+    final form = FormData.fromMap({'amount_uzs': amountUzs, 'receipt': await MultipartFile.fromFile(receiptPath)});
+    await _post('/v1/wallet/topups', data: form);
+  }
 
   // ------------------------------------------------------------------ usage statistics
 
@@ -262,6 +357,36 @@ class SadoApi {
 
   Future<void> cancelAd(String adId) => _delete('/v1/ads/$adId');
 
+  /// Reports that a hub banner was seen ("view") or tapped ("click"); never throws.
+  /// [learn] false: the tap is only counted, not used to learn the user's interests.
+  Future<void> adEvent(String adId, String event, {bool learn = true}) async {
+    if (!configured) return;
+    try {
+      await _post('/v1/ads/$adId/$event${learn ? '' : '?learn=false'}');
+    } on ApiException catch (error) {
+      debugPrint('ad $event not recorded: $error');
+    }
+  }
+
+  // ------------------------------------------------------------------ interests (personalised ads)
+
+  /// Tells the ads engine the user showed interest in [topic] ("open", "view", "search"); never throws.
+  Future<void> sendInterest(String topic, String kind) async {
+    if (!configured) return;
+    try {
+      await _post('/v1/interests', data: {
+        'signals': [
+          {'topic': topic, 'kind': kind},
+        ],
+      });
+    } on ApiException catch (error) {
+      debugPrint('interest $topic not recorded: $error');
+    }
+  }
+
+  /// Deletes everything the ads engine learnt about this user.
+  Future<void> clearInterests() => _delete('/v1/interests');
+
   // ------------------------------------------------------------------ admin
 
   Future<String?> adminKey() => _storage.read(key: _adminKey);
@@ -272,11 +397,24 @@ class SadoApi {
     return {'X-Admin-Key': key};
   }
 
-  Future<dynamic> _admin(String method, String path, {Object? data, Map<String, dynamic>? query, ResponseType? responseType}) async =>
-      _send(method, path, data: data, query: query, auth: false, headers: await _adminHeaders(), responseType: responseType);
+  Future<dynamic> _admin(String method, String path, {Object? data, Map<String, dynamic>? query, ResponseType? responseType}) async {
+    try {
+      return await _send(method, path, data: data, query: query, auth: false, headers: await _adminHeaders(), responseType: responseType);
+    } on ApiException catch (error) {
+      // Expired session or revoked key: forget it, so the next visit asks to sign in again.
+      if (error.status == 401) await adminLogout();
+      rethrow;
+    }
+  }
 
-  /// Checks [key] with the server and remembers it; returns the admin's name.
-  Future<String> adminLogin(String key) async {
+  /// Signs in with the panel login and password (a 12-hour session), or with a permanent key when [password] is
+  /// empty; remembers the token and returns the admin's name.
+  Future<String> adminLogin(String login, [String password = '']) async {
+    var key = login;
+    if (password.isNotEmpty) {
+      final session = await _send('POST', '/v1/admin/login', data: {'login': login, 'password': password}, auth: false) as Map<String, dynamic>;
+      key = session['token'] as String;
+    }
     final me = await _send('GET', '/v1/admin/me', auth: false, headers: {'X-Admin-Key': key}) as Map<String, dynamic>;
     await _storage.write(key: _adminKey, value: key);
     return me['name'] as String;

@@ -15,6 +15,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/td_stream_server.dart';
 import '../../state/telegram.dart';
+import 'movie_downloads.dart';
 
 /// Opens the full-screen player on [title]'s video number [index]; returns when the viewer leaves.
 Future<void> openMoviePlayer(BuildContext context, MovieTitle title, int index) =>
@@ -54,6 +55,7 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
   // Read once: dispose() saves the position and stops the download after ref is no longer usable.
   late final SharedPreferences _prefs;
   late final TelegramAccount _account;
+  late final MovieDownloadsNotifier _downloads;
 
   MovieVideo get _video => widget.title.videos[_index];
 
@@ -64,6 +66,7 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
     super.initState();
     _prefs = ref.read(sharedPreferencesProvider);
     _account = ref.read(accountProvider);
+    _downloads = ref.read(movieDownloadsProvider.notifier);
     WidgetsBinding.instance.addObserver(this);
     // Any orientation: the viewer turns the phone, or taps the rotate button.
     SystemChrome.setPreferredOrientations(const []);
@@ -101,8 +104,8 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
     final controller = _controller;
     _controller = null;
     unawaited(controller?.dispose());
-    // Stop fetching the rest of the film once nobody watches it.
-    if (_fileId case final id?) _account.cancelDownload(id);
+    // Stop fetching the rest of the film once nobody watches it, unless the viewer is saving it.
+    if (_fileId case final id? when !_downloads.isDownloading(_video.id)) _account.cancelDownload(id);
     _fileId = null;
   }
 
@@ -111,12 +114,18 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
     final account = _account;
     final video = _video;
     try {
-      final info = await account.send<td.MessageLinkInfo>(td.GetMessageLinkInfo(url: video.link));
-      final content = info.message?.content;
-      if (content is! td.MessageVideo) throw StateError('not a video post: ${video.link}');
-      final fileId = content.video.video.id;
-      final url = await TdStreamServer.instance.urlFor(account, fileId);
-      final controller = VideoPlayerController.networkUrl(url);
+      int? fileId;
+      final VideoPlayerController controller;
+      // Saved on the phone: plays without internet.
+      if (await _downloads.savedFile(video.id) case final file?) {
+        controller = VideoPlayerController.file(file);
+      } else {
+        final info = await account.send<td.MessageLinkInfo>(td.GetMessageLinkInfo(url: video.link));
+        final content = info.message?.content;
+        if (content is! td.MessageVideo) throw StateError('not a video post: ${video.link}');
+        fileId = content.video.video.id;
+        controller = VideoPlayerController.networkUrl(await TdStreamServer.instance.urlFor(account, fileId));
+      }
       await controller.initialize();
       if (!mounted || video.id != _video.id) {
         await controller.dispose();

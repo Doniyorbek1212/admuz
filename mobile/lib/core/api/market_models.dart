@@ -355,9 +355,15 @@ class Ad {
     this.hasReceipt = false,
     this.rejectReason,
     this.endsAt,
+    this.topics = const [],
+    this.views = 0,
+    this.clicks = 0,
   });
 
   factory Ad.fromJson(Map<String, dynamic> json) => Ad(
+        topics: [for (final t in json['topics'] as List? ?? const []) t as String],
+        views: json['views'] as int? ?? 0,
+        clicks: json['clicks'] as int? ?? 0,
         id: json['id'] as String,
         title: json['title'] as String,
         text: json['text'] as String? ?? '',
@@ -386,10 +392,29 @@ class Ad {
   final bool hasReceipt;
   final String? rejectReason;
   final DateTime? endsAt;
+
+  /// Interest topics the ad is matched against (see core/interests.dart).
+  final List<String> topics;
+
+  /// Distinct viewers who saw / tapped the banner (own ads only).
+  final int views;
+  final int clicks;
 }
 
 class AdDraft {
-  const AdDraft({required this.title, required this.text, required this.isVideo, required this.mediaUrl, required this.linkUrl, required this.regions, required this.days});
+  const AdDraft({
+    required this.title,
+    required this.text,
+    required this.isVideo,
+    required this.mediaUrl,
+    required this.linkUrl,
+    required this.regions,
+    required this.days,
+    this.topics = const [],
+  });
+
+  /// Empty: the server guesses them from the title and text.
+  final List<String> topics;
 
   final String title;
   final String text;
@@ -407,6 +432,7 @@ class AdDraft {
         'link_url': linkUrl,
         'regions': regions,
         'days': days,
+        'topics': topics,
       };
 }
 

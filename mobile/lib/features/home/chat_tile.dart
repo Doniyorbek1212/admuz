@@ -114,6 +114,10 @@ class ChatTile extends ConsumerWidget {
 
     final unreadCount = account.unreadFor(chat);
     final unread = unreadCount > 0 || chat.isMarkedAsUnread;
+    final tint = switch (localChatColor(chat)) {
+      final int argb => Color(argb),
+      _ => null,
+    };
     final trailingBadges = <Widget>[
       if (chat.unreadMentionCount > 0) _Badge(text: '@', color: theme.colorScheme.primary),
       if (chat.unreadReactionCount > 0) _Badge(text: '❤', color: Colors.redAccent),
@@ -121,14 +125,16 @@ class ChatTile extends ConsumerWidget {
       if (unread)
         _Badge(
           text: unreadCount > 0 ? formatCount(unreadCount) : '',
-          color: muted ? colors.mutedBadge : colors.unreadBadge,
+          color: muted ? colors.mutedBadge : tint ?? colors.unreadBadge,
         )
       else if (position?.isPinned ?? false)
         Icon(Icons.push_pin_rounded, size: 18, color: hint),
     ];
 
     return Material(
-      color: selected ? theme.colorScheme.primary.withValues(alpha: 0.12) : Colors.transparent,
+      color: selected
+          ? theme.colorScheme.primary.withValues(alpha: 0.12)
+          : tint?.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.10) ?? Colors.transparent,
       child: InkWell(
         onTap: onTap,
         onLongPress: () => showChatActions(context, ref, chat, list),
@@ -272,11 +278,16 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
   final unread = account.unreadFor(chat) > 0 || chat.isMarkedAsUnread;
   final isPrivate = account.privateUser(chat) != null;
   final hidden = ref.read(settingsProvider).hiddenChatIds.contains(chat.id);
+  final ghostMode = ref.read(settingsProvider).ghostMode;
+  final settings = ref.read(settingsProvider.notifier);
+  final host = Navigator.of(context).context;
   final action = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
+    isScrollControlled: true,
     builder: (context) => SafeArea(
-      child: Column(
+      child: SingleChildScrollView(
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
@@ -297,6 +308,11 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
           if (account.folders.isNotEmpty)
             ListTile(leading: const Icon(Icons.create_new_folder_outlined), title: Text(s.t('add_to_folder')), onTap: () => Navigator.pop(context, 'folder')),
           ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: Text(s.t('chat_color')),
+            onTap: () => Navigator.pop(context, 'color'),
+          ),
+          ListTile(
             leading: Icon(hidden ? Icons.visibility_rounded : Icons.visibility_off_rounded),
             title: Text(s.t(hidden ? 'unhide_chat' : 'hide_chat')),
             onTap: () => Navigator.pop(context, 'hide'),
@@ -316,36 +332,94 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
           ),
         ],
       ),
+      ),
     ),
   );
-  if (action == null || !context.mounted) return;
+  // The row may have been rebuilt (the list re-sorted) while the sheet was open: carry on with the navigator.
+  final ctx = context.mounted ? context : host;
+  if (action == null || !ctx.mounted) return;
   switch (action) {
     case 'pin':
-      await guard(context, () => account.togglePinned(chat, list));
+      await guard(ctx, () => account.togglePinned(chat, list));
     case 'mute':
-      await guard(context, () => account.setMuted(chat, muted ? 0 : muteForever));
+      await guard(ctx, () => account.setMuted(chat, muted ? 0 : muteForever));
     case 'archive':
-      await guard(context, () => account.setArchived(chat, !archived));
+      await guard(ctx, () => account.setArchived(chat, !archived));
     case 'folder':
-      await addChatToFolder(context, account, chat);
-    case 'read' when unread && ref.read(settingsProvider).ghostMode && !chat.isMarkedAsUnread:
+      await addChatToFolder(ctx, account, chat);
+    case 'color':
+      await _pickChatColor(ctx, account, chat);
+    case 'read' when unread && ghostMode && !chat.isMarkedAsUnread:
       // Ghost mode: read on this phone only, so the sender still sees the message as unread.
       account.markReadLocally(chat.id);
     case 'read':
-      await guard(context, () => unread ? account.markRead(chat) : account.markUnread(chat));
+      await guard(ctx, () => unread ? account.markRead(chat) : account.markUnread(chat));
     case 'hide':
-      ref.read(settingsProvider.notifier).setHidden(chat.id, !hidden);
-      showToast(context, s.t(hidden ? 'chat_unhidden' : 'chat_hidden'));
+      settings.setHidden(chat.id, !hidden);
+      showToast(ctx, s.t(hidden ? 'chat_unhidden' : 'chat_hidden'));
     case 'delete':
       final ok = await confirm(
-        context,
+        ctx,
         title: s.t('delete_chat_confirm_title'),
         message: s.t('delete_chat_confirm', {'name': chatTitle(chat, account, s)}),
         confirmLabel: s.t('delete'),
         destructive: true,
       );
-      if (ok && context.mounted) await guard(context, () => account.deleteChat(chat));
+      if (ok && ctx.mounted) await guard(ctx, () => account.deleteChat(chat));
   }
+}
+
+/// Colors a chat row can be tinted with (Telegram's name color palette).
+const chatTintColors = [0xFF3E88F7, 0xFF34C759, 0xFFFF9500, 0xFFFF3B30, 0xFFAF52DE, 0xFF20B2C4, 0xFFFF4D8D, 0xFF8E8E93];
+
+Future<void> _pickChatColor(BuildContext context, TelegramAccount account, td.Chat chat) async {
+  final s = context.s;
+  final current = localChatColor(chat);
+  // 0 stands for "no color" (null would be the sheet's dismissal).
+  final picked = await showModalBottomSheet<int>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(s.t('chat_color'), style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final argb in chatTintColors)
+                  Semantics(
+                    button: true,
+                    selected: argb == current,
+                    child: InkResponse(
+                      onTap: () => Navigator.pop(context, argb),
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundColor: Color(argb),
+                        child: argb == current ? const Icon(Icons.check_rounded, color: Colors.white) : null,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            if (current != null)
+              TextButton.icon(
+                onPressed: () => Navigator.pop(context, 0),
+                icon: const Icon(Icons.format_color_reset_rounded),
+                label: Text(s.t('chat_color_none')),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+  if (picked == null || picked == current || !context.mounted) return;
+  await guard(context, () => account.setLocalChatColor(chat.id, picked == 0 ? null : picked));
 }
 
 /// Paints a single hairline at the bottom edge, starting at [indent].

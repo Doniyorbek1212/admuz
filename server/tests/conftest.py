@@ -17,6 +17,8 @@ os.environ.update({
     "SADO_BILLING_ENABLED_PROVIDERS": '["mock"]',
     "SADO_BILLING_MOCK_WEBHOOK_SECRET": "mock-secret-for-tests-only-0123456789",
     "SADO_BILLING_RATE_LIMIT_PER_MINUTE": "1000",
+    # The tests sign admins in with CLI-style keys.
+    "SADO_BILLING_ADMIN_PERMANENT_KEYS": "true",
 })
 
 import httpx
@@ -32,7 +34,9 @@ from app.providers.mock import make_token, sign_notification
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 TABLES = (
-    "activity_days, movie_videos, movie_titles, places, app_settings, stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
+    "banned_channels, uzaro_usernames, customer_interests, profile_styles, wallet_topups, wallet_ledger, sent_gifts, gift_items, telegram_links, "
+    "music_tracks, activity_days,movie_videos, movie_titles, "
+    "places, app_settings, stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
     "ai_usage, credit_reservations, credit_ledger, credit_accounts, entitlement_overrides, transactions, "
     "provider_events, purchases, subscriptions, devices, audit_log, admin_users, customers"
 )
@@ -82,6 +86,9 @@ class Customer:
 
     async def delete(self, path: str, **kw: Any) -> httpx.Response:
         return await self.client.delete(path, headers=self.headers, **kw)
+
+    async def put(self, path: str, **kw: Any) -> httpx.Response:
+        return await self.client.put(path, headers=self.headers, **kw)
 
     async def entitlements(self) -> dict[str, Any]:
         resp = await self.get("/v1/entitlements")

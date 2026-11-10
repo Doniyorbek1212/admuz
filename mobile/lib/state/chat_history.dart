@@ -44,6 +44,12 @@ class ChatHistory extends ChangeNotifier {
   int sponsoredSpacing = 0;
   final Set<int> _sponsoredViewed = {};
 
+  /// A message arrived (or was sent) in this chat just now; drives the screen effects.
+  void Function(td.Message message)? onLiveMessage;
+
+  /// Reactions of a loaded message changed: old and new interaction info; drives the screen effects.
+  void Function(td.MessageInteractionInfo? before, td.MessageInteractionInfo? after)? onInteractionChanged;
+
   StreamSubscription<td.Update>? _subscription;
   final Set<int> _viewed = {};
   bool _disposed = false;
@@ -240,6 +246,8 @@ class ChatHistory extends ChangeNotifier {
     switch (update) {
       case td.UpdateNewMessage(:final message) when message.chatId == chatId:
         if (!_inTopic(message)) return;
+        // Not the backlog delivered after a reconnect: only messages from the last minute.
+        if (DateTime.now().millisecondsSinceEpoch ~/ 1000 - message.date < 60) onLiveMessage?.call(message);
         if (hasNewer || messages.any((m) => m.id == message.id)) return;
         messages.insert(0, message);
       case td.UpdateMessageSendSucceeded(:final message, :final oldMessageId) when message.chatId == chatId:
@@ -251,6 +259,8 @@ class ChatHistory extends ChangeNotifier {
       case td.UpdateMessageEdited(chatId: final id, :final messageId, :final editDate, :final replyMarkup) when id == chatId:
         _replace(messageId, (m) => _withJson(m, {'edit_date': editDate, 'reply_markup': replyMarkup?.toJson()}));
       case td.UpdateMessageInteractionInfo(chatId: final id, :final messageId, :final interactionInfo) when id == chatId:
+        final index = indexOf(messageId);
+        if (index >= 0) onInteractionChanged?.call(messages[index].interactionInfo, interactionInfo);
         _replace(messageId, (m) => _withJson(m, {'interaction_info': interactionInfo?.toJson()}));
       case td.UpdateMessageIsPinned(chatId: final id, :final messageId, :final isPinned) when id == chatId:
         _replace(messageId, (m) => m.copyWith(isPinned: isPinned));

@@ -17,7 +17,6 @@ import 'comments.dart';
 import 'link_preview_card.dart';
 import 'message_content.dart';
 import 'message_tools.dart';
-import 'phone_chat_button.dart';
 
 /// The message a reply points to, resolved by TDLib from the reply itself (works across chats and threads).
 final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
@@ -271,8 +270,6 @@ class MessageBubble extends ConsumerWidget {
           ),
         ),
       if (content case td.MessageText(:final linkPreview?) when !folded) LinkPreviewCard(preview: linkPreview, textColor: textColor),
-      // A number noted in Saved Messages: offer to write to that person when they are on Telegram.
-      if (hasText && !folded && account.isSavedMessages(chat)) PhoneChatButtons(text: text.text, color: textColor),
       if (translation != null)
         Container(
           margin: const EdgeInsets.fromLTRB(10, 6, 10, 0),

@@ -61,22 +61,22 @@ Category = Annotated[str, AfterValidator(_known_category)]
 # Only https links: the app loads them directly, so no plain-http (or javascript:/data:) URLs.
 HttpsUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^https://[^\s<>\"']+$")]
 OptionalHttpsUrl = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^(https://[^\s<>\"']+)?$")]
-# A product photo/video: an upload on this server ("/media/<name>") or an external https link.
+# An ad banner: an upload on this server ("/media/<name>") or an external https link (an admin reviews every ad).
 MediaUrl = Annotated[
     str,
     StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^(https://[^\s<>\"']+|/media/[0-9a-f-]{36}\.(jpg|png|webp|mp4))$"),
 ]
-OptionalMediaUrl = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^(https://[^\s<>\"']+|/media/[0-9a-f-]{36}\.(jpg|png|webp|mp4))?$"),
-]
+# Product media and shop logos: the owner's own uploads only. Products go live unreviewed, and an outside URL could
+# log every viewer's IP or swap the picture after a review.
+UploadUrl = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^/media/[0-9a-f-]{36}\.(jpg|png|webp|mp4)$")]
+OptionalUploadUrl = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^(/media/[0-9a-f-]{36}\.(jpg|png|webp|mp4))?$")]
 Telegram = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^([A-Za-z][A-Za-z0-9_]{3,31})?$")]
 Phone = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^(\+?[0-9 ()-]{7,20})?$")]
 
 
 class MediaItem(BaseModel):
     type: Literal["image", "video"]
-    url: MediaUrl
+    url: UploadUrl
 
 
 def shop_out(shop: Shop, *, product_count: int | None = None, private: bool = False) -> dict[str, Any]:
@@ -152,9 +152,12 @@ def ad_out(ad: AdCampaign, *, private: bool = False) -> dict[str, Any]:
         "media_type": ad.media_type,
         "media_url": ad.media_url,
         "link_url": ad.link_url,
+        "topics": ad.topics or [],
     }
     if private:
         out |= {
+            "views": ad.views or 0,
+            "clicks": ad.clicks or 0,
             "regions": ad.regions,
             "days": ad.days,
             "price_uzs": ad.price_uzs,

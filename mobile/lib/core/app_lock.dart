@@ -228,10 +228,28 @@ class AppLockGate extends ConsumerStatefulWidget {
 }
 
 class _AppLockGateState extends ConsumerState<AppLockGate> with WidgetsBindingObserver {
+  static const _privacy = MethodChannel('uz.sado.app/privacy');
+
+  /// iOS: covers the UI while inactive so the app-switcher snapshot shows no chats.
+  bool _obscured = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    Future.microtask(() => _setSecureWindow(ref.read(appLockProvider).enabled));
+  }
+
+  /// Android: FLAG_SECURE while a passcode is set (recents thumbnail, screenshots and recording show nothing).
+  Future<void> _setSecureWindow(bool enabled) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _privacy.invokeMethod<void>('setSecure', {'enabled': enabled});
+    } on PlatformException catch (error) {
+      debugPrint('secure window unavailable: $error');
+    } on MissingPluginException {
+      // Widget tests have no native side.
+    }
   }
 
   @override
@@ -248,16 +266,20 @@ class _AppLockGateState extends ConsumerState<AppLockGate> with WidgetsBindingOb
     } else if (state == AppLifecycleState.resumed) {
       lock.onForeground();
     }
+    final obscure = state != AppLifecycleState.resumed && defaultTargetPlatform == TargetPlatform.iOS && ref.read(appLockProvider).enabled;
+    if (obscure != _obscured && mounted) setState(() => _obscured = obscure);
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(appLockProvider.select((s) => s.enabled), (_, enabled) => unawaited(_setSecureWindow(enabled)));
     final locked = ref.watch(appLockProvider.select((s) => s.locked));
     return Stack(
       children: [
         // Offstage keeps navigation state but stops the UI from painting or receiving input.
         Offstage(offstage: locked, child: TickerMode(enabled: !locked, child: widget.child)),
         if (locked) const Positioned.fill(child: _LockScreen()),
+        if (_obscured && !locked) Positioned.fill(child: ColoredBox(color: Theme.of(context).colorScheme.surface)),
       ],
     );
   }

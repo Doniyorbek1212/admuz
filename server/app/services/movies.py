@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 # Bots may upload files up to 2000 MiB over MTProto.
 TELEGRAM_MAX_BYTES = 2000 * 1024 * 1024
 POLL_SECONDS = 10
+# Input option for ffmpeg/ffprobe: an uploaded file posing as a playlist (HLS, concat) cannot make them fetch URLs.
+LOCAL_ONLY = ("-protocol_whitelist", "file")
 
 # video id -> (stage, percent) for the admin panel; in memory, lost on restart, which only resets the bar.
 PROGRESS: dict[uuid.UUID, tuple[str, int]] = {}
@@ -97,7 +99,7 @@ async def _run(*args: str) -> tuple[int, str]:
 
 
 async def probe(path: Path) -> VideoInfo:
-    code, out = await _run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration",
+    code, out = await _run("ffprobe", "-v", "error", *LOCAL_ONLY, "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration",
                            "-of", "json", str(path))
     if code != 0:
         raise MovieError("Fayl video emas yoki buzilgan")
@@ -112,7 +114,7 @@ async def compress(video_id: uuid.UUID, src: Path, dst: Path, info: VideoInfo) -
     height = min(info.height or settings.movie_max_height, settings.movie_max_height)
     height -= height % 2
     args = [
-        "nice", "-n", "10", "ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", str(src),
+        "nice", "-n", "10", "ffmpeg", "-hide_banner", "-nostdin", "-y", *LOCAL_ONLY, "-i", str(src),
         "-map", "0:v:0", "-map", "0:a:0?", "-vf", f"scale=-2:{height}", "-c:v", "libx264", "-preset", "veryfast",
         "-crf", str(settings.movie_crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
         "-movflags", "+faststart", "-threads", str(settings.movie_ffmpeg_threads), "-progress", "pipe:1", "-nostats", str(dst),
@@ -137,7 +139,7 @@ async def compress(video_id: uuid.UUID, src: Path, dst: Path, info: VideoInfo) -
 
 
 async def make_thumb(src: Path, dst: Path, info: VideoInfo) -> Path | None:
-    code, _ = await _run("ffmpeg", "-hide_banner", "-nostdin", "-y", "-ss", str(max(1, info.duration // 10)), "-i", str(src),
+    code, _ = await _run("ffmpeg", "-hide_banner", "-nostdin", "-y", *LOCAL_ONLY, "-ss", str(max(1, info.duration // 10)), "-i", str(src),
                          "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", str(dst))
     return dst if code == 0 and dst.is_file() else None
 

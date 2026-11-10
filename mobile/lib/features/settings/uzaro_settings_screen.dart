@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/sado_api.dart';
+import '../../core/interests.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -75,6 +77,14 @@ class UzaroSettingsScreen extends ConsumerWidget {
               notifier.setGhostMode(value);
               account.setOnline(!value);
             }, hint: 'ghost_mode_hint'),
+            toggle('personalized_ads', ref.watch(personalizedAdsProvider), (value) async {
+              try {
+                await ref.read(personalizedAdsProvider.notifier).set(value);
+              } on ApiException catch (error) {
+                // Off locally already, so nothing new is learnt; the old server scores just fade with time.
+                debugPrint('interests not cleared: $error');
+              }
+            }, hint: 'personalized_ads_hint'),
           ]),
           SettingsGroup(title: s.t('confirmations'), children: [
             toggle('confirm_sticker', settings.confirmSticker, notifier.setConfirmSticker),
