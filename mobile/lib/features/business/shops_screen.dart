@@ -32,7 +32,9 @@ class _ShopsScreenState extends ConsumerState<ShopsScreen> {
 
   void _search(String query) {
     _timer?.cancel();
-    _timer = Timer(_debounce, () => setState(() => _shops = _load(query.trim())));
+    _timer = Timer(_debounce, () => setState(() {
+          _shops = _load(query.trim());
+        }));
   }
 
   @override

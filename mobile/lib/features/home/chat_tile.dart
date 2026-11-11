@@ -14,8 +14,11 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../../widgets/custom_emoji.dart';
+import '../gifts/gift_showcase.dart' show giftRecipientOf;
+import '../gifts/uzaro_badge.dart' show UzaroBadge;
 import '../profile/chat_info_screen.dart';
 import '../settings/folders_screen.dart';
+import 'chat_look.dart';
 
 /// Mini thumbnails of the album the chat's last message belongs to (newest first, at most three).
 /// TDLib's local cache is tried first; only when it lacks the rest of the album is the server asked once.
@@ -139,8 +142,10 @@ class ChatTile extends ConsumerWidget {
         onTap: onTap,
         onLongPress: () => showChatActions(context, ref, chat, list),
         onSecondaryTap: () => showChatActions(context, ref, chat, list),
+        child: Stack(children: [
+        Positioned.fill(child: ChatTileBackdrop(chat: chat, giftsOf: giftRecipientOf(account, chat))),
         // Hairline separator starting under the title, like Telegram.
-        child: DecoratedBox(
+        DecoratedBox(
           position: DecorationPosition.foreground,
           decoration: _DividerDecoration(color: theme.dividerColor, indent: isDesktop ? 70 : 78),
           child: Padding(
@@ -185,6 +190,7 @@ class ChatTile extends ConsumerWidget {
                                   child: Icon(Icons.verified_rounded, size: 16, color: theme.colorScheme.primary),
                                 ),
                               EmojiStatusBadge(status: chat.emojiStatus, size: 17),
+                              if (account.privateUser(chat) case final user? when !account.isSavedMessages(chat)) UzaroBadge(userId: user.id, size: 17),
                               if (muted)
                                 Padding(padding: const EdgeInsets.only(left: 4), child: Icon(Icons.volume_off_rounded, size: 15, color: hint)),
                             ],
@@ -218,6 +224,7 @@ class ChatTile extends ConsumerWidget {
           ),
         ),
         ),
+        ]),
       ),
     );
   }
@@ -348,10 +355,14 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
     case 'folder':
       await addChatToFolder(ctx, account, chat);
     case 'color':
-      await _pickChatColor(ctx, account, chat);
-    case 'read' when unread && ghostMode && !chat.isMarkedAsUnread:
+      await pickChatLook(ctx, chat.id);
+    case 'read' when unread && ghostMode:
       // Ghost mode: read on this phone only, so the sender still sees the message as unread.
       account.markReadLocally(chat.id);
+      // The "marked as unread" flag is private to the user, so clearing it tells no one.
+      if (chat.isMarkedAsUnread) {
+        await guard(ctx, () => account.send<td.Ok>(td.ToggleChatIsMarkedAsUnread(chatId: chat.id, isMarkedAsUnread: false)));
+      }
     case 'read':
       await guard(ctx, () => unread ? account.markRead(chat) : account.markUnread(chat));
     case 'hide':
@@ -367,59 +378,6 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
       );
       if (ok && ctx.mounted) await guard(ctx, () => account.deleteChat(chat));
   }
-}
-
-/// Colors a chat row can be tinted with (Telegram's name color palette).
-const chatTintColors = [0xFF3E88F7, 0xFF34C759, 0xFFFF9500, 0xFFFF3B30, 0xFFAF52DE, 0xFF20B2C4, 0xFFFF4D8D, 0xFF8E8E93];
-
-Future<void> _pickChatColor(BuildContext context, TelegramAccount account, td.Chat chat) async {
-  final s = context.s;
-  final current = localChatColor(chat);
-  // 0 stands for "no color" (null would be the sheet's dismissal).
-  final picked = await showModalBottomSheet<int>(
-    context: context,
-    showDragHandle: true,
-    builder: (context) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(s.t('chat_color'), style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final argb in chatTintColors)
-                  Semantics(
-                    button: true,
-                    selected: argb == current,
-                    child: InkResponse(
-                      onTap: () => Navigator.pop(context, argb),
-                      child: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: Color(argb),
-                        child: argb == current ? const Icon(Icons.check_rounded, color: Colors.white) : null,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            if (current != null)
-              TextButton.icon(
-                onPressed: () => Navigator.pop(context, 0),
-                icon: const Icon(Icons.format_color_reset_rounded),
-                label: Text(s.t('chat_color_none')),
-              ),
-          ],
-        ),
-      ),
-    ),
-  );
-  if (picked == null || picked == current || !context.mounted) return;
-  await guard(context, () => account.setLocalChatColor(chat.id, picked == 0 ? null : picked));
 }
 
 /// Paints a single hairline at the bottom edge, starting at [indent].

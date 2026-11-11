@@ -109,9 +109,11 @@ class SettingsIn(BaseModel):
     ads_personalization: Annotated[int, Field(ge=0, le=1)] | None = None
     ads_interest_weight: Annotated[int, Field(ge=0, le=100)] | None = None
     ads_interest_half_life_days: Annotated[int, Field(ge=1, le=365)] | None = None
+    ads_topic_picker: Annotated[int, Field(ge=0, le=1)] | None = None
     username_price_2_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     username_price_3_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     username_price_4_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    badge_price_uzs: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
 
 
 @router.get("/settings")

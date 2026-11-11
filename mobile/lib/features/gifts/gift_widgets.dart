@@ -16,6 +16,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../business/business_widgets.dart';
 import 'gift_effects.dart';
+import 'gift_showcase.dart' show giftShowcaseProvider;
 import 'topup_screen.dart';
 
 /// UZARO gifts a Telegram user received (visible ones) and their profile background. Empty when the server is unreachable.
@@ -24,7 +25,9 @@ final userGiftsProvider = FutureProvider.autoDispose.family<ProfileGifts, int>((
   if (!api.configured) return ProfileGifts.empty;
   try {
     return await api.userGifts(telegramId);
-  } on ApiException {
+  } on ApiException catch (error) {
+    // Offline or timed out: fail so Riverpod retries, rather than showing "no gifts, no background" for good.
+    if (error.code == 'NETWORK') rethrow;
     return ProfileGifts.empty;
   }
 });
@@ -314,7 +317,13 @@ Future<void> showGiftDetails(BuildContext context, SentGift sent) => showGeneral
       pageBuilder: (context, _, _) => Consumer(builder: (context, ref, _) {
         final s = context.s;
         final sender = ref.watch(accountProvider).users[sent.senderTelegramId];
-        final name = sender == null ? '' : '${sender.firstName} ${sender.lastName}'.trim();
+        // A hidden sender (0) reads "anonymous"; when known to this viewer, the hiding is noted next to the name.
+        final known = sender == null ? '' : '${sender.firstName} ${sender.lastName}'.trim();
+        final name = sent.senderTelegramId == 0
+            ? s.t('gifts_anonymous')
+            : sent.anonymous && known.isNotEmpty
+                ? '$known · ${s.t('gifts_anonymous')}'
+                : known;
         return Material(
           type: MaterialType.transparency,
           // The profile behind is blurred so the gift and its words read on any background.
@@ -351,18 +360,21 @@ Future<void> showGiftDetails(BuildContext context, SentGift sent) => showGeneral
       }),
     );
 
-/// Gift shop for [user]: pick a gift, add a few words, pay from the UZARO balance.
-Future<bool?> sendUzaroGift(BuildContext context, td.User user, {GiftItem? initial}) => showModalBottomSheet<bool>(
+/// Gift shop for a person ([recipientId] = their Telegram id) or a group/channel (its chat id): pick a gift,
+/// add a few words, pay from the UZARO balance.
+Future<bool?> sendUzaroGift(BuildContext context, {required int recipientId, required String name, GiftItem? initial}) =>
+    showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) => _GiftShopSheet(user: user, initial: initial),
+      builder: (_) => _GiftShopSheet(recipientId: recipientId, name: name, initial: initial),
     );
 
 class _GiftShopSheet extends ConsumerStatefulWidget {
-  const _GiftShopSheet({required this.user, this.initial});
+  const _GiftShopSheet({required this.recipientId, required this.name, this.initial});
 
-  final td.User user;
+  final int recipientId;
+  final String name;
   final GiftItem? initial;
 
   @override
@@ -374,6 +386,7 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
   late GiftItem? _selected = widget.initial;
   final _text = TextEditingController();
   bool _sending = false;
+  bool _anonymous = false;
 
   Future<(List<GiftItem>, Wallet)> _load() async {
     final api = ref.read(sadoApiProvider);
@@ -394,11 +407,12 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
       if (mounted) setState(() => _sending = false);
       return;
     }
-    final balance = await apiGuard(context, () => ref.read(sadoApiProvider).sendGift(gift.id, widget.user.id, _text.text.trim()));
+    final balance = await apiGuard(context, () => ref.read(sadoApiProvider).sendGift(gift.id, widget.recipientId, _text.text.trim(), anonymous: _anonymous));
     if (!mounted) return;
     setState(() => _sending = false);
     if (balance == null) return;
-    ref.invalidate(userGiftsProvider(widget.user.id));
+    ref.invalidate(userGiftsProvider(widget.recipientId));
+    ref.invalidate(giftShowcaseProvider(widget.recipientId));
     showToast(context, context.t('gifts_sent'));
     final navigator = Navigator.of(context);
     navigator.pop(true);
@@ -408,14 +422,18 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
 
   Future<void> _topUp() async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TopupScreen()));
-    if (mounted) setState(() => _data = _load());
+    if (mounted) {
+      setState(() {
+        _data = _load();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final s = context.s;
     final theme = Theme.of(context);
-    final name = '${widget.user.firstName} ${widget.user.lastName}'.trim();
+    final name = widget.name;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
@@ -428,7 +446,9 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
               return EmptyState(
                 icon: Icons.wifi_off_rounded,
                 title: error is ApiException ? apiErrorText(context, error) : errorText(context, error!),
-                action: FilledButton(onPressed: () => setState(() => _data = _load()), child: Text(s.t('retry'))),
+                action: FilledButton(onPressed: () => setState(() {
+                  _data = _load();
+                }), child: Text(s.t('retry'))),
               );
             }
             final data = snapshot.data;
@@ -457,6 +477,15 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       controller: _text,
                       maxLength: 140,
                       decoration: InputDecoration(hintText: s.t('gifts_message_hint'), border: const OutlineInputBorder()),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      secondary: const Icon(Icons.visibility_off_rounded),
+                      title: Text(s.t('gifts_hide_my_name')),
+                      subtitle: Text(s.t('gifts_hide_my_name_hint')),
+                      value: _anonymous,
+                      onChanged: _sending ? null : (value) => setState(() => _anonymous = value),
                     ),
                     FilledButton.icon(
                       onPressed: _sending ? null : (enough ? () => _send(selected) : _topUp),

@@ -73,7 +73,7 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
         ],
       ),
     );
-    url.dispose();
+    // Not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
     if (picked != null && picked.isNotEmpty) _wrap('[', ']($picked)');
   }
 

@@ -23,6 +23,7 @@ import '../../widgets/message_context_menu.dart';
 import '../../widgets/playback_bar.dart';
 import '../../widgets/swipe_to_reply.dart';
 import '../gifts/gift_widgets.dart' show playArrivedGift;
+import '../gifts/uzaro_badge.dart' show NameBadges;
 import '../home/home_screen.dart';
 import '../profile/profile_media.dart' show isProfileAudio, toggleProfileAudio;
 import 'sticker_extras.dart';
@@ -852,7 +853,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(widget.topicName ?? chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17)),
+                  Row(children: [
+                    Flexible(
+                      child: Text(widget.topicName ?? chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17)),
+                    ),
+                    if (widget.topicName == null) NameBadges(chat: chat, size: 17),
+                  ]),
                   if (subtitle.isNotEmpty)
                     Text(
                       subtitle,
@@ -913,12 +919,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.topicName ?? chatTitle(chat, account, s),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white, height: 1.2),
-                    ),
+                    Row(children: [
+                      Flexible(
+                        child: Text(
+                          widget.topicName ?? chatTitle(chat, account, s),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white, height: 1.2),
+                        ),
+                      ),
+                      if (widget.topicName == null) NameBadges(chat: chat, size: 17),
+                    ]),
                     if (subtitle.isNotEmpty)
                       Text(
                         subtitle,

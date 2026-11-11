@@ -13,7 +13,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Header, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, select
 
 from app.config import get_settings
@@ -31,7 +31,19 @@ log = logging.getLogger("app.gifts")
 
 LINK_CODE_TTL_SECONDS = 600
 MAX_PENDING_TOPUPS = 3
+TOP_PER_RECIPIENT = 3
+MAX_TOP_LOOKUP = 100
 TelegramId = Annotated[int, Field(gt=0, lt=1 << 53)]
+
+
+def _not_zero(value: int) -> int:
+    if value == 0:
+        raise ValueError("must not be 0")
+    return value
+
+
+# Who can receive gifts: a user (their Telegram id) or a group/channel (its TDLib chat id, which is negative).
+RecipientId = Annotated[int, Field(gt=-(1 << 53), lt=1 << 53), AfterValidator(_not_zero)]
 
 
 def webhook_secret() -> str:
@@ -55,16 +67,27 @@ def gift_out(gift: GiftItem) -> dict[str, Any]:
     }
 
 
-def sent_out(sent: SentGift, gift: GiftItem) -> dict[str, Any]:
+def sent_out(sent: SentGift, gift: GiftItem, viewer: int | None) -> dict[str, Any]:
+    """A sent gift as [viewer] (a Telegram id, or None when unproven) may see it: the sender stays hidden from everyone
+    but the two people involved when the sender went anonymous or the recipient hid the name."""
+    involved = viewer is not None and viewer in (sent.sender_telegram_id, sent.recipient_telegram_id)
     return {
         "id": str(sent.id),
         "gift": gift_out(gift),
-        "sender_telegram_id": sent.sender_telegram_id,
+        "sender_telegram_id": sent.sender_telegram_id if involved or not (sent.anonymous or sent.sender_hidden) else None,
         "recipient_telegram_id": sent.recipient_telegram_id,
         "text": sent.text,
         "hidden": sent.hidden,
+        "anonymous": sent.anonymous,
+        "sender_hidden": sent.sender_hidden,
         "created_at": sent.created_at.isoformat(),
     }
+
+
+async def _viewer(db: DbDep, customer_id: uuid.UUID) -> int | None:
+    """The Telegram id this customer proved, if any."""
+    link = await db.get(TelegramLink, customer_id)
+    return link.telegram_user_id if link else None
 
 
 def topup_out(topup: WalletTopup) -> dict[str, Any]:
@@ -159,8 +182,10 @@ async def catalog(current: CustomerDep, db: DbDep) -> dict[str, Any]:
 
 class SendIn(BaseModel):
     gift_id: uuid.UUID
-    recipient_telegram_id: TelegramId
+    recipient_telegram_id: RecipientId
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=140)] = ""
+    # "Hide my name": only the recipient learns who sent it.
+    anonymous: bool = False
 
 
 @router.post("/gifts/send", status_code=status.HTTP_201_CREATED)
@@ -175,16 +200,19 @@ async def send_gift(body: SendIn, current: CustomerDep, db: DbDep) -> dict[str, 
     sent = SentGift(
         id=uuid.uuid4(), gift_id=gift.id, sender_customer_id=current.id, sender_telegram_id=link.telegram_user_id,
         recipient_telegram_id=body.recipient_telegram_id, text=body.text, price_uzs=gift.price_uzs,
+        anonymous=body.anonymous,
     )
     db.add(sent)
     await wallet.record(db, current.id, -gift.price_uzs, "gift", str(sent.id))
     audit(db, f"customer:{current.id}", "gift_sent", str(sent.id), price_uzs=gift.price_uzs)
     await db.commit()
     await db.refresh(sent)
-    return {"gift": sent_out(sent, gift), "balance_uzs": await wallet.balance(db, current.id)}
+    return {"gift": sent_out(sent, gift, link.telegram_user_id), "balance_uzs": await wallet.balance(db, current.id)}
 
 
-async def _gifts_of(db: DbDep, telegram_user_id: int, *, include_hidden: bool, limit: int) -> list[dict[str, Any]]:
+async def _gifts_of(
+    db: DbDep, telegram_user_id: int, *, include_hidden: bool, limit: int, viewer: int | None
+) -> list[dict[str, Any]]:
     stmt = select(SentGift, GiftItem).join(GiftItem, GiftItem.id == SentGift.gift_id).where(
         SentGift.recipient_telegram_id == telegram_user_id
     )
@@ -196,51 +224,107 @@ async def _gifts_of(db: DbDep, telegram_user_id: int, *, include_hidden: bool, l
             GiftItem.price_uzs.desc(), SentGift.created_at.desc(), SentGift.id
         )
     rows = await db.execute(stmt.limit(limit))
-    return [sent_out(s, g) for s, g in rows.all()]
+    return [sent_out(s, g, viewer) for s, g in rows.all()]
 
 
 @router.get("/gifts/users/{telegram_user_id}")
 async def user_gifts(
-    telegram_user_id: int, current: CustomerDep, db: DbDep, limit: Annotated[int, Query(ge=1, le=100)] = 50
+    telegram_user_id: RecipientId, current: CustomerDep, db: DbDep, limit: Annotated[int, Query(ge=1, le=100)] = 50
 ) -> dict[str, Any]:
-    """What a UZARO user sees on someone's profile: the gifts they show (dearest first) and their background."""
+    """What a UZARO user sees on someone's profile (or a group's/channel's): the gifts shown (dearest first) and the
+    background."""
     style = await db.get(ProfileStyle, telegram_user_id)
     background = (style.background or None) if style else None
+    pattern = (style.pattern or None) if style else None
     if style is not None and style.hide_gifts:
-        return {"items": [], "total": 0, "background": background}
+        return {"items": [], "total": 0, "background": background, "pattern": pattern}
     total = await db.scalar(
         select(func.count()).select_from(SentGift).where(
             SentGift.recipient_telegram_id == telegram_user_id, SentGift.hidden.is_(False)
         )
     ) or 0
     return {
-        "items": await _gifts_of(db, telegram_user_id, include_hidden=False, limit=limit),
+        "items": await _gifts_of(
+            db, telegram_user_id, include_hidden=False, limit=limit, viewer=await _viewer(db, current.id)
+        ),
         "total": total,
         "background": background,
+        "pattern": pattern,
     }
+
+
+@router.get("/gifts/top")
+async def top_gifts(
+    current: CustomerDep, db: DbDep, ids: Annotated[list[RecipientId], Query(min_length=1, max_length=MAX_TOP_LOOKUP)]
+) -> dict[str, Any]:
+    """The chat list's showcase: for each recipient on screen, their dearest different gifts and how many they show.
+
+    {"items": {"<id>": {"total": n, "gifts": [sent gift, ...]}}}; recipients without visible gifts are left out.
+    """
+    wanted = set(ids)
+    hiding = set(await db.scalars(
+        select(ProfileStyle.telegram_user_id).where(ProfileStyle.telegram_user_id.in_(wanted), ProfileStyle.hide_gifts.is_(True))
+    ))
+    wanted -= hiding
+    if not wanted:
+        return {"items": {}}
+    by_price = (GiftItem.price_uzs.desc(), SentGift.created_at.desc(), SentGift.id)
+    ranked = (
+        select(
+            SentGift.id.label("sent_id"),
+            func.row_number().over(partition_by=SentGift.recipient_telegram_id, order_by=by_price).label("rank"),
+            func.count().over(partition_by=SentGift.recipient_telegram_id).label("total"),
+        )
+        .join(GiftItem, GiftItem.id == SentGift.gift_id)
+        .where(SentGift.recipient_telegram_id.in_(wanted), SentGift.hidden.is_(False))
+        .subquery()
+    )
+    # A few spare rows each, so repeats of one gift can be skipped and three different ones still shown.
+    rows = await db.execute(
+        select(SentGift, GiftItem, ranked.c.total)
+        .join(ranked, ranked.c.sent_id == SentGift.id)
+        .join(GiftItem, GiftItem.id == SentGift.gift_id)
+        .where(ranked.c.rank <= TOP_PER_RECIPIENT * 4)
+        .order_by(SentGift.recipient_telegram_id, ranked.c.rank)
+    )
+    items: dict[str, dict[str, Any]] = {}
+    viewer = await _viewer(db, current.id)
+    for sent, gift, total in rows.all():
+        entry = items.setdefault(str(sent.recipient_telegram_id), {"total": total, "gifts": []})
+        shown = entry["gifts"]
+        if len(shown) < TOP_PER_RECIPIENT and all(g["gift"]["id"] != str(gift.id) for g in shown):
+            shown.append(sent_out(sent, gift, viewer))
+    return {"items": items}
 
 
 class BackgroundIn(BaseModel):
     # One color or a two-color gradient; null clears it.
     background: Annotated[str, StringConstraints(pattern=r"^#[0-9a-f]{6}(,#[0-9a-f]{6})?$")] | None = None
+    # A custom emoji id (digits) or one emoji (no letters, spaces or markup); null clears it. Left out = unchanged,
+    # so older apps that only send the background keep the pattern.
+    pattern: Annotated[str, StringConstraints(pattern=r"^[^\sA-Za-z<>&\"'\\]{1,32}$")] | None = None
 
 
 @router.put("/profile/background")
 async def set_background(body: BackgroundIn, current: CustomerDep, db: DbDep) -> dict[str, Any]:
-    """Sets the profile background UZARO users see; only for the Telegram account this customer proved."""
+    """Sets the profile background (colors and pattern) UZARO users see; only for the Telegram account this customer
+    proved."""
     await rate_limit(f"profilebg:{current.id}", limit=60, window_seconds=3600)
     link = await _link(db, current.id)
     style = await db.get(ProfileStyle, link.telegram_user_id)
-    # No background and gifts shown is the default, kept as no row.
+    background = body.background or ""
+    pattern = (body.pattern or "") if "pattern" in body.model_fields_set else (style.pattern if style else "")
+    # No background, no pattern and gifts shown is the default, kept as no row.
     if style is None:
-        if body.background is not None:
-            db.add(ProfileStyle(telegram_user_id=link.telegram_user_id, background=body.background))
-    elif body.background is None and not style.hide_gifts:
+        if background or pattern:
+            db.add(ProfileStyle(telegram_user_id=link.telegram_user_id, background=background, pattern=pattern))
+    elif not background and not pattern and not style.hide_gifts:
         await db.delete(style)
     else:
-        style.background = body.background or ""
+        style.background = background
+        style.pattern = pattern
     await db.commit()
-    return {"background": body.background}
+    return {"background": body.background, "pattern": pattern or None}
 
 
 @router.get("/gifts/received")
@@ -248,7 +332,7 @@ async def received(current: CustomerDep, db: DbDep) -> dict[str, Any]:
     link = await _link(db, current.id)
     style = await db.get(ProfileStyle, link.telegram_user_id)
     return {
-        "items": await _gifts_of(db, link.telegram_user_id, include_hidden=True, limit=200),
+        "items": await _gifts_of(db, link.telegram_user_id, include_hidden=True, limit=200, viewer=link.telegram_user_id),
         "hide_all": bool(style and style.hide_gifts),
     }
 
@@ -268,6 +352,18 @@ async def set_visibility(sent_id: uuid.UUID, body: VisibilityIn, current: Custom
     return {"id": str(sent.id), "hidden": sent.hidden}
 
 
+@router.post("/gifts/{sent_id}/sender-visibility")
+async def set_sender_visibility(sent_id: uuid.UUID, body: VisibilityIn, current: CustomerDep, db: DbDep) -> dict[str, Any]:
+    """The recipient hides (or shows again) who sent a gift from people opening their profile."""
+    link = await _link(db, current.id)
+    sent = await db.get(SentGift, sent_id)
+    if sent is None or sent.recipient_telegram_id != link.telegram_user_id:
+        raise not_found("GIFT_NOT_FOUND")
+    sent.sender_hidden = body.hidden
+    await db.commit()
+    return {"id": str(sent.id), "sender_hidden": sent.sender_hidden}
+
+
 @router.put("/profile/gifts-visibility")
 async def set_all_gifts_hidden(body: VisibilityIn, current: CustomerDep, db: DbDep) -> dict[str, Any]:
     """The profile switch: hide every received gift (now and later) from people opening the profile, or show them."""
@@ -277,7 +373,7 @@ async def set_all_gifts_hidden(body: VisibilityIn, current: CustomerDep, db: DbD
     if style is None:
         if body.hidden:
             db.add(ProfileStyle(telegram_user_id=link.telegram_user_id, background="", hide_gifts=True))
-    elif not body.hidden and not style.background:
+    elif not body.hidden and not style.background and not style.pattern:
         await db.delete(style)
     else:
         style.hide_gifts = body.hidden

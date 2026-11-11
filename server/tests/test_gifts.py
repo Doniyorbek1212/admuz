@@ -93,6 +93,28 @@ async def test_link_send_list_and_hide(client, session_factory, new_customer):
     assert (await client.delete(f"/v1/admin/gifts/{rose['id']}", headers=admin)).json()["detail"]["code"] == "GIFT_IN_USE"
 
 
+async def test_group_gifts_and_chat_list_showcase(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    rose = await _gift(client, admin, "Atirgul", 5_000)
+    lion = await _gift(client, admin, "Sher", 20_000)
+    alice = await new_customer()
+    await _link(client, alice, 333)
+    await _top_up(client, admin, alice, 60_000)
+    group = -1_001_234_567_890  # a supergroup's TDLib chat id
+    for gift, recipient in ((rose, group), (rose, group), (lion, group), (rose, 444)):
+        sent = await alice.post("/v1/gifts/send", json={"gift_id": gift["id"], "recipient_telegram_id": recipient})
+        assert sent.status_code == 201, sent.text
+    assert (await alice.post("/v1/gifts/send", json={"gift_id": rose["id"], "recipient_telegram_id": 0})).status_code == 422
+
+    assert (await alice.get(f"/v1/gifts/users/{group}")).json()["total"] == 3
+    top = (await alice.get("/v1/gifts/top", params={"ids": [group, 444, 555]})).json()["items"]
+    assert set(top) == {str(group), "444"}
+    # Dearest first, each gift once, and the full count.
+    assert [g["gift"]["title"] for g in top[str(group)]["gifts"]] == ["Sher", "Atirgul"]
+    assert top[str(group)]["total"] == 3
+    assert (await alice.get("/v1/gifts/top")).status_code == 422
+
+
 async def test_webhook_needs_secret_and_fresh_code(client, new_customer):
     customer = await new_customer()
     code = (await customer.post("/v1/telegram/link")).json()["code"]
@@ -142,6 +164,14 @@ async def test_catalog_hides_inactive_and_refuses_non_animation(client, session_
     bad = await client.post("/v1/admin/gifts", headers=admin, files={"file": ("x.png", FAKE_PNG, "image/png")},
                             data={"title": "X", "price_uzs": "1"})
     assert bad.json()["detail"]["code"] == "NOT_A_GIFT_ANIMATION"
+
+
+async def test_profile_gifts_reject_out_of_range_telegram_id(new_customer):
+    viewer = await new_customer()
+    # Larger than a Postgres bigint: rejected up front instead of failing in the database with a 500.
+    # Negative ids are groups/channels (TDLib chat ids), so only zero and out-of-range values are invalid.
+    for bad in ("0", str(1 << 63), str(-(1 << 63))):
+        assert (await viewer.get(f"/v1/gifts/users/{bad}")).status_code == 422, bad
 
 
 async def test_profile_background_needs_link_validates_and_clears(client, new_customer):

@@ -132,6 +132,13 @@ int? localChatColor(td.Chat chat) => switch (_clientData(chat)?['color']) {
       _ => null,
     };
 
+/// What the user scattered over this chat's row on this device, or null: a custom emoji id (digits; kept as a string
+/// since ids use all 64 bits) or a plain emoji.
+String? localChatPattern(td.Chat chat) => switch (_clientData(chat)?['sticker']) {
+      final String value when value.isNotEmpty => value,
+      _ => null,
+    };
+
 Map<dynamic, dynamic>? _clientData(td.Chat chat) {
   if (chat.clientData.isEmpty) return null;
   try {

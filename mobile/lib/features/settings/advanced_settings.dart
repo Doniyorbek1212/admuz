@@ -573,7 +573,7 @@ class _TwoStepScreenState extends ConsumerState<TwoStepScreen> {
         ],
       ),
     );
-    controller.dispose();
+    // Not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
     return result == null || result.isEmpty ? null : result;
   }
 

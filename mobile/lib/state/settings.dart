@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/file_guard.dart';
 import '../core/keep_alive.dart';
+import '../core/message_tones.dart';
 import '../core/theme.dart' show isDesktop;
 
 /// Brand accents users can pick from (Plus Messenger style theming).
@@ -59,6 +60,8 @@ class AppSettings {
     this.chatSounds = true,
     this.sendSound = 'swoosh',
     this.receiveSound = 'pop',
+    this.messageTone = 'default',
+    this.chatTones = const {},
   });
 
   final ThemeMode themeMode;
@@ -134,6 +137,12 @@ class AppSettings {
   final String sendSound;
   final String receiveSound;
 
+  /// Notification tone for new messages (ids from MessageTones.ids) and per-chat overrides.
+  final String messageTone;
+  final Map<int, String> chatTones;
+
+  String toneFor(int chatId) => chatTones[chatId] ?? messageTone;
+
   Color get accent => accentPalette[accentIndex.clamp(0, accentPalette.length - 1)];
 
   AppSettings copyWith({
@@ -175,6 +184,8 @@ class AppSettings {
     bool? chatSounds,
     String? sendSound,
     String? receiveSound,
+    String? messageTone,
+    Map<int, String>? chatTones,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -215,6 +226,8 @@ class AppSettings {
         chatSounds: chatSounds ?? this.chatSounds,
         sendSound: sendSound ?? this.sendSound,
         receiveSound: receiveSound ?? this.receiveSound,
+        messageTone: messageTone ?? this.messageTone,
+        chatTones: chatTones ?? this.chatTones,
       );
 }
 
@@ -275,7 +288,24 @@ class SettingsNotifier extends Notifier<AppSettings> {
       chatSounds: _prefs.getBool('chatSounds') ?? true,
       sendSound: _prefs.getString('sendSound') ?? 'swoosh',
       receiveSound: _prefs.getString('receiveSound') ?? 'pop',
+      messageTone: _prefs.getString(MessageTones.globalKey) ?? 'default',
+      chatTones: {
+        for (final key in _prefs.getKeys().where((k) => k.startsWith(MessageTones.chatKeyPrefix)))
+          if (int.tryParse(key.substring(MessageTones.chatKeyPrefix.length)) case final int id) id: _prefs.getString(key) ?? 'default',
+      },
     );
+  }
+
+  void setMessageTone(String tone) {
+    _prefs.setString(MessageTones.globalKey, tone);
+    state = state.copyWith(messageTone: tone);
+  }
+
+  /// null = follow the global tone. Kept in SharedPreferences so the push isolate can read it.
+  void setChatTone(int chatId, String? tone) {
+    final key = MessageTones.chatKey(chatId);
+    tone == null ? _prefs.remove(key) : _prefs.setString(key, tone);
+    state = state.copyWith(chatTones: {...state.chatTones}..remove(chatId)..addAll({chatId: ?tone}));
   }
 
   void setChatSounds(bool value) {

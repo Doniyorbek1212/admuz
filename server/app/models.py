@@ -690,6 +690,10 @@ class SentGift(Base):
     text: Mapped[str] = mapped_column(String(140), default="")
     price_uzs: Mapped[int] = mapped_column(Integer)
     hidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The sender chose to stay anonymous: only the recipient (and the sender) see who sent it.
+    anonymous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The recipient hid the sender's name from people opening their profile.
+    sender_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -740,6 +744,20 @@ class ProfileStyle(Base):
 
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     background: Mapped[str] = mapped_column(String(15))  # "" = none
+    # Scattered over the header: a custom emoji id (digits) or a plain emoji; "" = none.
+    pattern: Mapped[str] = mapped_column(String(32), default="", server_default="")
     # Hides every received gift (also ones that arrive later) from people opening the profile.
     hide_gifts: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProfileBadge(Base):
+    """A paid UZARO badge next to a Telegram user's name, seen by UZARO users: the gold checkmark or any Telegram
+    custom emoji. Bought by the month from the UZARO balance; it simply stops showing after expires_at."""
+
+    __tablename__ = "profile_badges"
+
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    emoji_id: Mapped[int] = mapped_column(BigInteger, default=0)  # Telegram custom emoji id; 0 = UZARO checkmark
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
@@ -55,6 +56,65 @@ td.PhotoSize? bestPhotoSize(td.Photo photo, {int target = 800}) {
   final sorted = [...photo.sizes]..sort((a, b) => a.width.compareTo(b.width));
   return sorted.firstWhere((s) => s.width >= target, orElse: () => sorted.last);
 }
+
+/// Small picture of a photo, video or GIF for reply quotes and the reply bar, as Telegram shows it;
+/// null for content without one.
+Widget? replyThumb(td.MessageContent? content, {double size = 36}) {
+  final (file, mini) = switch (content) {
+    td.MessagePhoto(:final photo) => (bestPhotoSize(photo, target: 160)?.photo, photo.minithumbnail),
+    td.MessageVideo(:final video) => (video.thumbnail?.file, video.minithumbnail),
+    td.MessageAnimation(:final animation) => (animation.thumbnail?.file, animation.minithumbnail),
+    _ => (null, null),
+  };
+  if (file == null && mini == null) return null;
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(4),
+    child: SizedBox.square(
+      dimension: size,
+      child: file == null
+          ? Image.memory(base64Decode(mini!.data), fit: BoxFit.cover, gaplessPlayback: true)
+          : TdImage(file: file, minithumbnail: mini, fit: BoxFit.cover),
+    ),
+  );
+}
+
+/// Share of a file sent or received so far (0..1); null while nothing is moving.
+double? transferProgress(td.File file) {
+  final total = file.size == 0 ? file.expectedSize : file.size;
+  if (total <= 0) return null;
+  if (file.remote.isUploadingActive) return (file.remote.uploadedSize / total).clamp(0.0, 1.0);
+  if (file.local.isDownloadingActive) return (file.local.downloadedSize / total).clamp(0.0, 1.0);
+  return null;
+}
+
+String percentText(double share) => '${(share * 100).floor()}%';
+
+/// Ring with the percentage over a photo or video while it uploads or downloads, as Telegram shows it.
+class _TransferOverlay extends ConsumerWidget {
+  const _TransferOverlay({required this.file});
+
+  final td.File file;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final progress = transferProgress(ref.watch(fileStateProvider(file.id)).value ?? file);
+    if (progress == null) return const SizedBox.shrink();
+    return Center(
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+        child: Stack(alignment: Alignment.center, children: [
+          SizedBox.square(dimension: 54, child: CircularProgressIndicator(value: progress, strokeWidth: 3, color: Colors.white)),
+          Text(percentText(progress), style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// The preview text without its leading 🖼/🎬/🎞, which [replyThumb] replaces.
+String withoutMediaEmoji(String preview) => preview.replaceFirst(RegExp(r'^(🖼|🎬|🎞) '), '');
 
 /// Renders a FormattedText with Telegram entities (links, mentions, bold, code, spoilers...).
 class FormattedTextView extends StatefulWidget {
@@ -225,10 +285,13 @@ class _FormattedTextViewState extends State<FormattedTextView> {
 
 /// Media and special content of a message (text is rendered by the bubble).
 class MessageMedia extends ConsumerWidget {
-  const MessageMedia({super.key, required this.message, required this.maxWidth});
+  const MessageMedia({super.key, required this.message, required this.maxWidth, this.fillWidth = false});
 
   final td.Message message;
   final double maxWidth;
+
+  /// Photo/video takes the whole [maxWidth] (cropped to the height cap): a captioned bubble is as wide as its media.
+  final bool fillWidth;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -236,7 +299,8 @@ class MessageMedia extends ConsumerWidget {
     final verdict = ref.watch(settingsProvider.select((s) => s.fileGuard)).checkMessage(message, ref.read(accountProvider).myId);
     if (verdict != null) return _BlockedFileView(name: attachmentOf(content)!.name, verdict: verdict);
     return switch (content) {
-      td.MessagePhoto(:final photo, :final hasSpoiler) => _PhotoView(message: message, photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler),
+      td.MessagePhoto(:final photo, :final hasSpoiler) =>
+        _PhotoView(message: message, photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler, fill: fillWidth),
       td.MessageVideo(:final video) => _VideoThumb(
           message: message,
           file: video.video,
@@ -246,6 +310,7 @@ class MessageMedia extends ConsumerWidget {
           height: video.height,
           duration: video.duration,
           maxWidth: maxWidth,
+          fill: fillWidth,
         ),
       td.MessageAnimation(:final animation) => _VideoThumb(
           file: animation.animation,
@@ -256,6 +321,7 @@ class MessageMedia extends ConsumerWidget {
           duration: animation.duration,
           maxWidth: maxWidth,
           isGif: true,
+          fill: fillWidth,
         ),
       td.MessageVideoNote(:final videoNote, :final isViewed) => VideoNoteView(message: message, videoNote: videoNote, isViewed: isViewed),
       td.MessageVoiceNote(:final voiceNote) => VoiceNoteView(message: message, voiceNote: voiceNote),
@@ -329,8 +395,9 @@ class _BlockedFileView extends StatelessWidget {
   }
 }
 
-Size _fit(int width, int height, double maxWidth, {double maxHeight = 380}) {
+Size _fit(int width, int height, double maxWidth, {double maxHeight = 380, bool fill = false}) {
   if (width <= 0 || height <= 0) return Size(maxWidth, maxWidth * 0.75);
+  if (fill) return Size(maxWidth, (maxWidth * height / width).clamp(80.0, maxHeight));
   var w = maxWidth;
   var h = w * height / width;
   if (h > maxHeight) {
@@ -340,14 +407,26 @@ Size _fit(int width, int height, double maxWidth, {double maxHeight = 380}) {
   return Size(max(w, 120), max(h, 80));
 }
 
+/// Width a single photo/video/GIF takes in its bubble on its own; null for other content.
+double? mediaWidth(td.MessageContent content, double maxWidth) => switch (content) {
+      td.MessagePhoto(:final photo) => switch (bestPhotoSize(photo)) {
+          final size? => _fit(size.width, size.height, maxWidth).width,
+          null => null,
+        },
+      td.MessageVideo(:final video) => _fit(video.width, video.height, maxWidth).width,
+      td.MessageAnimation(:final animation) => _fit(animation.width, animation.height, maxWidth).width,
+      _ => null,
+    };
+
 class _PhotoView extends StatefulWidget {
-  const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler});
+  const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler, this.fill = false});
 
   final td.Message message;
 
   final td.Photo photo;
   final double maxWidth;
   final bool spoiler;
+  final bool fill;
 
   @override
   State<_PhotoView> createState() => _PhotoViewState();
@@ -361,7 +440,7 @@ class _PhotoViewState extends State<_PhotoView> {
   Widget build(BuildContext context) {
     final size = bestPhotoSize(widget.photo);
     if (size == null) return const SizedBox.shrink();
-    final box = _fit(size.width, size.height, widget.maxWidth);
+    final box = _fit(size.width, size.height, widget.maxWidth, fill: widget.fill);
     return Consumer(builder: (context, ref, _) {
       final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
       final download = auto || _requested || size.photo.local.isDownloadingCompleted;
@@ -385,6 +464,7 @@ class _PhotoViewState extends State<_PhotoView> {
             fit: StackFit.expand,
             children: [
               _hidden ? ImageFiltered(imageFilter: _blur, child: image) : image,
+              _TransferOverlay(file: size.photo),
               if (!download)
                 Center(
                   child: Container(
@@ -417,6 +497,7 @@ class _VideoThumb extends ConsumerWidget {
     required this.duration,
     required this.maxWidth,
     this.isGif = false,
+    this.fill = false,
   });
 
   /// Set for videos in chats: opens the swipeable media viewer instead of the single-file player.
@@ -429,10 +510,11 @@ class _VideoThumb extends ConsumerWidget {
   final int duration;
   final double maxWidth;
   final bool isGif;
+  final bool fill;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final box = _fit(width, height, maxWidth);
+    final box = _fit(width, height, maxWidth, fill: fill);
     final thumb = thumbnail;
     Widget preview = thumb != null && thumb.format is! td.ThumbnailFormatMpeg4
         ? TdImage(file: thumb.file, minithumbnail: minithumbnail, width: box.width, height: box.height)
@@ -449,7 +531,9 @@ class _VideoThumb extends ConsumerWidget {
           child: SizedBox(
             width: box.width,
             height: box.height,
-            child: ClipRect(child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview)),
+            child: ClipRect(
+              child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview, fit: BoxFit.cover),
+            ),
           ),
         );
       }
@@ -469,7 +553,11 @@ class _VideoThumb extends ConsumerWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ClipRect(child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview)),
+                ClipRect(
+                  child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview, fit: BoxFit.cover),
+                ),
+                // A video being sent is already on the device: it plays here while the ring shows the upload.
+                _TransferOverlay(file: file),
                 Positioned(
                   left: 8,
                   top: 8,
@@ -492,17 +580,21 @@ class _VideoThumb extends ConsumerWidget {
         );
       }
     }
+    final moving = transferProgress(watchFile(false)) != null;
     return GestureDetector(
       onTap: open,
       child: Stack(
         alignment: Alignment.center,
         children: [
           preview,
-          Container(
-            decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
-            padding: const EdgeInsets.all(10),
-            child: Icon(isGif ? Icons.gif_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 30),
-          ),
+          if (moving)
+            _TransferOverlay(file: file)
+          else
+            Container(
+              decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+              padding: const EdgeInsets.all(10),
+              child: Icon(isGif ? Icons.gif_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 30),
+            ),
           Positioned(
             left: 8,
             top: 8,
@@ -545,7 +637,8 @@ class _FileView extends ConsumerWidget {
     final total = current.size == 0 ? current.expectedSize : current.size;
     final done = current.local.isDownloadingCompleted;
     final downloading = current.local.isDownloadingActive;
-    final progress = total > 0 ? current.local.downloadedSize / total : null;
+    final progress = transferProgress(current);
+    final moved = current.remote.isUploadingActive ? current.remote.uploadedSize : current.local.downloadedSize;
     final primary = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: () async {
@@ -571,7 +664,7 @@ class _FileView extends ConsumerWidget {
                 alignment: Alignment.center,
                 children: [
                   CircleAvatar(radius: 24, backgroundColor: primary, child: Icon(done ? icon : (downloading ? Icons.close_rounded : Icons.download_rounded), color: Colors.white)),
-                  if (downloading) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
+                  if (progress != null) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
                 ],
               ),
             ),
@@ -583,7 +676,7 @@ class _FileView extends ConsumerWidget {
                   Text(name.isEmpty ? context.t('file') : name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(
-                    downloading ? '${formatFileSize(current.local.downloadedSize)} / ${formatFileSize(total)}' : formatFileSize(total),
+                    progress != null ? '${percentText(progress)} · ${formatFileSize(moved)} / ${formatFileSize(total)}' : formatFileSize(total),
                     style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor),
                   ),
                 ],
@@ -609,6 +702,8 @@ class _AnimatedEmojiView extends ConsumerWidget {
   final td.Sticker sticker;
 
   Future<void> _play(BuildContext context, WidgetRef ref) async {
+    // The click shows the partner "watching the emoji"; ghost mode keeps that activity hidden.
+    if (ref.read(settingsProvider).ghostMode) return;
     td.Sticker? effect;
     try {
       effect = await ref.read(accountProvider).send<td.Sticker>(td.ClickAnimatedEmojiMessage(chatId: message.chatId, messageId: message.id));
@@ -689,10 +784,11 @@ class _StickerView extends ConsumerWidget {
 
 /// Silent looping video (WebM stickers, GIF previews).
 class LoopingVideo extends StatefulWidget {
-  const LoopingVideo({super.key, required this.path, required this.fallback, this.autoplay = true});
+  const LoopingVideo({super.key, required this.path, required this.fallback, this.autoplay = true, this.fit = BoxFit.contain});
 
   final String path;
   final Widget fallback;
+  final BoxFit fit;
 
   /// false: shows the first frame without playing.
   final bool autoplay;
@@ -733,7 +829,7 @@ class _LoopingVideoState extends State<LoopingVideo> {
   Widget build(BuildContext context) {
     if (!_ready) return widget.fallback;
     return FittedBox(
-      fit: BoxFit.contain,
+      fit: widget.fit,
       child: SizedBox(width: _controller.value.size.width, height: _controller.value.size.height, child: VideoPlayer(_controller)),
     );
   }
@@ -1047,6 +1143,8 @@ class _AudioView extends ConsumerWidget {
     final file = ref.watch(_fileStateProvider(fileId)).value ?? account.files[fileId] ?? audio.audio;
     final downloading = file.local.isDownloadingActive;
     final total = file.size == 0 ? file.expectedSize : file.size;
+    final progress = transferProgress(file);
+    final moved = file.remote.isUploadingActive ? file.remote.uploadedSize : file.local.downloadedSize;
     final primary = Theme.of(context).colorScheme.primary;
     final hintStyle = TextStyle(fontSize: 13, color: Theme.of(context).hintColor);
     final playback = Playback.instance;
@@ -1088,8 +1186,7 @@ class _AudioView extends ConsumerWidget {
                           backgroundColor: primary,
                           child: Icon(downloading ? Icons.close_rounded : (playing ? Icons.pause_rounded : Icons.play_arrow_rounded), color: Colors.white, size: 28),
                         ),
-                        if (downloading)
-                          CircularProgressIndicator(value: total > 0 ? file.local.downloadedSize / total : null, strokeWidth: 2.5, color: Colors.white),
+                        if (progress != null) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
                       ],
                     ),
                   ),
@@ -1126,8 +1223,8 @@ class _AudioView extends ConsumerWidget {
                               ),
                             ),
                           Text(
-                            downloading
-                                ? '${formatFileSize(file.local.downloadedSize)} / ${formatFileSize(total)}'
+                            progress != null
+                                ? '${percentText(progress)} · ${formatFileSize(moved)} / ${formatFileSize(total)}'
                                 : isCurrent
                                     ? [formatDuration(elapsed), if (totalMs > 0) formatDuration(duration)].join(' / ')
                                     : [if (totalMs > 0) formatDuration(duration), formatFileSize(total)].join(' · '),

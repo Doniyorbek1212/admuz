@@ -54,14 +54,19 @@ enum VideoNoteShape {
       final length = await file.length();
       final tail = min(length, 64);
       await file.setPosition(length - tail);
-      final text = latin1.decode(await file.read(tail), allowInvalid: true);
-      final at = text.lastIndexOf(_marker);
-      if (at < 0) return null;
-      final name = text.substring(at + _marker.length);
-      return values.where((s) => s.name == name).firstOrNull;
+      return markerIn(await file.read(tail));
     } finally {
       await file.close();
     }
+  }
+
+  /// The shape named by a marker inside a file's last bytes, or null when they hold none.
+  static VideoNoteShape? markerIn(List<int> tail) {
+    final text = latin1.decode(tail, allowInvalid: true);
+    final at = text.lastIndexOf(_marker);
+    if (at < 0) return null;
+    final name = text.substring(at + _marker.length);
+    return values.where((s) => s.name == name).firstOrNull;
   }
 
   /// Outline filling a [size] box, centred.

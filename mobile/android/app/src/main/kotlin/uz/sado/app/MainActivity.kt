@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
 
     private var pipChannel: MethodChannel? = null
     private var privacyChannel: MethodChannel? = null
+    private var tone: android.media.Ringtone? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +44,38 @@ class MainActivity : FlutterActivity() {
                             (getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager)
                                 ?.ringerMode?.let { it != android.media.AudioManager.RINGER_MODE_NORMAL } ?: false
                         )
+                        // MIUI silences notifications of the app on screen, so the app plays the
+                        // message tone itself: tone_<id> from res/raw, or the phone's default.
+                        // Notification attributes: silent/vibrate mode and the notification volume apply.
+                        "playTone" -> {
+                            val name = call.argument<String>("name")
+                            val uri = if (name == null) {
+                                android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                            } else {
+                                Uri.parse("android.resource://$packageName/raw/$name")
+                            }
+                            tone?.stop()
+                            tone = android.media.RingtoneManager.getRingtone(this@MainActivity, uri)?.apply {
+                                audioAttributes = android.media.AudioAttributes.Builder()
+                                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+                                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                    .build()
+                                play()
+                            }
+                            result.success(null)
+                        }
+                        // Cover of an outgoing video: without one receivers (and reply quotes) see a grey box.
+                        "videoThumbnail" -> {
+                            val path = call.argument<String>("path")
+                            if (path == null) {
+                                result.success(null)
+                            } else {
+                                Thread {
+                                    val thumb = videoThumbnail(path)
+                                    runOnUiThread { result.success(thumb) }
+                                }.start()
+                            }
+                        }
                         else -> result.notImplemented()
                     }
                 }
@@ -66,6 +99,31 @@ class MainActivity : FlutterActivity() {
         pipChannel?.setMethodCallHandler(null)
         privacyChannel?.setMethodCallHandler(null)
         super.onDestroy()
+    }
+
+    /** First frame of a video as a JPEG of at most 320px (Telegram's thumbnail limit); null when it cannot be read. */
+    private fun videoThumbnail(path: String): Map<String, Any>? {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(path)
+            val frame = retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+            val scale = minOf(1f, THUMB_MAX_SIDE.toFloat() / maxOf(frame.width, frame.height))
+            val width = (frame.width * scale).toInt().coerceAtLeast(1)
+            val height = (frame.height * scale).toInt().coerceAtLeast(1)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(frame, width, height, true)
+            val dir = java.io.File(cacheDir, "video_thumbs").apply { mkdirs() }
+            val out = java.io.File(dir, "${path.hashCode()}_${java.io.File(path).lastModified()}.jpg")
+            out.outputStream().use { scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, it) }
+            if (scaled !== frame) scaled.recycle()
+            frame.recycle()
+            mapOf("path" to out.absolutePath, "width" to width, "height" to height)
+        } catch (error: RuntimeException) {
+            null
+        } catch (error: java.io.IOException) {
+            null
+        } finally {
+            retriever.release()
+        }
     }
 
     private fun applySecureWindow() {
@@ -118,6 +176,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         const val PIP_CHANNEL = "uz.sado.app/pip"
         const val PRIVACY_CHANNEL = "uz.sado.app/privacy"
+        private const val THUMB_MAX_SIDE = 320
 
         // Process-wide like the cached engine: a recreated activity (rotation) keeps the flag Dart last sent.
         @Volatile

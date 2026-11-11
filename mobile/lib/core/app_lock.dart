@@ -199,6 +199,9 @@ class AppLockNotifier extends Notifier<AppLockState> {
     return true;
   }
 
+  /// A PIN shorter than [newPinLength] (set before 6 digits were required) must be replaced before unlocking.
+  bool get needsUpgrade => state.pinLength < newPinLength;
+
   void lockNow() {
     if (state.enabled) state = state.copyWith(locked: true);
   }
@@ -292,10 +295,15 @@ class _LockScreen extends ConsumerStatefulWidget {
   ConsumerState<_LockScreen> createState() => _LockScreenState();
 }
 
+/// Lock screen steps: the current PIN, then (only for an old 4-digit PIN) a new 6-digit one twice.
+enum _LockStep { enter, newPin, repeat }
+
 class _LockScreenState extends ConsumerState<_LockScreen> {
   String _pin = '';
   bool _error = false;
   Timer? _ticker;
+  _LockStep _step = _LockStep.enter;
+  String _newPin = '';
 
   @override
   void initState() {
@@ -311,16 +319,49 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
     super.dispose();
   }
 
-  Future<void> _submit(String pin) async {
-    final ok = await ref.read(appLockProvider.notifier).unlock(pin);
-    if (!mounted) return;
-    if (!ok) {
-      HapticFeedback.heavyImpact();
-      setState(() {
+  void _show(_LockStep step, {bool error = false}) => setState(() {
+        _step = step;
         _pin = '';
-        _error = true;
+        _error = error;
       });
+
+  Future<void> _submit(String pin) async {
+    final notifier = ref.read(appLockProvider.notifier);
+    switch (_step) {
+      case _LockStep.enter:
+        if (!notifier.needsUpgrade) {
+          final ok = await notifier.unlock(pin);
+          if (!ok && mounted) {
+            HapticFeedback.heavyImpact();
+            _show(_LockStep.enter, error: true);
+          }
+          return;
+        }
+        // Old 4-digit PIN: proven, but the app stays locked until a 6-digit one replaces it.
+        final ok = await notifier.verify(pin);
+        if (!mounted) return;
+        if (!ok) HapticFeedback.heavyImpact();
+        _show(ok ? _LockStep.newPin : _LockStep.enter, error: !ok);
+      case _LockStep.newPin:
+        _newPin = pin;
+        _show(_LockStep.repeat);
+      case _LockStep.repeat:
+        if (pin != _newPin) {
+          HapticFeedback.heavyImpact();
+          _show(_LockStep.newPin, error: true);
+          return;
+        }
+        await notifier.enable(pin); // stores the new PIN and unlocks
     }
+  }
+
+  String _title(Strings s, int wait) {
+    if (wait > 0) return s.t('passcode_wait', {'seconds': '$wait'});
+    return switch (_step) {
+      _LockStep.enter => s.t(_error ? 'passcode_wrong' : 'passcode_enter'),
+      _LockStep.newPin => s.t(_error ? 'passcode_mismatch' : 'passcode_upgrade'),
+      _LockStep.repeat => s.t('passcode_repeat'),
+    };
   }
 
   @override
@@ -328,21 +369,23 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
     final s = Strings(ref.watch(settingsProvider).localeCode);
     final until = ref.watch(appLockProvider).lockedUntil;
     final wait = until == null ? 0 : until.difference(DateTime.now()).inSeconds;
+    final current = ref.watch(appLockProvider.select((s) => s.pinLength));
+    final length = _step == _LockStep.enter ? current : newPinLength;
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: SafeArea(
         child: PinPad(
-          title: wait > 0 ? s.t('passcode_wait', {'seconds': '$wait'}) : s.t(_error ? 'passcode_wrong' : 'passcode_enter'),
+          title: _title(s, wait),
           pin: _pin,
           error: _error,
           enabled: wait <= 0,
-          length: ref.watch(appLockProvider.select((s) => s.pinLength)),
+          length: length,
           onChanged: (pin) {
             setState(() {
               _pin = pin;
               _error = false;
             });
-            if (pin.length == ref.read(appLockProvider).pinLength) unawaited(_submit(pin));
+            if (pin.length == length) unawaited(_submit(pin));
           },
         ),
       ),

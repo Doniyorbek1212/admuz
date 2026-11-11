@@ -18,6 +18,9 @@ import 'link_preview_card.dart';
 import 'message_content.dart';
 import 'message_tools.dart';
 
+/// Narrowest a captioned photo/video bubble gets, so the caption under a tall portrait stays readable.
+const _captionMinWidth = 240.0;
+
 /// The message a reply points to, resolved by TDLib from the reply itself (works across chats and threads).
 final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
   try {
@@ -182,6 +185,15 @@ class MessageBubble extends ConsumerWidget {
             _ => captionOf(content),
           };
     final hasText = text != null && text.text.isNotEmpty;
+    // Captioned photo/video: the bubble is as wide as the media and the caption wraps under it (Telegram);
+    // a narrow portrait one widens to a readable caption width and is cropped to fill it.
+    final naturalMedia = album == null && hasText ? mediaWidth(content, maxWidth) : null;
+    final captionedMediaWidth = naturalMedia == null
+        ? null
+        : naturalMedia < _captionMinWidth
+            ? (_captionMinWidth > maxWidth ? maxWidth : _captionMinWidth)
+            : naturalMedia;
+    final bubbleMaxWidth = captionedMediaWidth ?? maxWidth;
     // Time sits at the end of the last text line when it fits (Telegram layout).
     final policy = ref.watch(linkPolicyProvider);
     final linkRisk = text == null
@@ -230,7 +242,9 @@ class MessageBubble extends ConsumerWidget {
                 : BorderRadius.zero,
             child: Stack(
               children: [
-                album != null ? AlbumGrid(messages: album, maxWidth: maxWidth) : MessageMedia(message: message, maxWidth: maxWidth),
+                album != null
+                    ? AlbumGrid(messages: album, maxWidth: maxWidth)
+                    : MessageMedia(message: message, maxWidth: bubbleMaxWidth, fillWidth: captionedMediaWidth != null),
                 if (footerOnMedia)
                   Positioned(
                     right: 6,
@@ -331,7 +345,7 @@ class MessageBubble extends ConsumerWidget {
             ],
           )
         : Container(
-            constraints: BoxConstraints(maxWidth: maxWidth, minWidth: 80),
+            constraints: BoxConstraints(maxWidth: bubbleMaxWidth, minWidth: 80),
             decoration: BoxDecoration(
               color: outgoing ? colors.outgoingBubble : colors.incomingBubble,
               borderRadius: BorderRadius.only(
@@ -546,6 +560,20 @@ class _ReplyHeader extends ConsumerWidget {
             : (inlineContent != null
                 ? (contentPreview(inlineContent, s) ?? s.t('message'))
                 : (repliedState.isLoading ? '…' : s.t('deleted_message'))));
+    final thumb = replyThumb(replied?.content ?? inlineContent);
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (name.isNotEmpty)
+          Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 13.5)),
+        Text(
+          (thumb == null ? preview : withoutMediaEmoji(preview)).replaceAll('\n', ' '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13.5),
+        ),
+      ],
+    );
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -556,14 +584,9 @@ class _ReplyHeader extends ConsumerWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border(left: BorderSide(color: primary, width: 3)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (name.isNotEmpty)
-              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 13.5)),
-            Text(preview.replaceAll('\n', ' '), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
-          ],
-        ),
+        child: thumb == null
+            ? text
+            : Row(mainAxisSize: MainAxisSize.min, children: [thumb, const SizedBox(width: 8), Flexible(child: text)]),
       ),
     );
   }

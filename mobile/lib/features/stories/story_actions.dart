@@ -49,7 +49,7 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
   if (action == null || !context.mounted) return false;
   switch (action) {
     case 'viewers':
-      await _showViewers(context, account, story);
+      await showStoryViewers(context, account, story);
     case 'cover':
       await editStoryCover(context, account, story);
     case 'stats':
@@ -103,7 +103,33 @@ Future<bool> showStoryMenu(BuildContext context, TelegramAccount account, td.Sto
   return false;
 }
 
-Future<void> _showViewers(BuildContext context, TelegramAccount account, td.Story story) async {
+/// "👁 views ♥ reactions" of a story the user may see interactions for.
+class StoryStats extends StatelessWidget {
+  const StoryStats({super.key, required this.interaction, required this.color, required this.size});
+
+  final td.StoryInteractionInfo interaction;
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(color: color, fontSize: size * 0.8, fontWeight: FontWeight.w600);
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.visibility_rounded, color: color, size: size),
+      const SizedBox(width: 4),
+      Text(formatCount(interaction.viewCount), style: style),
+      if (interaction.reactionCount > 0) ...[
+        const SizedBox(width: 10),
+        Icon(Icons.favorite_rounded, color: Colors.redAccent, size: size),
+        const SizedBox(width: 4),
+        Text(formatCount(interaction.reactionCount), style: style),
+      ],
+    ]);
+  }
+}
+
+/// Who viewed the story and who reacted (their emoji on the right); only its poster or the channel's admins can see this.
+Future<void> showStoryViewers(BuildContext context, TelegramAccount account, td.Story story) async {
   final s = context.s;
   final result = await guard(
     context,
@@ -121,6 +147,8 @@ Future<void> _showViewers(BuildContext context, TelegramAccount account, td.Stor
         : td.GetChatStoryInteractions(storyPosterChatId: story.posterChatId, storyId: story.id, reactionType: null, preferForwards: false, offset: '', limit: 100)),
   );
   if (result == null || !context.mounted) return;
+  // The story's own counter: past 24 hours Telegram lists only reactors to non-Premium users.
+  final views = story.interactionInfo?.viewCount ?? result.totalCount;
   await showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -130,9 +158,20 @@ Future<void> _showViewers(BuildContext context, TelegramAccount account, td.Stor
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(s.count('views', result.totalCount), style: Theme.of(context).textTheme.titleMedium),
+            child: Text(
+              [
+                s.count('views', views),
+                if (result.totalReactionCount > 0) '${s.t('reactions')}: ${result.totalReactionCount}',
+              ].join(' · '),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
-          if (result.interactions.isEmpty) Padding(padding: const EdgeInsets.all(16), child: Text(s.t('seen_nobody'))),
+          if (result.totalCount < views)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(s.t('story_viewers_partial'), style: TextStyle(color: Theme.of(context).hintColor)),
+            ),
+          if (result.interactions.isEmpty && views == 0) Padding(padding: const EdgeInsets.all(16), child: Text(s.t('seen_nobody'))),
           for (final item in result.interactions)
             ListTile(
               leading: switch (item.actorId) {

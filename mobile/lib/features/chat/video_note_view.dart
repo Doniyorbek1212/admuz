@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -11,6 +12,28 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import 'video_note_shapes.dart';
+
+/// Shape of a not-yet-downloaded note: fetches only the file's last bytes, where the shape marker lives,
+/// so the receiver sees the heart/star before the whole video comes in. Null when there is no marker.
+final _remoteShapeProvider = FutureProvider.family<VideoNoteShape?, int>((ref, fileId) async {
+  const tail = 64;
+  final account = ref.read(accountProvider);
+  try {
+    var file = await account.send<td.File>(td.GetFile(fileId: fileId));
+    final size = file.size;
+    if (size <= tail) return null;
+    if (!file.local.isDownloadingCompleted) {
+      file = await account
+          .send<td.File>(td.DownloadFile(fileId: fileId, priority: 1, offset: size - tail, limit: tail, synchronous: true))
+          .timeout(const Duration(seconds: 15));
+    }
+    final part = await account.send<td.Data>(td.ReadFilePart(fileId: fileId, offset: size - tail, count: tail));
+    return VideoNoteShape.markerIn(base64Decode(part.data));
+  } on Object catch (error) {
+    debugPrint('video note shape not fetched: $error');
+    return null;
+  }
+});
 
 /// Round video message as in Telegram/aka: downloads by itself and loops silently in the chat;
 /// a tap plays it from the start with sound and a progress ring, another tap pauses.
@@ -139,7 +162,10 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
         : null;
     final downloading = !file.local.isDownloadingCompleted && (fetch || file.local.isDownloadingActive);
     final size = file.size == 0 ? file.expectedSize : file.size;
-    final shape = _fileShape ?? VideoNoteShape.fromLength(note.length);
+    final lengthShape = VideoNoteShape.fromLength(note.length);
+    final shape = _fileShape ??
+        (lengthShape == VideoNoteShape.circle && !file.local.isDownloadingCompleted ? ref.watch(_remoteShapeProvider(note.video.id)).value : null) ??
+        lengthShape;
 
     return GestureDetector(
       onTap: _tap,

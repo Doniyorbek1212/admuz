@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -114,7 +115,7 @@ class _BottomBar extends ConsumerWidget {
         decoration: BoxDecoration(
           color: dark ? const Color(0xF21E2A36) : const Color(0xF7FFFFFF),
           borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: dark ? Colors.white10 : Colors.black.withValues(alpha: 0.06), width: 0.8),
+          border: Border.all(color: brandGold, width: 1.4),
           boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.35 : 0.1), blurRadius: 22, offset: const Offset(0, 8))],
         ),
         child: Row(

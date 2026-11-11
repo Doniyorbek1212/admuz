@@ -170,7 +170,9 @@ class _AdsQueueState extends ConsumerState<_AdsQueue> with AutomaticKeepAliveCli
 
   Future<List<Ad>> _load() => ref.read(sadoApiProvider).adminAds(status: _live ? 'approved' : 'pending_review');
 
-  void _reload() => setState(() => _ads = _load());
+  void _reload() => setState(() {
+        _ads = _load();
+      });
 
   Future<void> _decide(Ad ad, {required bool approve}) async {
     final api = ref.read(sadoApiProvider);

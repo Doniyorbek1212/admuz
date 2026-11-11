@@ -9,6 +9,7 @@ import '../../core/theme.dart';
 import '../../core/api/sado_api.dart';
 import '../gifts/gift_widgets.dart';
 import '../gifts/profile_background.dart';
+import '../gifts/uzaro_badge.dart' show showUzaroBadgeSheet;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -140,6 +141,8 @@ class SettingsScreen extends ConsumerWidget {
       children: [
         // Same set and order as aka Messenger's own section.
         _row(context, Icons.settings_rounded, const Color(0xFF2E9BF0), s.t('uzaro_settings'), screen: const UzaroSettingsScreen()),
+        if (ref.read(sadoApiProvider).configured)
+          _row(context, Icons.verified_rounded, const Color(0xFFD4A94E), s.t('uzaro_badge'), onTap: () => showUzaroBadgeSheet(context, ref)),
         _row(context, Icons.wifi_tethering_rounded, const Color(0xFF2EAD5B), s.t('online_contacts'), screen: const OnlineContactsScreen()),
         _row(context, Icons.cleaning_services_rounded, const Color(0xFF4A6CF7), s.t('cache_cleaner'), screen: const StorageUsageScreen()),
         _row(context, Icons.manage_accounts_rounded, const Color(0xFF2E9BF0), s.t('contact_changes'), screen: const ContactChangesScreen()),

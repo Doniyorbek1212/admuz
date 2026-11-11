@@ -294,16 +294,29 @@ class SadoApi {
       [for (final g in (await _get('/v1/gifts/catalog') as Map<String, dynamic>)['items'] as List) GiftItem.fromJson(g as Map<String, dynamic>)];
 
   /// Sends [giftId] to Telegram user [recipientId]; returns the balance left.
-  Future<int> sendGift(String giftId, int recipientId, String text) async {
-    final result = await _post('/v1/gifts/send', data: {'gift_id': giftId, 'recipient_telegram_id': recipientId, 'text': text}) as Map<String, dynamic>;
+  Future<int> sendGift(String giftId, int recipientId, String text, {bool anonymous = false}) async {
+    final result = await _post(
+      '/v1/gifts/send',
+      data: {'gift_id': giftId, 'recipient_telegram_id': recipientId, 'text': text, 'anonymous': anonymous},
+    ) as Map<String, dynamic>;
     return result['balance_uzs'] as int? ?? 0;
+  }
+
+  /// Dearest gifts of each of these users/groups/channels (at most 100); ones without gifts are absent.
+  Future<Map<int, GiftShowcase>> topGifts(List<int> ids) async {
+    final json = await _get('/v1/gifts/top', query: {'ids': ids}) as Map<String, dynamic>;
+    return {
+      for (final entry in (json['items'] as Map<String, dynamic>).entries)
+        int.parse(entry.key): GiftShowcase.fromJson(entry.value as Map<String, dynamic>),
+    };
   }
 
   Future<ProfileGifts> userGifts(int telegramId) async =>
       ProfileGifts.fromJson(await _get('/v1/gifts/users/$telegramId') as Map<String, dynamic>);
 
   /// "#rrggbb" or "#rrggbb,#rrggbb"; null removes it.
-  Future<void> setProfileBackground(String? background) => _put('/v1/profile/background', {'background': background});
+  Future<void> setProfileBackground(String? background, String? pattern) =>
+      _put('/v1/profile/background', {'background': background, 'pattern': pattern});
 
   /// Every gift this account received, newest first, and whether the profile hides them all.
   Future<(List<SentGift>, bool)> receivedGifts() async {
@@ -313,10 +326,31 @@ class SadoApi {
 
   Future<void> setGiftHidden(String sentId, bool hidden) => _post('/v1/gifts/$sentId/visibility', data: {'hidden': hidden});
 
+  /// The recipient hides (or shows) who sent a gift from people opening their profile.
+  Future<void> setGiftSenderHidden(String sentId, bool hidden) => _post('/v1/gifts/$sentId/sender-visibility', data: {'hidden': hidden});
+
   /// Hides all received gifts, also later ones, from people opening this profile.
   Future<void> setAllGiftsHidden(bool hidden) => _put('/v1/profile/gifts-visibility', {'hidden': hidden});
 
   Future<Wallet> wallet() async => Wallet.fromJson(await _get('/v1/wallet') as Map<String, dynamic>);
+
+  // ------------------------------------------------------------------ badges
+
+  Future<BadgeOffer> badgeOffer() async => BadgeOffer.fromJson(await _get('/v1/badges/me') as Map<String, dynamic>);
+
+  /// One more month of the badge (starts now or extends the running one) with this emoji; 0 = checkmark.
+  Future<void> buyBadge(int emojiId) => _post('/v1/badges/buy', data: {'emoji_id': emojiId});
+
+  /// Swaps the running badge's emoji, free.
+  Future<void> changeBadge(int emojiId) => _put('/v1/badges/me', {'emoji_id': emojiId});
+
+  /// Active badges of these Telegram users (at most 100): user id -> emoji id (0 = checkmark).
+  Future<Map<int, int>> badgesOf(List<int> ids) async {
+    final json = await _get('/v1/badges/of', query: {'ids': ids}) as Map<String, dynamic>;
+    return {
+      for (final entry in (json['badges'] as Map<String, dynamic>).entries) int.parse(entry.key): int.parse(entry.value as String),
+    };
+  }
 
   Future<void> requestTopup(int amountUzs, String receiptPath) async {
     final form = FormData.fromMap({'amount_uzs': amountUzs, 'receipt': await MultipartFile.fromFile(receiptPath)});

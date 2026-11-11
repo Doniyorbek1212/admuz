@@ -190,6 +190,7 @@ class _VideoPlayerScreenState extends ConsumerState<_VideoPlayerScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
+                    '${total > 0 ? '${current.local.downloadedSize * 100 ~/ total}% · ' : ''}'
                     '${formatFileSize(current.local.downloadedSize)} / ${formatFileSize(total)}',
                     style: const TextStyle(color: Colors.white70),
                   ),

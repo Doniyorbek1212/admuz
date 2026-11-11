@@ -47,7 +47,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
   Future<void> _send([GiftItem? gift]) async {
     final user = await Navigator.of(context).push<td.User>(MaterialPageRoute(builder: (_) => const ContactsScreen(pickUser: true)));
     if (user == null || !mounted) return;
-    final sent = await sendUzaroGift(context, user, initial: gift);
+    final sent = await sendUzaroGift(context, recipientId: user.id, name: '${user.firstName} ${user.lastName}'.trim(), initial: gift);
     if (sent == true && mounted) _reload();
   }
 
@@ -56,6 +56,9 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
   }
 
   Future<void> _toggleHidden(SentGift gift) => _changeVisibility(() => ref.read(sadoApiProvider).setGiftHidden(gift.id, !gift.hidden));
+
+  Future<void> _toggleSenderHidden(SentGift gift) =>
+      _changeVisibility(() => ref.read(sadoApiProvider).setGiftSenderHidden(gift.id, !gift.senderHidden));
 
   Future<void> _changeVisibility(Future<void> Function() change) async {
     final done = await apiGuard(context, () async {
@@ -177,12 +180,21 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
               title: Text(gift.gift.titleFor(context.s.locale), style: const TextStyle(fontWeight: FontWeight.w600)),
               subtitle: gift.text.isEmpty ? null : Text(gift.text, maxLines: 2, overflow: TextOverflow.ellipsis),
               onTap: () => showGiftDetails(context, gift),
-              // While everything is hidden, single gifts have nothing to switch.
-              trailing: IconButton(
-                tooltip: s.t(gift.hidden ? 'gifts_show' : 'gifts_hide'),
-                icon: Icon(gift.hidden || hideAll ? Icons.visibility_off_rounded : Icons.visibility_rounded),
-                onPressed: hideAll ? null : () => _toggleHidden(gift),
-              ),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                // Who sent it: hidden from profile visitors (an anonymous sender is hidden already).
+                if (!gift.anonymous)
+                  IconButton(
+                    tooltip: s.t(gift.senderHidden ? 'gifts_sender_show' : 'gifts_sender_hide'),
+                    icon: Icon(gift.senderHidden ? Icons.person_off_rounded : Icons.person_rounded),
+                    onPressed: () => _toggleSenderHidden(gift),
+                  ),
+                // While everything is hidden, single gifts have nothing to switch.
+                IconButton(
+                  tooltip: s.t(gift.hidden ? 'gifts_show' : 'gifts_hide'),
+                  icon: Icon(gift.hidden || hideAll ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+                  onPressed: hideAll ? null : () => _toggleHidden(gift),
+                ),
+              ]),
             ),
         ]);
       },

@@ -5,6 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../core/tdlib/td_client.dart';
 import '../core/time_capsule.dart';
+import '../core/video_thumbnail.dart';
 import 'telegram.dart';
 
 td.FormattedText plainText(String text) => td.FormattedText(text: text, entities: const []);
@@ -246,8 +247,8 @@ extension ChatActions on TelegramAccount {
   Future<td.Message> sendPhoto(int chatId, String path, {String caption = '', int width = 0, int height = 0, int? replyToId}) =>
       sendContent(chatId, photoContent(path, caption: caption, width: width, height: height), replyToId: replyToId);
 
-  Future<td.Message> sendVideo(int chatId, String path, {String caption = '', int? replyToId}) =>
-      sendContent(chatId, videoContent(path, caption: caption), replyToId: replyToId);
+  Future<td.Message> sendVideo(int chatId, String path, {String caption = '', int? replyToId}) async =>
+      sendContent(chatId, videoContent(path, caption: caption, thumbnail: await videoThumbnail(path)), replyToId: replyToId);
 
   Future<td.Message> sendAudio(int chatId, String path, {String caption = '', int? replyToId}) => sendContent(
         chatId,
@@ -420,11 +421,12 @@ extension ChatActions on TelegramAccount {
       send<td.Ok>(td.SetPollAnswer(chatId: message.chatId, messageId: message.id, optionIds: optionIndexes));
 
   /// Swaps the photo/video of a sent message, keeping its caption.
-  Future<void> replaceMedia(td.Message message, String path, {required bool isVideo, String caption = ''}) {
-    return send<td.Message>(td.EditMessageMedia(
+  Future<void> replaceMedia(td.Message message, String path, {required bool isVideo, String caption = ''}) async {
+    await send<td.Message>(td.EditMessageMedia(
       chatId: message.chatId,
       messageId: message.id,
-      inputMessageContent: isVideo ? videoContent(path, caption: caption) : photoContent(path, caption: caption),
+      inputMessageContent:
+          isVideo ? videoContent(path, caption: caption, thumbnail: await videoThumbnail(path)) : photoContent(path, caption: caption),
     ));
   }
 
@@ -814,11 +816,12 @@ td.InputMessageContent photoContent(String path, {String caption = '', int width
     );
 
 /// Known size and duration let receivers lay the video out and show its length before it downloads.
-td.InputMessageContent videoContent(String path, {String caption = '', int width = 0, int height = 0, int duration = 0}) =>
+td.InputMessageContent videoContent(String path,
+        {String caption = '', int width = 0, int height = 0, int duration = 0, td.InputThumbnail? thumbnail}) =>
     td.InputMessageVideo(
       video: td.InputVideo(
         video: td.InputFileLocal(path: path),
-        thumbnail: null,
+        thumbnail: thumbnail,
         cover: null,
         startTimestamp: 0,
         addedStickerFileIds: const [],

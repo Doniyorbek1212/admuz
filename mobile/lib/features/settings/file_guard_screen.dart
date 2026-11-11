@@ -125,7 +125,7 @@ class FileGuardScreen extends ConsumerWidget {
         ],
       ),
     );
-    controller.dispose();
+    // Not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
     if (result == null) return null;
     // "exe, .Torrent ;cdr" → {torrent, cdr, exe}: no dots, lowercase, letters/digits only.
     return {

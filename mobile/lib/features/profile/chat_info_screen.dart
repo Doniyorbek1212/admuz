@@ -34,6 +34,11 @@ import '../settings/stars_extras.dart' show paidMessageRevenueProvider;
 import '../../core/api/sado_api.dart';
 import '../gifts/gift_widgets.dart';
 import '../gifts/profile_background.dart';
+import '../gifts/gift_showcase.dart' show giftRecipientOf;
+import '../../widgets/emoji_pattern.dart';
+import '../gifts/uzaro_badge.dart' show NameBadges;
+import '../../state/settings.dart';
+import '../settings/message_tone_picker.dart';
 import 'profile_business.dart';
 import 'profile_media.dart';
 import 'profile_more.dart';
@@ -139,9 +144,15 @@ class ChatInfoScreen extends ConsumerWidget {
       ],
     ];
 
-    // A person's UZARO extras: gifts around the avatar and the background they picked (not groups, bots, Saved Messages).
-    final giftsFor = user != null && !account.isBot(user) && !account.isSavedMessages(chat) ? user.id : null;
-    final background = giftsFor == null ? null : ref.watch(userGiftsProvider(giftsFor)).value?.background;
+    // UZARO extras of a person, group or channel: gifts around the avatar and the picked background (not bots, Saved Messages).
+    final giftsFor = giftRecipientOf(account, chat);
+    final canGift = giftsFor != null && ref.read(sadoApiProvider).configured;
+    void sendGift() {
+      if (giftsFor != null) sendUzaroGift(context, recipientId: giftsFor, name: chatTitle(chat, account, s));
+    }
+    final style = giftsFor == null ? null : ref.watch(userGiftsProvider(giftsFor)).value;
+    final background = style?.background;
+    final pattern = style?.pattern;
     final onHeader = background == null ? theme.colorScheme.onSurface : Colors.white;
     final headerTop = MediaQuery.paddingOf(context).top + kToolbarHeight;
 
@@ -158,6 +169,16 @@ class ChatInfoScreen extends ConsumerWidget {
               icon: const Icon(Icons.edit_rounded),
               onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => EditChatScreen(chatId: chatId))),
             ),
+          if (!account.isSavedMessages(chat))
+            IconButton(
+              icon: const Icon(Icons.more_vert_rounded),
+              tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
+              onPressed: () => showModalBottomSheet<void>(
+                context: context,
+                showDragHandle: true,
+                builder: (_) => SafeArea(child: SingleChildScrollView(child: _ProfileMenu(chatId: chatId))),
+              ),
+            ),
         ],
       ),
       body: Stack(children: [
@@ -168,6 +189,15 @@ class ChatInfoScreen extends ConsumerWidget {
           right: 0,
           height: headerTop + 400,
           child: DecoratedBox(decoration: BoxDecoration(gradient: profileGradient(background, theme.scaffoldBackgroundColor))),
+        ),
+      // The picked sticker or emoji around the avatar (stays put while the page scrolls, like the background).
+      if (pattern != null)
+        Positioned(
+          top: headerTop - 36,
+          left: 0,
+          right: 0,
+          height: 116 + 120,
+          child: EmojiPattern(pattern: pattern, spots: headerPatternSpots),
         ),
       CustomScrollView(
         slivers: [
@@ -195,13 +225,18 @@ class ChatInfoScreen extends ConsumerWidget {
               const SizedBox(height: 14),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  chatTitle(chat, account, s),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: onHeader),
-                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Flexible(
+                    child: Text(
+                      chatTitle(chat, account, s),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: onHeader),
+                    ),
+                  ),
+                  NameBadges(chat: chat, size: 24),
+                ]),
               ),
               const SizedBox(height: 4),
               Text(
@@ -220,11 +255,11 @@ class ChatInfoScreen extends ConsumerWidget {
                       label: s.t(muted ? 'unmute_short' : 'mute_short'),
                       onTap: () => guard(context, () => account.setMuted(chat, muted ? 0 : muteForever)),
                     ),
+                    if (canGift && (callable || user == null))
+                      _ActionTile(icon: Icons.card_giftcard_rounded, label: s.t('gift_short'), onTap: sendGift),
                     if (callable) ...[
-                      _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
                       _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => startTelegramCall(context, user.id, video: true)),
-                      if (ref.read(sadoApiProvider).configured)
-                        _ActionTile(icon: Icons.card_giftcard_rounded, label: s.t('gift_short'), onTap: () => sendUzaroGift(context, user)),
+                      _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
                     ] else if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
                       _ActionTile(
                         icon: Icons.logout_rounded,
@@ -249,127 +284,12 @@ class ChatInfoScreen extends ConsumerWidget {
                 _ProfileCard(children: [BotProfileExtras(bot: user, chatId: chatId, info: info?.userInfo)]),
               _ProfileCard(
                 children: [
+                  if (!account.isSavedMessages(chat)) _ChatToneTile(chatId: chatId),
                   if (user == null && account.isAdmin(chat))
                     ListTile(
                       leading: const Icon(Icons.admin_panel_settings_rounded),
                       title: Text(s.t('manage')),
                       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ManageChatScreen(chatId: chatId))),
-                    ),
-                  if (user != null && user.id != account.myId) ...[
-                    if (!account.isBot(user))
-                      UserNoteTile(account: account, userId: user.id, note: info?.note, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
-                    if ((info?.incomingPaidStars ?? 0) > 0)
-                      ListTile(
-                        leading: const Icon(Icons.money_off_rounded),
-                        title: Text(s.t('allow_free_messages')),
-                        subtitle: Text(s.t('paid_messages_cost', {'n': '${info!.incomingPaidStars}'})),
-                        onTap: () async {
-                          if (await allowFreeMessages(context, account, user.id) && context.mounted) ref.invalidate(_detailsProvider(chatId));
-                        },
-                      ),
-                    if (!account.isBot(user)) ProfileAudiosTile(userId: user.id),
-                    if (!account.isBot(user))
-                      ListTile(
-                        leading: const Icon(Icons.redeem_outlined),
-                        title: Text(s.t('gifts_title')),
-                        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => OwnerGiftsScreen(ownerId: td.MessageSenderUser(userId: user.id)))),
-                      ),
-                    if (ref.watch(paidMessageRevenueProvider(user.id)).value case final earned? when earned > 0)
-                      ListTile(leading: const Icon(Icons.star_rounded, color: Color(0xFFF5B830)), title: Text(s.t('paid_revenue_from', {'n': '$earned'}))),
-                    if (user.isContact && !account.isBot(user)) ...[
-                      ListTile(
-                        leading: const Icon(Icons.face_retouching_natural_outlined),
-                        title: Text(s.t('personal_photo_set')),
-                        subtitle: Text(s.t('personal_photo_hint')),
-                        onTap: () => setPersonalContactPhoto(context, account, user.id, remove: false),
-                        onLongPress: () => setPersonalContactPhoto(context, account, user.id, remove: true),
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.add_photo_alternate_outlined),
-                        title: Text(s.t('photo_suggest')),
-                        onTap: () => suggestProfilePhoto(context, account, user.id),
-                      ),
-                    ],
-                    if (user.isContact && info != null && info.birthdate == null && !account.isBot(user))
-                      ListTile(leading: const Icon(Icons.cake_outlined), title: Text(s.t('birthday_suggest')), onTap: () => suggestBirthdate(context, account, user.id)),
-                    if (user.isContact)
-                      ListTile(
-                        leading: const Icon(Icons.person_remove_rounded),
-                        title: Text(s.t('delete_contact')),
-                        onTap: () async {
-                          final ok = await confirm(context, title: s.t('delete_contact'), message: chatTitle(chat, account, s), destructive: true);
-                          if (ok && context.mounted) await guard(context, () => account.send<td.Ok>(td.RemoveContacts(userIds: [user.id])));
-                        },
-                      ),
-                    if (!user.isContact)
-                      ListTile(
-                        leading: const Icon(Icons.person_add_rounded),
-                        title: Text(s.t('add_contact')),
-                        onTap: () => guard(
-                          context,
-                          () => account.send<td.Ok>(
-                            td.AddContact(
-                              userId: user.id,
-                              contact: td.ImportedContact(phoneNumber: user.phoneNumber, firstName: user.firstName, lastName: user.lastName, note: null),
-                              sharePhoneNumber: false,
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (chat.type is td.ChatTypePrivate && !account.isBot(user))
-                      ListTile(
-                        leading: const Icon(Icons.lock_rounded),
-                        title: Text(s.t('start_secret_chat')),
-                        onTap: () => openSecretChatWith(context, account, user),
-                      ),
-                    ListTile(
-                      leading: Icon(Icons.block_rounded, color: theme.colorScheme.error),
-                      title: Text(s.t(chat.blockList != null ? 'unblock' : 'block'), style: TextStyle(color: theme.colorScheme.error)),
-                      onTap: () => guard(
-                        context,
-                        () => account.send<td.Ok>(
-                          td.SetMessageSenderBlockList(
-                            senderId: td.MessageSenderUser(userId: user.id),
-                            blockList: chat.blockList != null ? null : const td.BlockListMain(),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  if ((user != null && !account.isBot(user) && !account.isSavedMessages(chat)) || account.isChannel(chat))
-                    ListTile(
-                      leading: const Icon(Icons.motion_photos_on_outlined),
-                      title: Text(s.t('stories')),
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => ChatStoriesScreen(chatId: chatId, canManage: user?.id == account.myId || (user == null && account.isAdmin(chat))),
-                      )),
-                    ),
-                  if (info != null && info.commonGroups > 0 && user != null)
-                    ListTile(
-                      leading: const Icon(Icons.groups_rounded),
-                      title: Text(s.t('groups_in_common')),
-                      trailing: Text('${info.commonGroups}'),
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _CommonGroupsScreen(userId: user.id))),
-                    ),
-                  if (account.isChannel(chat) || account.supergroupOf(chat) != null)
-                    ListTile(
-                      leading: const Icon(Icons.bolt_rounded),
-                      title: Text(s.t('boost')),
-                      onTap: () => showBoostSheet(context, account, chatId),
-                    ),
-                  if (chat.type case td.ChatTypeSecret(:final secretChatId))
-                    ListTile(
-                      leading: const Icon(Icons.key_rounded),
-                      title: Text(s.t('encryption_key')),
-                      onTap: () => showSecretChatKey(context, account, secretChatId),
-                    ),
-                  if (user == null && !account.isSavedMessages(chat)) TranslatableTile(chatId: chatId),
-                  if (!account.isSavedMessages(chat))
-                    ListTile(
-                      leading: const Icon(Icons.drive_file_rename_outline_rounded),
-                      title: Text(s.t('local_name')),
-                      subtitle: Text(localChatName(chat) ?? s.t('local_name_off')),
-                      onTap: () => renameChatLocally(context, account, chat),
                     ),
                   if (chat.canBeReported)
                     ListTile(
@@ -394,6 +314,11 @@ class ChatInfoScreen extends ConsumerWidget {
               // Members are the first tab of the media strip, so big groups don't bury them under the media grid.
               _SharedMediaSection(
                 chatId: chatId,
+                onStories: (user != null && !account.isBot(user) && !account.isSavedMessages(chat)) || account.isChannel(chat)
+                    ? () => Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => ChatStoriesScreen(chatId: chatId, canManage: user?.id == account.myId || (user == null && account.isAdmin(chat))),
+                        ))
+                    : null,
                 membersLabel: s.count('members', account.memberCount(chat)),
                 members: info == null || info.members.isEmpty
                     ? null
@@ -854,10 +779,18 @@ final _sharedMediaProvider = FutureProvider.autoDispose.family<List<td.Message>,
   return result.messages;
 });
 
+/// Stories posted to a chat's page, shown under the profile's "stories" tab.
+final _postedStoriesProvider = FutureProvider.autoDispose.family<td.Stories, int>((ref, chatId) {
+  return ref.watch(accountProvider).send<td.Stories>(td.GetChatPostedToChatPageStories(chatId: chatId, fromStoryId: 0, limit: 100));
+});
+
 class _SharedMediaSection extends ConsumerStatefulWidget {
-  const _SharedMediaSection({required this.chatId, this.members, this.membersLabel = ''});
+  const _SharedMediaSection({required this.chatId, this.onStories, this.members, this.membersLabel = ''});
 
   final int chatId;
+
+  /// Opens the full stories screen (archive, albums); non-null adds a leading "stories" tab.
+  final VoidCallback? onStories;
 
   /// The group's member list, shown under a leading "members" tab when present.
   final Widget? members;
@@ -884,6 +817,18 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
+              if (widget.onStories != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(switch (ref.watch(_postedStoriesProvider(widget.chatId)).value?.totalCount) {
+                      final n? when n > 0 => '${s.t('stories')} $n',
+                      _ => s.t('stories'),
+                    }),
+                    selected: tab == 'stories',
+                    onSelected: (_) => setState(() => _picked = 'stories'),
+                  ),
+                ),
               if (members != null)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -909,9 +854,30 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
           ),
         ),
         const SizedBox(height: 8),
-        if (tab == 'members' && members != null) members else _messages(context, tab),
+        if (tab == 'members' && members != null)
+          members
+        else if (tab == 'stories')
+          _stories(context)
+        else
+          _messages(context, tab),
       ],
     );
+  }
+
+  /// Posted stories in place, plus a link to the full screen for the archive and albums.
+  Widget _stories(BuildContext context) {
+    final s = context.s;
+    return Column(children: [
+      Align(
+        alignment: Alignment.centerRight,
+        child: TextButton.icon(onPressed: widget.onStories, icon: const Icon(Icons.open_in_full_rounded, size: 18), label: Text(s.t('more'))),
+      ),
+      ref.watch(_postedStoriesProvider(widget.chatId)).when(
+            loading: () => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+            error: (error, _) => Padding(padding: const EdgeInsets.all(16), child: Text(errorText(context, error))),
+            data: (stories) => StoryGrid(chatId: widget.chatId, stories: stories.stories, pinned: stories.pinnedStoryIds, embedded: true),
+          ),
+    ]);
   }
 
   Widget _messages(BuildContext context, String tab) {
@@ -1105,6 +1071,162 @@ class _EditChatScreenState extends ConsumerState<EditChatScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The profile's "⋮" menu: the rarer per-chat actions, kept out of the profile body.
+/// Watches its own providers so labels (block/unblock, note) stay current while the sheet is open.
+class _ProfileMenu extends ConsumerWidget {
+  const _ProfileMenu({required this.chatId});
+
+  final int chatId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chat = ref.watch(chatProvider(chatId));
+    if (chat == null) return const SizedBox.shrink();
+    final account = ref.watch(accountProvider);
+    final info = ref.watch(_detailsProvider(chatId)).value;
+    final user = account.privateUser(chat);
+    final s = context.s;
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (user != null && user.id != account.myId) ...[
+          if (!account.isBot(user))
+            UserNoteTile(account: account, userId: user.id, note: info?.note, onChanged: () => ref.invalidate(_detailsProvider(chatId))),
+          if ((info?.incomingPaidStars ?? 0) > 0)
+            ListTile(
+              leading: const Icon(Icons.money_off_rounded),
+              title: Text(s.t('allow_free_messages')),
+              subtitle: Text(s.t('paid_messages_cost', {'n': '${info!.incomingPaidStars}'})),
+              onTap: () async {
+                if (await allowFreeMessages(context, account, user.id) && context.mounted) ref.invalidate(_detailsProvider(chatId));
+              },
+            ),
+          if (!account.isBot(user)) ProfileAudiosTile(userId: user.id),
+          if (!account.isBot(user))
+            ListTile(
+              leading: const Icon(Icons.redeem_outlined),
+              title: Text(s.t('gifts_title')),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => OwnerGiftsScreen(ownerId: td.MessageSenderUser(userId: user.id)))),
+            ),
+          if (ref.watch(paidMessageRevenueProvider(user.id)).value case final earned? when earned > 0)
+            ListTile(leading: const Icon(Icons.star_rounded, color: Color(0xFFF5B830)), title: Text(s.t('paid_revenue_from', {'n': '$earned'}))),
+          if (user.isContact && !account.isBot(user)) ...[
+            ListTile(
+              leading: const Icon(Icons.face_retouching_natural_outlined),
+              title: Text(s.t('personal_photo_set')),
+              subtitle: Text(s.t('personal_photo_hint')),
+              onTap: () => setPersonalContactPhoto(context, account, user.id, remove: false),
+              onLongPress: () => setPersonalContactPhoto(context, account, user.id, remove: true),
+            ),
+            ListTile(
+              leading: const Icon(Icons.add_photo_alternate_outlined),
+              title: Text(s.t('photo_suggest')),
+              onTap: () => suggestProfilePhoto(context, account, user.id),
+            ),
+          ],
+          if (user.isContact && info != null && info.birthdate == null && !account.isBot(user))
+            ListTile(leading: const Icon(Icons.cake_outlined), title: Text(s.t('birthday_suggest')), onTap: () => suggestBirthdate(context, account, user.id)),
+          if (user.isContact)
+            ListTile(
+              leading: const Icon(Icons.person_remove_rounded),
+              title: Text(s.t('delete_contact')),
+              onTap: () async {
+                final ok = await confirm(context, title: s.t('delete_contact'), message: chatTitle(chat, account, s), destructive: true);
+                if (ok && context.mounted) await guard(context, () => account.send<td.Ok>(td.RemoveContacts(userIds: [user.id])));
+              },
+            ),
+          if (!user.isContact)
+            ListTile(
+              leading: const Icon(Icons.person_add_rounded),
+              title: Text(s.t('add_contact')),
+              onTap: () => guard(
+                context,
+                () => account.send<td.Ok>(
+                  td.AddContact(
+                    userId: user.id,
+                    contact: td.ImportedContact(phoneNumber: user.phoneNumber, firstName: user.firstName, lastName: user.lastName, note: null),
+                    sharePhoneNumber: false,
+                  ),
+                ),
+              ),
+            ),
+          if (chat.type is td.ChatTypePrivate && !account.isBot(user))
+            ListTile(
+              leading: const Icon(Icons.lock_rounded),
+              title: Text(s.t('start_secret_chat')),
+              onTap: () => openSecretChatWith(context, account, user),
+            ),
+          ListTile(
+            leading: Icon(Icons.block_rounded, color: theme.colorScheme.error),
+            title: Text(s.t(chat.blockList != null ? 'unblock' : 'block'), style: TextStyle(color: theme.colorScheme.error)),
+            onTap: () => guard(
+              context,
+              () => account.send<td.Ok>(
+                td.SetMessageSenderBlockList(
+                  senderId: td.MessageSenderUser(userId: user.id),
+                  blockList: chat.blockList != null ? null : const td.BlockListMain(),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (info != null && info.commonGroups > 0 && user != null)
+          ListTile(
+            leading: const Icon(Icons.groups_rounded),
+            title: Text(s.t('groups_in_common')),
+            trailing: Text('${info.commonGroups}'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _CommonGroupsScreen(userId: user.id))),
+          ),
+        if (account.isChannel(chat) || account.supergroupOf(chat) != null)
+          ListTile(
+            leading: const Icon(Icons.bolt_rounded),
+            title: Text(s.t('boost')),
+            onTap: () => showBoostSheet(context, account, chatId),
+          ),
+        if (chat.type case td.ChatTypeSecret(:final secretChatId))
+          ListTile(
+            leading: const Icon(Icons.key_rounded),
+            title: Text(s.t('encryption_key')),
+            onTap: () => showSecretChatKey(context, account, secretChatId),
+          ),
+        if (user == null && !account.isSavedMessages(chat)) TranslatableTile(chatId: chatId),
+        if (!account.isSavedMessages(chat))
+          ListTile(
+            leading: const Icon(Icons.drive_file_rename_outline_rounded),
+            title: Text(s.t('local_name')),
+            subtitle: Text(localChatName(chat) ?? s.t('local_name_off')),
+            onTap: () => renameChatLocally(context, account, chat),
+          ),
+      ],
+    );
+  }
+}
+
+/// This chat's notification tone, or "Default (global tone)".
+class _ChatToneTile extends ConsumerWidget {
+  const _ChatToneTile({required this.chatId});
+
+  final int chatId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final settings = ref.watch(settingsProvider);
+    final own = settings.chatTones[chatId];
+    final inherit = s.t('message_tone_inherit', {'tone': s.t('sound_${settings.messageTone}')});
+    return ListTile(
+      leading: const Icon(Icons.music_note_rounded),
+      title: Text(s.t('message_tone')),
+      subtitle: Text(own == null ? inherit : s.t('sound_$own')),
+      onTap: () async {
+        final tone = await pickMessageTone(context, current: own ?? '', inheritLabel: inherit);
+        if (tone != null) ref.read(settingsProvider.notifier).setChatTone(chatId, tone.isEmpty ? null : tone);
+      },
     );
   }
 }

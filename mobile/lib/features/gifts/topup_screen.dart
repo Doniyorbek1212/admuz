@@ -65,7 +65,9 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
             return EmptyState(
               icon: Icons.wifi_off_rounded,
               title: error is ApiException ? apiErrorText(context, error) : errorText(context, error!),
-              action: FilledButton(onPressed: () => setState(() => _wallet = ref.read(sadoApiProvider).wallet()), child: Text(s.t('retry'))),
+              action: FilledButton(onPressed: () => setState(() {
+                _wallet = ref.read(sadoApiProvider).wallet();
+              }), child: Text(s.t('retry'))),
             );
           }
           final wallet = snapshot.data;

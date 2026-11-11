@@ -437,7 +437,14 @@ class AdDraft {
 }
 
 class AdsConfig {
-  const AdsConfig({required this.pricePerRegionDay, required this.maxDays, required this.cardNumber, required this.cardHolder, required this.extraShopPrice});
+  const AdsConfig({
+    required this.pricePerRegionDay,
+    required this.maxDays,
+    required this.cardNumber,
+    required this.cardHolder,
+    required this.extraShopPrice,
+    this.topicsEnabled = true,
+  });
 
   factory AdsConfig.fromJson(Map<String, dynamic> json) => AdsConfig(
         pricePerRegionDay: json['price_per_region_day_uzs'] as int,
@@ -445,6 +452,7 @@ class AdsConfig {
         cardNumber: json['card_number'] as String? ?? '',
         cardHolder: json['card_holder'] as String? ?? '',
         extraShopPrice: json['extra_shop_price_uzs'] as int? ?? 0,
+        topicsEnabled: json['topics_enabled'] as bool? ?? true,
       );
 
   final int pricePerRegionDay;
@@ -452,6 +460,9 @@ class AdsConfig {
   final String cardNumber;
   final String cardHolder;
   final int extraShopPrice;
+
+  /// The admin panel's switch for the "who to show it to" topic picker in the new-ad form.
+  final bool topicsEnabled;
 }
 
 /// A row of the admin's customer list.

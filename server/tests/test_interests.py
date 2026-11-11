@@ -139,6 +139,18 @@ async def test_admin_controls_personalisation_and_ad_topics(client, new_customer
     assert (await client.put(f"/v1/admin/ads/{ad['id']}/topics", headers=support, json={"topics": ["x"]})).status_code == 422
 
 
+async def test_admin_hides_the_topic_picker(client, new_customer, session_factory):
+    owner = await _admin(session_factory, AdminRole.OWNER)
+    c = await new_customer()
+    assert (await c.get("/v1/ads/config")).json()["topics_enabled"] is True
+    assert (await client.put("/v1/admin/settings", headers=owner, json={"ads_topic_picker": 0})).status_code == 200
+    assert (await c.get("/v1/ads/config")).json()["topics_enabled"] is False
+    # An older app still sends its picks: ignored, topics come from the text.
+    ad = (await c.post("/v1/ads", json=AD | {"title": "Pizza va burger yetkazib berish", "topics": ["gifts"]})).json()
+    assert ad["topics"] == ["food"]
+    assert (await client.put("/v1/admin/settings", headers=owner, json={"ads_topic_picker": 2})).status_code == 422
+
+
 async def test_locate_picks_region_and_district_of_the_nearest_places(new_customer, session_factory):
     async with session_factory() as db:
         db.add_all([

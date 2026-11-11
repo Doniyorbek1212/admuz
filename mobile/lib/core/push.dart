@@ -11,6 +11,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../l10n/strings.dart';
 import '../state/telegram.dart';
+import 'message_tones.dart';
 import 'tdlib/td_client.dart';
 
 /// Telegram push notifications over Firebase Cloud Messaging (Android).
@@ -186,8 +187,6 @@ class PushContent {
   }
 }
 
-/// Runs in a background isolate when a push arrives while the app is not in the foreground.
-@pragma('vm:entry-point')
 /// Which signed-in account a push notification belongs to (several accounts share one device token).
 int? pushReceiverId(String payloadJson) {
   final result = TdClient.executeStatic(td.GetPushReceiverId(payload: payloadJson));
@@ -195,8 +194,13 @@ int? pushReceiverId(String payloadJson) {
   return id is int ? id : (id is String ? int.tryParse(id) : null);
 }
 
+/// Runs in a background isolate when a push arrives while the app is not in the foreground.
+/// The pragma must sit on this function: without it the isolate cannot find it and every push fails.
+@pragma('vm:entry-point')
 Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   final prefs = await SharedPreferences.getInstance();
+  // This isolate may outlive a tone change made in the app.
+  await prefs.reload();
   if (!(prefs.getBool('notifications') ?? true)) return;
   final strings = Strings(prefs.getString('locale') ?? 'uz');
   // A locked app never reveals message text in notifications.
@@ -211,15 +215,6 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
     title: content.title,
     body: content.body,
     payload: content.chatId?.toString(),
-    notificationDetails: const NotificationDetails(
-      android: AndroidNotificationDetails(
-        'messages',
-        'Messages',
-        channelDescription: 'New messages',
-        importance: Importance.high,
-        priority: Priority.high,
-        category: AndroidNotificationCategory.message,
-      ),
-    ),
+    notificationDetails: NotificationDetails(android: MessageTones.android(MessageTones.fromPrefs(prefs, content.chatId))),
   );
 }

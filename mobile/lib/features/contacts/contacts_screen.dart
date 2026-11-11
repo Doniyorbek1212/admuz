@@ -108,9 +108,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     final phoneNumber = phoneCtl.text.replaceAll(RegExp(r'[^\d]'), '');
     final first = firstCtl.text.trim();
     final last = lastCtl.text.trim();
-    phoneCtl.dispose();
-    firstCtl.dispose();
-    lastCtl.dispose();
+    // Not disposed: the dialog still rebuilds its fields during the close animation; GC frees them.
     if (ok != true || !mounted) return;
     if (phoneNumber.length < 7 || first.isEmpty) {
       showToast(context, s.t('contact_invalid'));

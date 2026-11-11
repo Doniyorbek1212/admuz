@@ -905,6 +905,10 @@ class TelegramAccount {
   Future<void> setLocalChatColor(int chatId, int? argb) =>
       _setClientData(chatId, (data) => argb == null ? data.remove('color') : data['color'] = argb);
 
+  /// Pattern over the chat's row (a custom emoji id as digits, or a plain emoji), this device only; null clears it.
+  Future<void> setLocalChatPattern(int chatId, String? pattern) =>
+      _setClientData(chatId, (data) => pattern == null ? data.remove('sticker') : data['sticker'] = pattern);
+
   Future<void> _setClientData(int chatId, void Function(Map<String, dynamic> data) change) async {
     final chat = chats[chatId];
     if (chat == null) return;

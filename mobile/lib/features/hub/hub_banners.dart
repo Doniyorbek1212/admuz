@@ -9,11 +9,18 @@ import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../core/interests.dart';
 import '../business/ads_screen.dart';
+import '../business/business_widgets.dart' show isLoadableMedia;
 import 'ad_banner_card.dart';
 import 'hub_catalog.dart';
 
+/// How long the hub keeps a region's ads after leaving it: coming back shows them at once, no empty flash.
+const _adsCacheFor = Duration(minutes: 10);
+
 /// Approved paid ads for a region. Failures (offline, no server) just mean no ads.
 final activeAdsProvider = FutureProvider.autoDispose.family<List<Ad>, String>((ref, region) async {
+  final keep = ref.keepAlive();
+  final expiry = Timer(_adsCacheFor, keep.close);
+  ref.onDispose(expiry.cancel);
   final api = ref.watch(sadoApiProvider);
   if (!api.configured) return const [];
   try {
@@ -80,6 +87,18 @@ class _HubBannersState extends ConsumerState<HubBanners> {
   /// Ads already reported as seen on this screen; the server also counts each viewer once per few hours.
   final _seen = <String>{};
 
+  /// Pictures already asked for: the next banners are ready before the carousel turns to them.
+  final _warmed = <String>{};
+
+  void _warm(List<Ad> ads) {
+    for (final ad in ads) {
+      // Same key NetImage loads with, so the card finds it in the image cache.
+      final url = resolveMediaUrl(ad.mediaUrl.trim());
+      if (ad.isVideo || !isLoadableMedia(ad.mediaUrl) || !_warmed.add(url)) continue;
+      unawaited(precacheImage(NetworkImage(url), context, onError: (error, _) => debugPrint('ad image failed: $error')));
+    }
+  }
+
   void _markSeen(List<Ad> ads, int index) {
     if (index >= ads.length || !_seen.add(ads[index].id)) return;
     unawaited(ref.read(sadoApiProvider).adEvent(ads[index].id, 'view'));
@@ -100,6 +119,7 @@ class _HubBannersState extends ConsumerState<HubBanners> {
     _count = ads.length + promos.length;
     if (_page >= _count) _page = 0;
     _markSeen(ads, _page);
+    _warm(ads);
     return Column(
       children: [
         Padding(

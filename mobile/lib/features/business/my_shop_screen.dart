@@ -35,7 +35,9 @@ class _MyShopScreenState extends ConsumerState<MyShopScreen> {
     return (results[0] as Shop, results[1] as ShopStats, results[2] as AdsConfig);
   }
 
-  void _reload() => setState(() => _data = _load());
+  void _reload() => setState(() {
+        _data = _load();
+      });
 
   Future<void> _open(Widget screen) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
@@ -80,7 +82,7 @@ class _MyShopScreenState extends ConsumerState<MyShopScreen> {
           ),
         ],
       ),
-    ).whenComplete(controller.dispose);
+    ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
     if (reason == null || !mounted) return;
     if (await apiGuard(context, () => api.requestShopClose(shop.id, reason)) != null && mounted) {
       showToast(context, s.t('shop_close_sent'));

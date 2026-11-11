@@ -22,7 +22,10 @@ class AdsScreen extends ConsumerStatefulWidget {
 class _AdsScreenState extends ConsumerState<AdsScreen> {
   late Future<List<Ad>> _ads = ref.read(sadoApiProvider).myAds();
 
-  void _reload() => setState(() => _ads = ref.read(sadoApiProvider).myAds());
+  // Block body: an arrow would hand the new Future back to setState, which throws.
+  void _reload() => setState(() {
+        _ads = ref.read(sadoApiProvider).myAds();
+      });
 
   Future<void> _open(Widget screen) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));

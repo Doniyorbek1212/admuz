@@ -13,6 +13,7 @@ import 'core/file_guard.dart';
 import 'core/formatters.dart';
 import 'core/live_location.dart';
 import 'core/media_saver.dart';
+import 'core/message_tones.dart';
 import 'core/notifications.dart';
 import 'core/push.dart';
 import 'core/tdlib/td_client.dart';
@@ -227,9 +228,14 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
       return;
     }
     if (!mounted) return;
+    final tone = settings.toneFor(message.chatId);
+    // MIUI and others mute the notification of the app on screen; ring from the app instead.
+    if (inForeground) unawaited(MessageTones.play(tone));
     unawaited(MessageNotifier.instance.showMessage(
       account: _account,
       message: message,
+      tone: tone,
+      silent: inForeground,
       strings: Strings(settings.localeCode),
       // While a passcode is set, notifications never show message text.
       showPreview: settings.messagePreview && !ref.read(appLockProvider).enabled && !settings.hiddenChatIds.contains(message.chatId),

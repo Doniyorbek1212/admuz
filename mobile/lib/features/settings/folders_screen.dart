@@ -10,6 +10,7 @@ import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import 'privacy_screen.dart' show promptText;
@@ -174,6 +175,11 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
   );
   if (!context.mounted) return;
   switch (action) {
+    case 'read' when ProviderScope.containerOf(context, listen: false).read(settingsProvider).ghostMode:
+      // Ghost mode: read on this phone only, so no sender gets a read receipt.
+      for (final chat in [...account.chats.values]) {
+        if (chat.chatLists.any((l) => chatListKey(l) == listKey)) account.markReadLocally(chat.id);
+      }
     case 'read':
       await guard(context, () => account.send<td.Ok>(td.ReadChatList(chatList: list)));
     case 'pinned':

@@ -24,10 +24,14 @@ class MarketSettings:
     ads_personalization: int = 1
     ads_interest_weight: int = 70
     ads_interest_half_life_days: int = 14
+    # "Kimlarga ko'rsatilsin" in the app's new-ad form: 1 the advertiser picks topics, 0 hidden (guessed from the text).
+    ads_topic_picker: int = 1
     # Short UZARO usernames by length, in so'm; 0 = that length is not on sale (5+ characters are always free).
     username_price_2_uzs: int = 0
     username_price_3_uzs: int = 0
     username_price_4_uzs: int = 0
+    # UZARO badge next to the name (checkmark or custom emoji), per 30 days, in so'm; 0 = not on sale.
+    badge_price_uzs: int = 15_000
 
 
 EDITABLE = tuple(f.name for f in fields(MarketSettings))

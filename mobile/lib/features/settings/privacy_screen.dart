@@ -441,7 +441,7 @@ Future<String?> promptText(BuildContext context, {required String title, require
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),
       ],
     ),
-  ).whenComplete(controller.dispose);
+  ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
 }
 
 final _blockedProvider = FutureProvider.autoDispose<List<td.MessageSender>>((ref) async {

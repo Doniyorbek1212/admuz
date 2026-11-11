@@ -473,6 +473,7 @@ async function renderSettings(el) {
         ${field('username_price_2_uzs', "2 harfli nom (so'm)", s.username_price_2_uzs, 'number', '0 — sotilmaydi')}
         ${field('username_price_3_uzs', "3 harfli nom (so'm)", s.username_price_3_uzs, 'number', '0 — sotilmaydi')}
         ${field('username_price_4_uzs', "4 harfli nom (so'm)", s.username_price_4_uzs, 'number', "0 — sotilmaydi. 5+ harfli nomlar bepul. Sotib olish: ilova, uzaromessenger.uz/nom va bot.")}
+        ${field('badge_price_uzs', "Ism yonidagi belgi, 30 kun (so'm)", s.badge_price_uzs, 'number', "Galochka yoki istalgan emoji. 0 — sotilmaydi.")}
       </div>
       <h3>To'lov kartasi</h3>
       <div class="form-grid">
@@ -485,6 +486,10 @@ async function renderSettings(el) {
           <option value="1" ${s.ads_personalization ? 'selected' : ''}>Yoqilgan: har kimga qiziqishiga mos reklama</option>
           <option value="0" ${s.ads_personalization ? '' : 'selected'}>O'chirilgan: hammaga navbat bilan</option></select>
           <small>O'chirilganda yangi qiziqishlar yig'ilmaydi.</small></div>
+        <div class="field"><label for="ads_topic_picker">"Kimlarga ko'rsatilsin" bo'limi</label><select id="ads_topic_picker" ${owner ? '' : 'disabled'}>
+          <option value="1" ${s.ads_topic_picker ? 'selected' : ''}>Yoqilgan: reklama beruvchi o'zi tanlaydi</option>
+          <option value="0" ${s.ads_topic_picker ? '' : 'selected'}>O'chirilgan: ilovada ko'rinmaydi</option></select>
+          <small>O'chirilganda mavzular reklama matnidan avtomatik aniqlanadi.</small></div>
         ${field('ads_interest_weight', "Qiziqish ta'siri (%)", s.ads_interest_weight, 'number', "0 — oddiy navbat, 100 — faqat qiziqish. Tavsiya: 70. Mos kelmagan reklama ham baribir ko'rinadi.")}
         ${field('ads_interest_half_life_days', 'Qiziqish eskirishi (kun)', s.ads_interest_half_life_days, 'number', "Shuncha kundan keyin eski qiziqish ikki baravar kuchsizlanadi. Tavsiya: 14.")}
       </div>
@@ -500,8 +505,8 @@ async function renderSettings(el) {
   el.querySelector('#settings-form').onsubmit = async (e) => {
     e.preventDefault();
     const body = {};
-    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build', 'ads_personalization', 'ads_interest_weight',
-      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
+    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build', 'ads_personalization', 'ads_topic_picker', 'ads_interest_weight',
+      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs', 'badge_price_uzs'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
     ['ad_payment_card', 'ad_payment_card_holder', 'app_version', 'app_release_notes'].forEach((k) => { body[k] = el.querySelector(`#${k}`).value.trim(); });
     body.ads_interest_half_life_days = Math.max(1, Number(el.querySelector('#ads_interest_half_life_days').value || 14));
     await run(() => api('/v1/admin/settings', { method: 'PUT', body }), 'Sozlamalar saqlandi');

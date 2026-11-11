@@ -297,6 +297,8 @@ class _ListCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        // Gold frame of the UZARO look.
+        border: Border.all(color: brandGold, width: 1.4),
         boxShadow: [BoxShadow(color: theme.colorScheme.primary.withValues(alpha: 0.08), blurRadius: 16, offset: const Offset(0, -2))],
       ),
       child: child,

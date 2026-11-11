@@ -97,7 +97,11 @@ class _AttachSheetState extends State<_AttachSheet> {
       return;
     }
     // The first path is "Recent" (all media); the rest are the device's folders.
-    final albums = await PhotoManager.getAssetPathList(type: RequestType.common);
+    // Newest first: without an explicit order some ROMs (MIUI) list the oldest photos first.
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.common,
+      filterOption: FilterOptionGroup(orders: const [OrderOption(type: OrderOptionType.createDate, asc: false)]),
+    );
     if (!mounted) return;
     setState(() {
       _hasAccess = true;

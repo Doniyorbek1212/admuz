@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -18,7 +20,8 @@ class AdBannerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final direct = ad.isVideo && youtubeId(ad.mediaUrl) == null && isLoadableMedia(ad.mediaUrl);
     return Material(
-      color: Colors.black,
+      // A picture still loading shows a light card, not a black slab; videos keep black behind the frame.
+      color: ad.isVideo ? Colors.black : Theme.of(context).colorScheme.surfaceContainerHighest,
       child: InkWell(
         onTap: onTap,
         child: Stack(
@@ -59,20 +62,45 @@ class _LoopingVideo extends StatefulWidget {
   State<_LoopingVideo> createState() => _LoopingVideoState();
 }
 
+/// Ad videos stay loaded between hub visits: coming back plays them at once instead of a dark box while
+/// the stream reconnects. Least recently shown is dropped past [_keptVideos]; the carousel mounts at most the
+/// current page and its neighbours, so a dropped one is already off screen.
+const _keptVideos = 4;
+final _videoCache = <String, Future<VideoPlayerController>>{};
+
+Future<VideoPlayerController> _adVideo(String url) {
+  final cached = _videoCache.remove(url);
+  if (cached != null) return _videoCache[url] = cached; // re-insert: most recently used last
+  final controller = VideoPlayerController.networkUrl(Uri.parse(resolveMediaUrl(url)));
+  final ready = controller.initialize().then((_) async {
+    await controller.setVolume(0);
+    await controller.setLooping(true);
+    return controller;
+  });
+  _videoCache[url] = ready;
+  // A failed load is not kept, so the next visit tries again.
+  unawaited(ready.then<void>((_) {}, onError: (Object _) {
+    if (identical(_videoCache[url], ready)) _videoCache.remove(url);
+    unawaited(controller.dispose());
+  }));
+  while (_videoCache.length > _keptVideos) {
+    final oldest = _videoCache.keys.first;
+    unawaited(_videoCache.remove(oldest)!.then((c) => c.dispose(), onError: (Object _) {}));
+  }
+  return ready;
+}
+
 class _LoopingVideoState extends State<_LoopingVideo> {
-  late final VideoPlayerController _controller = VideoPlayerController.networkUrl(Uri.parse(resolveMediaUrl(widget.url)));
+  VideoPlayerController? _controller;
   bool _failed = false;
 
   @override
   void initState() {
     super.initState();
-    _controller.initialize().then((_) {
+    _adVideo(widget.url).then((controller) {
       if (!mounted) return;
-      _controller
-        ..setVolume(0)
-        ..setLooping(true)
-        ..play();
-      setState(() {});
+      unawaited(controller.play());
+      setState(() => _controller = controller);
     }, onError: (Object error) {
       debugPrint('ad video failed: $error');
       if (mounted) setState(() => _failed = true);
@@ -81,17 +109,19 @@ class _LoopingVideoState extends State<_LoopingVideo> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    // Kept in the cache for the next visit; only stops playing off screen.
+    unawaited(_controller?.pause());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_failed || !_controller.value.isInitialized) return AdMediaPreview(url: widget.url, isVideo: true);
+    final controller = _controller;
+    if (_failed || controller == null || !controller.value.isInitialized) return AdMediaPreview(url: widget.url, isVideo: true);
     return FittedBox(
       fit: BoxFit.cover,
       clipBehavior: Clip.hardEdge,
-      child: SizedBox(width: _controller.value.size.width, height: _controller.value.size.height, child: VideoPlayer(_controller)),
+      child: SizedBox(width: controller.value.size.width, height: controller.value.size.height, child: VideoPlayer(controller)),
     );
   }
 }

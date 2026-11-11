@@ -212,7 +212,13 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
   }
 
   /// Who the ad is aimed at: it is shown more to people interested in these topics (optional, at most 3).
-  Widget _topicsCard(BuildContext context) {
+  /// Hidden while the admin panel turns the picker off; the server then guesses topics from the text.
+  Widget _topicsCard(BuildContext context) => FutureBuilder<AdsConfig>(
+        future: _config,
+        builder: (context, snapshot) => snapshot.data?.topicsEnabled ?? false ? _topicChips(context) : const SizedBox.shrink(),
+      );
+
+  Widget _topicChips(BuildContext context) {
     final s = context.s;
     final full = _topics.length >= maxAdTopics;
     return SettingsGroup(title: s.t('ad_topics'), children: [

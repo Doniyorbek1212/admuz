@@ -80,7 +80,6 @@ const hubLocalItems = [
   HubItem('hub_banks', Icons.credit_card_rounded, Color(0xFF26C6B0), action: HubAction.places, placeCategory: 'bank', query: 'bank', mapQuery: 'bank'),
   HubItem('hub_travel', Icons.map_rounded, Color(0xFFFF5C8A), action: HubAction.places, placeCategory: 'travel', query: 'sayohat', mapQuery: 'tourist attractions'),
   HubItem('hub_food', Icons.restaurant_rounded, Color(0xFFFF8A3D), action: HubAction.places, placeCategory: 'food', query: 'oshxona', mapQuery: 'restaurant'),
-  HubItem('hub_shops', Icons.storefront_rounded, Color(0xFF3D8BFF), action: HubAction.shops),
 ];
 
 const hubFunItems = [
@@ -91,6 +90,7 @@ const hubFunItems = [
   HubItem('hub_themes', Icons.palette_rounded, Color(0xFFFF5C8A), action: HubAction.themes),
   HubItem('hub_greetings', Icons.mail_rounded, Color(0xFFFF7A59), query: 'tabriklar'),
   HubItem('hub_gifts', Icons.card_giftcard_rounded, Color(0xFF26C6B0), action: HubAction.gifts, query: "sovg'alar"),
+  HubItem('hub_shops', Icons.storefront_rounded, Color(0xFF3D8BFF), action: HubAction.shops),
 ];
 
 const hubToolItems = [

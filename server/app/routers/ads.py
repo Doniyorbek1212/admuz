@@ -59,6 +59,7 @@ async def ads_config(current: CustomerDep, db: DbDep) -> dict[str, Any]:
         "shop_free_limit": settings.shop_free_limit,
         "topics": list(TOPICS),
         "max_topics": MAX_AD_TOPICS,
+        "topics_enabled": bool(settings.ads_topic_picker),
     }
 
 
@@ -124,6 +125,9 @@ async def create_ad(body: AdIn, current: CustomerDep, db: DbDep) -> dict[str, An
         if owned is None:
             raise bad_request("MEDIA_NOT_FOUND")
     regions = sorted(set(body.regions), key=REGIONS.index)
+    settings = await load_market_settings(db)
+    # With the picker turned off in the admin panel, older apps' choices are ignored too.
+    chosen = clean_topics(body.topics) if settings.ads_topic_picker else []
     ad = AdCampaign(
         customer_id=current.id,
         title=body.title,
@@ -133,8 +137,8 @@ async def create_ad(body: AdIn, current: CustomerDep, db: DbDep) -> dict[str, An
         link_url=body.link_url,
         regions=regions,
         days=body.days,
-        topics=clean_topics(body.topics) or guess_topics(body.title, body.text),
-        price_uzs=ad_price(len(regions), body.days, (await load_market_settings(db)).ad_price_per_region_day_uzs),
+        topics=chosen or guess_topics(body.title, body.text),
+        price_uzs=ad_price(len(regions), body.days, settings.ad_price_per_region_day_uzs),
         status=AdStatus.AWAITING_PAYMENT,
     )
     db.add(ad)

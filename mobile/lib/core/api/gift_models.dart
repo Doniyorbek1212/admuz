@@ -62,19 +62,39 @@ class GiftItem {
 
 /// What UZARO users see on someone's profile: their visible gifts and the background they picked.
 class ProfileGifts {
-  const ProfileGifts(this.gifts, this.background);
+  const ProfileGifts(this.gifts, this.background, [this.pattern]);
 
   static const empty = ProfileGifts([], null);
 
   factory ProfileGifts.fromJson(Map<String, dynamic> j) => ProfileGifts(
         [for (final g in j['items'] as List? ?? const []) SentGift.fromJson(g as Map<String, dynamic>)],
         parseBackground(j['background'] as String?),
+        switch (j['pattern']) {
+          final String p when p.isNotEmpty => p,
+          _ => null,
+        },
       );
 
   final List<SentGift> gifts;
 
   /// Header gradient as ARGB colors (one or two), or null for none.
   final List<int>? background;
+
+  /// Scattered over the header: a custom emoji id (digits) or a plain emoji; null for none.
+  final String? pattern;
+}
+
+/// The chat list's glimpse of someone's gifts (/v1/gifts/top): their dearest different gifts and how many they show.
+class GiftShowcase {
+  const GiftShowcase(this.total, this.gifts);
+
+  factory GiftShowcase.fromJson(Map<String, dynamic> j) => GiftShowcase(
+        j['total'] as int? ?? 0,
+        [for (final g in j['gifts'] as List? ?? const []) SentGift.fromJson(g as Map<String, dynamic>)],
+      );
+
+  final int total;
+  final List<SentGift> gifts;
 }
 
 /// "#rrggbb" or "#rrggbb,#rrggbb" to opaque ARGB ints; null when empty or malformed.
@@ -93,6 +113,8 @@ class SentGift {
     required this.text,
     required this.hidden,
     required this.createdAt,
+    this.anonymous = false,
+    this.senderHidden = false,
   });
 
   factory SentGift.fromJson(Map<String, dynamic> j) => SentGift(
@@ -103,15 +125,25 @@ class SentGift {
         text: j['text'] as String? ?? '',
         hidden: j['hidden'] as bool? ?? false,
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.now(),
+        anonymous: j['anonymous'] as bool? ?? false,
+        senderHidden: j['sender_hidden'] as bool? ?? false,
       );
 
   final String id;
   final GiftItem gift;
+
+  /// 0 when the sender is hidden from this viewer (an anonymous gift, or one whose recipient hid the name).
   final int senderTelegramId;
   final int recipientTelegramId;
   final String text;
   final bool hidden;
   final DateTime createdAt;
+
+  /// The sender chose "hide my name": only the recipient sees who it is.
+  final bool anonymous;
+
+  /// The recipient hid the sender's name from people opening their profile.
+  final bool senderHidden;
 }
 
 class WalletTopup {
@@ -147,6 +179,31 @@ class Wallet {
   final String card;
   final String cardHolder;
   final List<WalletTopup> topups;
+}
+
+/// The user's own UZARO badge (checkmark or custom emoji next to the name), its monthly price and the balance.
+class BadgeOffer {
+  const BadgeOffer({required this.priceUzs, required this.days, required this.emojiId, required this.expiresAt, required this.balanceUzs});
+
+  factory BadgeOffer.fromJson(Map<String, dynamic> j) {
+    final badge = j['badge'] as Map<String, dynamic>?;
+    return BadgeOffer(
+      priceUzs: j['price_uzs'] as int,
+      days: j['days'] as int,
+      emojiId: badge == null ? null : int.parse(badge['emoji_id'] as String),
+      expiresAt: badge == null ? null : DateTime.parse(badge['expires_at'] as String).toLocal(),
+      balanceUzs: j['balance_uzs'] as int? ?? 0,
+    );
+  }
+
+  /// Price of one period of [days] days; 0 when badges are not on sale.
+  final int priceUzs;
+  final int days;
+
+  /// The running badge's custom emoji id, 0 for the checkmark; null when the user has none.
+  final int? emojiId;
+  final DateTime? expiresAt;
+  final int balanceUzs;
 }
 
 /// A one-time code the app sends to the gifts bot as "/start <code>" to prove the user's Telegram id.

@@ -12,14 +12,15 @@ const WEB = path.resolve(__dirname, "../web");
 const BASE = "https://uzaromessenger.uz/";
 const LANGS = ["uz", "ru", "en"];
 const LOCALE = { uz: "uz_UZ", ru: "ru_RU", en: "en_US" };
-const PAGES = ["", "docs.html", "privacy.html", "nom.html"]; // "" is index.html
+const PAGES = ["", "docs.html", "privacy.html", "nom.html", "terms.html"]; // "" is index.html
 // Public path of each page; nginx serves privacy.html at /privacy (the address the app and stores link to).
-const PUBLIC = { "": "", "docs.html": "docs.html", "privacy.html": "privacy", "nom.html": "nom.html" };
+const PUBLIC = { "": "", "docs.html": "docs.html", "privacy.html": "privacy", "nom.html": "nom.html", "terms.html": "terms.html" };
 // Title, description and breadcrumb name of the inner pages.
 const META = {
   "docs.html": ["d_meta_title", "d_lead", "d_title"],
   "privacy.html": ["p_meta_title", "p_lead", "p_title"],
   "nom.html": ["n_meta_title", "n_lead", "n_title"],
+  "terms.html": ["t_meta_title", "t_lead", "t_title"],
 };
 const ALT_NAMES = ["Uzaro", "UZARO Messenger", "Uzaro messenjer", "Узаро", "uzaromessenger"];
 // data-i18n-<suffix>="key" fills the attribute named here.
@@ -75,7 +76,7 @@ function localizeLinks(html, lang) {
   if (lang === "uz") return out;
   // Links to the home page, the guide and the policy stay in the reader's language; /download is shared.
   out = out.replace(/<a\b[^>]*>/g, (a) =>
-    /\shreflang=/.test(a) ? a : a.replace(/\shref="\/(#[^"]*|docs\.html[^"]*|nom\.html[^"]*|privacy)?"/, (m, rest) => ` href="/${lang}/${rest || ""}"`),
+    /\shreflang=/.test(a) ? a : a.replace(/\shref="\/(#[^"]*|docs\.html[^"]*|nom\.html[^"]*|terms\.html[^"]*|privacy)?"/, (m, rest) => ` href="/${lang}/${rest || ""}"`),
   );
   return out;
 }
@@ -99,7 +100,7 @@ function jsonLd(lang, page) {
         applicationCategory: "CommunicationApplication",
         description: t(lang, "meta_desc"),
         url: url(lang, ""),
-        downloadUrl: [PLAY, APPSTORE, `${BASE}download`, `${BASE}windows/UZARO-Setup-1.1.5.exe`],
+        downloadUrl: [PLAY, APPSTORE, `${BASE}download`, `${BASE}windows/UZARO-Setup-1.1.6.exe`],
         installUrl: PLAY,
         sameAs: [PLAY, APPSTORE],
         inLanguage: LANGS,

@@ -47,6 +47,20 @@ class HubTab extends ConsumerWidget {
           children: [
             const HubBanners(),
             _HubSection(
+              icon: Icons.auto_awesome_rounded,
+              color: const Color(0xFFFF5C8A),
+              title: s.t('hub_fun'),
+              trailing: _count(context, hubFunItems.length),
+              items: hubFunItems,
+            ),
+            _HubSection(
+              icon: Icons.handyman_rounded,
+              color: const Color(0xFF2EC27E),
+              title: s.t('hub_tools'),
+              trailing: _count(context, toolItems.length),
+              items: toolItems,
+            ),
+            _HubSection(
               icon: Icons.location_on_rounded,
               color: const Color(0xFF2EC27E),
               title: s.t('hub_region'),
@@ -64,20 +78,6 @@ class HubTab extends ConsumerWidget {
                   ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlacesScreen()))
                   : _pickRegion(context, ref),
               items: hubLocalItems,
-            ),
-            _HubSection(
-              icon: Icons.auto_awesome_rounded,
-              color: const Color(0xFFFF5C8A),
-              title: s.t('hub_fun'),
-              trailing: _count(context, hubFunItems.length),
-              items: hubFunItems,
-            ),
-            _HubSection(
-              icon: Icons.handyman_rounded,
-              color: const Color(0xFF2EC27E),
-              title: s.t('hub_tools'),
-              trailing: _count(context, toolItems.length),
-              items: toolItems,
             ),
           ],
         ),

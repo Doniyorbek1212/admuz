@@ -18,6 +18,7 @@ import '../../core/live_location.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../core/video_note_crop.dart';
+import '../../core/video_thumbnail.dart';
 import 'video_note_shapes.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -39,6 +40,7 @@ import 'composer_panels.dart';
 import 'composer_suggestions.dart';
 import 'contact_picker.dart';
 import 'location_picker.dart';
+import 'message_content.dart' show replyThumb, withoutMediaEmoji;
 import 'message_tools.dart';
 import 'poll_creator.dart';
 import 'time_capsule_view.dart';
@@ -815,13 +817,15 @@ class ComposerState extends ConsumerState<Composer> {
     }
     for (var start = 0; start < pick.media.length; start += 10) {
       final batch = pick.media.sublist(start, min(pick.media.length, start + 10));
+      final covers = await Future.wait([for (final m in batch) m.isVideo ? videoThumbnail(m.path) : Future<td.InputThumbnail?>.value()]);
       if (!mounted) return;
       await guard(context, () => account.sendAlbum(
             chatId,
             [
               for (final (i, m) in batch.indexed)
                 m.isVideo
-                    ? videoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height, duration: m.duration)
+                    ? videoContent(m.path,
+                        caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height, duration: m.duration, thumbnail: covers[i])
                     : photoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height),
             ],
             replyToId: start == 0 ? replyId : null,
@@ -1940,6 +1944,8 @@ class _ReferenceBar extends ConsumerWidget {
     final account = ref.watch(accountProvider);
     final s = context.s;
     final primary = Theme.of(context).colorScheme.primary;
+    final thumb = replyThumb(message.content);
+    final preview = messagePreview(message, account, s);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
       child: Row(
@@ -1948,6 +1954,7 @@ class _ReferenceBar extends ConsumerWidget {
           const SizedBox(width: 10),
           Container(width: 2, height: 36, color: primary),
           const SizedBox(width: 8),
+          if (thumb != null) ...[thumb, const SizedBox(width: 8)],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1957,7 +1964,7 @@ class _ReferenceBar extends ConsumerWidget {
                   style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 14),
                 ),
                 Text(
-                  messagePreview(message, account, s).replaceAll('\n', ' '),
+                  (thumb == null ? preview : withoutMediaEmoji(preview)).replaceAll('\n', ' '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 14),

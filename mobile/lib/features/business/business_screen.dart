@@ -22,7 +22,9 @@ class BusinessScreen extends ConsumerStatefulWidget {
 class _BusinessScreenState extends ConsumerState<BusinessScreen> {
   late Future<MyShops> _data = ref.read(sadoApiProvider).myShops();
 
-  void _reload() => setState(() => _data = ref.read(sadoApiProvider).myShops());
+  void _reload() => setState(() {
+        _data = ref.read(sadoApiProvider).myShops();
+      });
 
   Future<void> _open(Widget screen) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
