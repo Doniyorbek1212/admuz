@@ -94,7 +94,8 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.docs_enabled else None,
         redoc_url=None,
     )
-    routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests, usernames, banned_channels, quick_links)
+    routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests,
+               usernames, banned_channels, quick_links)
     admin_routers = (admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
     for module in routers + admin_routers:
         app.include_router(module.router)
