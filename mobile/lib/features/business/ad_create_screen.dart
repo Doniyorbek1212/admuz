@@ -98,7 +98,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
         InputDecoration(labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: icon == null ? null : Icon(icon), border: const OutlineInputBorder());
     final preview = Ad(
       id: 'preview',
-      title: _title.text.trim().isEmpty ? s.t('ad_title') : _title.text.trim(),
+      title: _title.text.trim(),
       text: _text.text.trim(),
       isVideo: _isVideo,
       mediaUrl: _media.text.trim(),
@@ -126,7 +126,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextFormField(controller: _title, maxLength: 60, decoration: field(s.t('ad_title'), icon: Icons.title_rounded), validator: (v) => validateRequired(context, v)),
+                    TextFormField(controller: _title, maxLength: 60, decoration: field(s.t('ad_title'), icon: Icons.title_rounded)),
                     const SizedBox(height: 6),
                     TextFormField(controller: _text, maxLength: 160, maxLines: 2, decoration: field(s.t('ad_text'), icon: Icons.notes_rounded)),
                     const SizedBox(height: 6),

@@ -10,6 +10,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 
 /**
@@ -75,7 +77,30 @@ class KeepAliveService : Service() {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY, false)
 
         fun setEnabled(context: Context, enabled: Boolean) {
-            if (enabled) start(context) else context.stopService(Intent(context, KeepAliveService::class.java))
+            if (!enabled) {
+                context.stopService(Intent(context, KeepAliveService::class.java))
+                return
+            }
+            start(context)
+            openBatterySettingsIfOptimized(context)
+        }
+
+        /**
+         * Battery optimisation kills background connections (aggressively on MIUI). Only someone who turned keep-alive
+         * on is sent to the system list to exempt the app; that screen needs no permission (Play forbids
+         * REQUEST_IGNORE_BATTERY_OPTIMIZATIONS for apps that have push).
+         */
+        private fun openBatterySettingsIfOptimized(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+            val power = context.getSystemService(PowerManager::class.java)
+            if (power == null || power.isIgnoringBatteryOptimizations(context.packageName)) return
+            try {
+                context.startActivity(
+                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "battery settings unavailable: $error") // some ROMs hide this screen
+            }
         }
 
         /** Never throws: Android 12+ refuses foreground starts from the background, which is retried on the next app open. */

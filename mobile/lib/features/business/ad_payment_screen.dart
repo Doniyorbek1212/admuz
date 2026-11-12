@@ -70,7 +70,7 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
           ),
           SettingsGroup(children: [
             ListTile(
-              title: Text(_ad.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+              title: Text(_ad.label(s.t('hub_ads')), style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Text(s.t('ad_regions_list', {'list': _ad.regions.join(', ')})),
               trailing: StatusChip.ad(_ad),
             ),

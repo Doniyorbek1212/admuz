@@ -22,6 +22,12 @@ class MessageArchive {
 
   /// Recently seen messages, oldest first: the source the copies are taken from.
   final Map<String, td.Message> _recent = {};
+
+  /// Text of messages seen before, kept across restarts: an edit made while the app was closed (or the message
+  /// was not loaded) is noticed when the message shows up again with a newer text.
+  final Map<String, ({String text, int date})> _seenTexts = {};
+  Timer? _seenSaveTimer;
+  String get _seenPath => '$_path.texts';
   final Map<String, td.Message> _deleted = {};
   final Map<String, List<MessageVersion>> _edits = {};
 
@@ -35,6 +41,8 @@ class MessageArchive {
 
   static const _recentLimit = 5000;
   static const _storedLimit = 3000;
+  static const _seenLimit = 5000;
+  static const _seenSaveDelay = Duration(seconds: 15);
 
   static String _key(int chatId, int messageId) => '$chatId:$messageId';
 
@@ -49,10 +57,35 @@ class MessageArchive {
 
   void remember(td.Message message) {
     final key = _key(message.chatId, message.id);
+    final text = _textOf(message.content);
+    final seen = _seenTexts[key];
+    // Edited since this device last saw it, and the change never arrived as an update: keep the text it saw.
+    if (keepEdits && text != null && seen != null && seen.text != text && message.editDate > 0 && _recent[key] == null) {
+      _addVersion(key, _plainText(seen.text), seen.date);
+    }
     _recent
       ..remove(key)
       ..[key] = message;
     if (_recent.length > _recentLimit) _recent.remove(_recent.keys.first);
+    if (text != null) _rememberText(key, text, message.editDate > 0 ? message.editDate : message.date);
+  }
+
+  void _rememberText(String key, String text, int date) {
+    if (!keepEdits || _seenTexts[key]?.text == text) return;
+    _seenTexts
+      ..remove(key)
+      ..[key] = (text: text, date: date);
+    if (_seenTexts.length > _seenLimit) _seenTexts.remove(_seenTexts.keys.first);
+    _seenSaveTimer?.cancel();
+    _seenSaveTimer = Timer(_seenSaveDelay, () => unawaited(_saveSeen()));
+  }
+
+  void _addVersion(String key, td.MessageContent content, int date) {
+    final versions = _edits.putIfAbsent(key, () => []);
+    // The same old text can be noticed twice (an update, then a reload): keep one copy.
+    if (versions.isNotEmpty && _textOf(versions.last.content) == _textOf(content)) return;
+    versions.add((content: content, date: date));
+    _changed();
   }
 
   void rememberAll(Iterable<td.Message> messages) => messages.forEach(remember);
@@ -65,13 +98,17 @@ class MessageArchive {
   void onContentChanged(int chatId, int messageId, td.MessageContent content) {
     final key = _key(chatId, messageId);
     final old = _recent[key];
-    if (old == null) return;
-    _recent[key] = old.copyWith(content: content);
+    final newText = _textOf(content);
+    final seen = _seenTexts[key];
+    if (old != null) _recent[key] = old.copyWith(content: content);
     // Polls, live locations and the like change content without an edit; only text changes are versions.
-    final oldText = _textOf(old.content);
-    if (!keepEdits || oldText == null || oldText == _textOf(content)) return;
-    _edits.putIfAbsent(key, () => []).add((content: old.content, date: old.editDate > 0 ? old.editDate : old.date));
-    _changed();
+    // Not loaded this run, the text seen in an earlier one is the version that was replaced.
+    final oldText = old == null ? seen?.text : _textOf(old.content);
+    final oldDate = old == null ? seen?.date : (old.editDate > 0 ? old.editDate : old.date);
+    if (keepEdits && newText != null && oldText != null && oldDate != null && oldText != newText) {
+      _addVersion(key, old?.content ?? _plainText(oldText), oldDate);
+    }
+    if (newText != null) _rememberText(key, newText, DateTime.now().millisecondsSinceEpoch ~/ 1000);
   }
 
   void onEdited(int chatId, int messageId, int editDate) {
@@ -89,6 +126,7 @@ class MessageArchive {
     final prefix = '$chatId:';
     _deleted.removeWhere((key, _) => key.startsWith(prefix));
     _edits.removeWhere((key, _) => key.startsWith(prefix));
+    _seenTexts.removeWhere((key, _) => key.startsWith(prefix));
     _changed();
   }
 
@@ -100,6 +138,7 @@ class MessageArchive {
     for (final id in messageIds) {
       final key = _key(chatId, id);
       final message = _recent.remove(key);
+      _seenTexts.remove(key);
       if (_ownDeletes.remove(key) || selfCleared) {
         changed |= _deleted.remove(key) != null;
         changed |= _edits.remove(key) != null;
@@ -123,7 +162,9 @@ class MessageArchive {
   void clear() {
     _deleted.clear();
     _edits.clear();
+    _seenTexts.clear();
     _changed();
+    unawaited(_saveSeen());
   }
 
   int get deletedCount => _deleted.length;
@@ -144,6 +185,28 @@ class MessageArchive {
       revision.value++;
     } on Object catch (error) {
       debugPrint('message archive unreadable: $error');
+    }
+    try {
+      if (await File(_seenPath).exists()) _seenTexts.addAll(await _readSeen(_seenPath));
+    } on Object catch (error) {
+      debugPrint('seen message texts unreadable: $error');
+    }
+  }
+
+  static Future<Map<String, ({String text, int date})>> _readSeen(String path) => Isolate.run(() => {
+        for (final MapEntry(:key, :value) in (jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>).entries)
+          if (value case [final String text, final int date]) key: (text: text, date: date),
+      });
+
+  Future<void> _saveSeen() async {
+    _seenSaveTimer?.cancel();
+    final data = jsonEncode({for (final MapEntry(:key, :value) in _seenTexts.entries) key: [value.text, value.date]});
+    try {
+      final temp = File('$_seenPath.tmp');
+      await temp.writeAsString(data, flush: true);
+      await temp.rename(_seenPath);
+    } on FileSystemException catch (error) {
+      debugPrint('seen message texts not saved: ${error.message}');
     }
   }
 
@@ -169,6 +232,7 @@ class MessageArchive {
 
   Future<void> save() async {
     _saveTimer?.cancel();
+    if (_seenSaveTimer?.isActive ?? false) await _saveSeen();
     while (_deleted.length > _storedLimit) {
       _deleted.remove(_deleted.keys.first);
     }
@@ -190,6 +254,8 @@ class MessageArchive {
       debugPrint('message archive not saved: ${error.message}');
     }
   }
+
+  static td.MessageContent _plainText(String text) => td.MessageText(text: td.FormattedText(text: text, entities: const []));
 
   static String? _textOf(td.MessageContent content) => switch (content) {
         td.MessageText(:final text) => text.text,

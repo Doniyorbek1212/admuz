@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/api/gift_models.dart';
+import '../../core/store_rules.dart';
 import '../../core/api/sado_api.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
@@ -136,7 +137,8 @@ class _UzaroUsernameScreenState extends ConsumerState<UzaroUsernameScreen> {
     final s = context.s;
     final (status, price) = await api.uzaroUsernameQuote(name);
     if (!mounted) return false;
-    if (status != 'for_sale') {
+    // Store builds may not sell digital goods for a balance topped up outside the store.
+    if (status != 'for_sale' || storeBlocksExternalPayments) {
       final key = status == 'taken' ? 'api_USERNAME_TAKEN' : 'api_USERNAME_SALE_CLOSED';
       showToast(context, s.t(key));
       return false;

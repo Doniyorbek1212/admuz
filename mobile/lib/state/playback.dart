@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
@@ -109,8 +110,21 @@ class Playback {
       await stop();
       return false;
     }
-    unawaited(player.play());
+    unawaited(_play());
     return true;
+  }
+
+  /// iOS keeps music and voice notes playing with the screen locked only in the playback audio category
+  /// (Info.plist declares the audio background mode). Set before every play: a call switches the session away.
+  Future<void> _play() async {
+    if (Platform.isIOS) {
+      try {
+        await (await AudioSession.instance).configure(const AudioSessionConfiguration.music());
+      } on PlatformException catch (error) {
+        debugPrint('audio session not configured: $error');
+      }
+    }
+    return player.play();
   }
 
   Future<void> togglePlay() async {
@@ -118,7 +132,7 @@ class Playback {
       await player.pause();
     } else {
       // play() completes only when playback stops, so it is not awaited.
-      unawaited(player.play());
+      unawaited(_play());
     }
   }
 
@@ -170,7 +184,7 @@ class Playback {
       await stop();
       return;
     }
-    unawaited(player.play());
+    unawaited(_play());
     if (content is td.MessageAudio) unawaited(_loadCover(content.audio, fileId));
   }
 
@@ -232,7 +246,7 @@ class Playback {
   Future<void> _onSystemControl(MethodCall call) async {
     switch (call.method) {
       case 'play':
-        unawaited(player.play());
+        unawaited(_play());
       case 'pause':
         await player.pause();
       case 'next':

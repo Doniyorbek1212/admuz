@@ -11,6 +11,7 @@ import '../../state/actions.dart';
 import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
+import '../../state/telegram.dart' show TelegramAccount;
 import '../../widgets/common.dart';
 import 'bot_keyboard.dart';
 import 'comments.dart';
@@ -65,6 +66,93 @@ class _RevealedRisky extends Notifier<Set<String>> {
   Set<String> build() => const {};
 
   void reveal(String key) => state = {...state, key};
+}
+
+/// Every version of an edited message, oldest first, ending with the current one.
+Future<void> showEditHistory(BuildContext context, TelegramAccount account, td.Message message) {
+  final s = context.s;
+  final versions = [
+    ...account.archive.versionsOf(message.chatId, message.id),
+    (content: message.content, date: message.editDate > 0 ? message.editDate : message.date),
+  ];
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(s.t('edit_history')),
+      content: SizedBox(
+        width: 420,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final (index, version) in versions.indexed)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: SelectableText(contentPreview(version.content, s) ?? ''),
+                subtitle: Text([
+                  index == versions.length - 1 ? s.t('edit_history_current') : s.t('edit_history_version', {'n': '${index + 1}'}),
+                  '${formatDayHeader(version.date, s)} ${formatTime(version.date, s.locale)}',
+                ].join(' · ')),
+              ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('ok')))],
+    ),
+  );
+}
+
+/// The text an edited message had before its last edit, inside the bubble; tapping it shows every version.
+class _PreviousVersion extends ConsumerWidget {
+  const _PreviousVersion({required this.message, required this.textColor});
+
+  final td.Message message;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final account = ref.watch(accountProvider);
+    final versions = account.archive.versionsOf(message.chatId, message.id);
+    if (versions.isEmpty) return const SizedBox.shrink();
+    final s = context.s;
+    final accent = Theme.of(context).brightness == Brightness.dark ? const Color(0xFFFFC857) : const Color(0xFFB7791F);
+    final label = versions.length > 1 ? '${s.t('edit_before')} · ${s.t('edit_versions', {'n': '${versions.length}'})}' : s.t('edit_before');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Material(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => showEditHistory(context, account, message),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: accent, width: 3))),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.history_rounded, size: 14, color: accent),
+                    const SizedBox(width: 4),
+                    Flexible(child: Text(label, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: accent))),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  contentPreview(versions.last.content, s) ?? '',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, height: 1.25, color: textColor.withValues(alpha: 0.75)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Placeholder for a folded message: why it is hidden and a button to show it.
@@ -176,7 +264,7 @@ class MessageBubble extends ConsumerWidget {
     final content = message.content;
     final bareMedia = content is td.MessageSticker || content is td.MessageAnimatedEmoji || content is td.MessageDice ||
         content is td.MessageVideoNote;
-    final isMediaBubble = content is td.MessagePhoto || content is td.MessageVideo || content is td.MessageAnimation;
+    final isMediaBubble = content is td.MessagePhoto || content is td.MessageVideo || content is td.MessageAnimation || isVideoDocument(content);
     final album = this.album;
     final text = album != null
         ? album.map((m) => captionOf(m.content)).firstWhere((c) => c != null && c.text.isNotEmpty, orElse: () => null)
@@ -255,6 +343,7 @@ class MessageBubble extends ConsumerWidget {
             ),
           ),
         ),
+      if (archived.hasVersions && !archived.deleted && !folded) _PreviousVersion(message: message, textColor: textColor),
       if (hasText && folded)
         _FoldedRiskyText(onShow: () => ref.read(_revealedRiskyProvider.notifier).reveal('${message.chatId}:${message.id}'))
       else if (hasText && inlineFooter)

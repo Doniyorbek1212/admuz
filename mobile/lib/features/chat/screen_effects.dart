@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 /// Full-chat celebrations played over the message list when a message or a reaction asks for one.
-enum ScreenEffect { confetti, hearts, fire }
+enum ScreenEffect { confetti, hearts, fire, anger }
+
+/// Angry faces in a text: the screen fills with them over a red glow.
+const _angerEmoji = ['😡', '🤬'];
 
 /// Keywords per effect (Uzbek first, then Russian and English). Matched at a word start, case- and apostrophe-insensitive.
 const _keywords = <ScreenEffect, List<String>>{
@@ -25,6 +28,8 @@ const _reactionEffects = <String, ScreenEffect>{
   '❤': ScreenEffect.hearts,
   '🔥': ScreenEffect.fire,
   '🎉': ScreenEffect.confetti,
+  '😡': ScreenEffect.anger,
+  '🤬': ScreenEffect.anger,
 };
 
 final _apostrophes = RegExp('[ʻʼ‘’`´]');
@@ -32,6 +37,7 @@ final _apostrophes = RegExp('[ʻʼ‘’`´]');
 /// The effect a message text asks for, or null. Long texts (articles, forwarded posts) never trigger one.
 ScreenEffect? effectForText(String text) {
   if (text.isEmpty || text.length > 300) return null;
+  if (_angerEmoji.any(text.contains)) return ScreenEffect.anger;
   final normalized = ' ${text.toLowerCase().replaceAll(_apostrophes, "'")}';
   for (final MapEntry(key: effect, value: words) in _keywords.entries) {
     for (final word in words) {
@@ -52,17 +58,17 @@ bool _isLetter(int unit) {
 /// The effect a reaction emoji asks for (the variation selector does not matter), or null.
 ScreenEffect? effectForReaction(String emoji) => _reactionEffects[emoji.replaceAll('️', '')];
 
-/// The effect of a reaction that was just added: compares emoji reaction counts before and after.
+/// The effect of a reaction this user just added. Other people's reactions never play one: in channels they
+/// arrive all the time, and opening a chat refreshes counts that grew while away.
 ScreenEffect? effectForNewReaction(td.MessageInteractionInfo? before, td.MessageInteractionInfo? after) {
-  Map<String, int> counts(td.MessageInteractionInfo? info) => {
+  Set<String> mine(td.MessageInteractionInfo? info) => {
         for (final reaction in info?.reactions?.reactions ?? const <td.MessageReaction>[])
-          if (reaction.type case td.ReactionTypeEmoji(:final emoji)) emoji: reaction.totalCount,
+          if (reaction.isChosen)
+            if (reaction.type case td.ReactionTypeEmoji(:final emoji)) emoji,
       };
-  final old = counts(before);
-  for (final MapEntry(key: emoji, value: count) in counts(after).entries) {
-    if (count > (old[emoji] ?? 0)) {
-      if (effectForReaction(emoji) case final effect?) return effect;
-    }
+  final old = mine(before);
+  for (final emoji in mine(after).difference(old)) {
+    if (effectForReaction(emoji) case final effect?) return effect;
   }
   return null;
 }
@@ -160,6 +166,7 @@ class _EffectPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final t = progress.value;
     final paint = Paint();
+    if (effect == ScreenEffect.anger) _paintRedGlow(canvas, size, t);
     for (final p in particles) {
       // Each particle runs on its own clock: starts after its delay, ends with the effect.
       final local = ((t - p.delay) / (1 - p.delay)).clamp(0.0, 1.0);
@@ -176,15 +183,19 @@ class _EffectPainter extends CustomPainter {
           paint.color = p.color.withValues(alpha: fade);
           canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset.zero, width: p.size, height: p.size * 0.55), const Radius.circular(1.5)), paint);
           canvas.restore();
-        case ScreenEffect.hearts || ScreenEffect.fire:
-          // Rises from the bottom; fire faster and flickering, hearts slower and swaying.
+        case ScreenEffect.hearts || ScreenEffect.fire || ScreenEffect.anger:
+          // Rises from the bottom; fire faster and flickering, hearts slower and swaying, angry faces shaking.
           final fire = effect == ScreenEffect.fire;
+          final anger = effect == ScreenEffect.anger;
           final y = 1.05 - local * (fire ? 1.1 : 0.95) * p.speed;
-          final x = p.x + math.sin(local * math.pi * (fire ? 5 : 2) + p.sway * 3) * (fire ? 0.02 : 0.05);
+          final x = p.x +
+              (anger
+                  ? math.sin(local * 70 + p.spin) * 0.008
+                  : math.sin(local * math.pi * (fire ? 5 : 2) + p.sway * 3) * (fire ? 0.02 : 0.05));
           final pop = local < 0.15 ? local / 0.15 : 1.0;
           final flicker = fire ? 1 + math.sin(local * 40 + p.spin) * 0.08 : 1.0;
-          final scale = p.size / 40 * pop * flicker;
-          final glyph = _glyph(fire ? '🔥' : '❤️');
+          final scale = p.size / 40 * pop * flicker * (anger ? 1.3 : 1.0);
+          final glyph = _glyph(anger ? _angerEmoji[p.sway > 0 ? 0 : 1] : (fire ? '🔥' : '❤️'));
           canvas.save();
           canvas.translate(x * size.width, y * size.height);
           canvas.scale(scale);
@@ -195,6 +206,22 @@ class _EffectPainter extends CustomPainter {
           canvas.restore();
       }
     }
+  }
+
+  /// The whole screen glows red from the edges, pulsing, then fades with the faces.
+  static void _paintRedGlow(Canvas canvas, Size size, double t) {
+    final envelope = t < 0.1 ? t / 0.1 : (t > 0.8 ? (1 - t) / 0.2 : 1.0);
+    final pulse = 0.8 + math.sin(t * math.pi * 8) * 0.2;
+    final strength = envelope * pulse;
+    final rect = Offset.zero & size;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = RadialGradient(
+          radius: 0.9,
+          colors: [const Color(0xFFFF1744).withValues(alpha: 0.12 * strength), const Color(0xFFB71C1C).withValues(alpha: 0.55 * strength)],
+        ).createShader(rect),
+    );
   }
 
   @override

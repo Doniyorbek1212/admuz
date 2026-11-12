@@ -73,6 +73,15 @@ async def test_ad_price_is_regions_times_days(new_customer):
     assert ad["regions"] == ["Toshkent", "Andijon"]
 
 
+async def test_ad_headline_is_optional(new_customer):
+    c = await new_customer()
+    picture_only = {k: v for k, v in AD.items() if k not in ("title", "text")}
+    resp = await c.post("/v1/ads", json=picture_only)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["title"] == ""
+    assert resp.json()["text"] == ""
+
+
 @pytest.mark.parametrize(
     "patch",
     [

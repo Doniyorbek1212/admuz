@@ -90,11 +90,14 @@ class PushService {
 
 /// Text of a Telegram push payload ({loc_key, loc_args, custom}) for a local notification.
 class PushContent {
-  const PushContent({required this.title, required this.body, required this.chatId});
+  const PushContent({required this.title, required this.body, required this.chatId, this.messageId});
 
   final String title;
   final String body;
   final int? chatId;
+
+  /// Server message id (Telegram's msg_id), for [NotifiedMessages].
+  final int? messageId;
 
   static Map<String, dynamic> _payload(Map<String, dynamic> data) {
     final nested = data['data'];
@@ -183,7 +186,7 @@ class PushContent {
     } else if (fromId != null) {
       chatId = fromId;
     }
-    return PushContent(title: title, body: body, chatId: chatId);
+    return PushContent(title: title, body: body, chatId: chatId, messageId: int.tryParse('${custom['msg_id'] ?? ''}'));
   }
 }
 
@@ -207,6 +210,9 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   final showPreview = (prefs.getBool('messagePreview') ?? true) && !(prefs.getBool('lock.enabled') ?? false);
   final content = PushContent.parse(message.data, strings, showPreview: showPreview);
   if (content == null) return;
+  // The app may still be running and have shown this message from TDLib's live update already.
+  final chatId = content.chatId, messageId = content.messageId;
+  if (chatId != null && messageId != null && !await NotifiedMessages.claim(chatId, messageId)) return;
   final plugin = FlutterLocalNotificationsPlugin();
   await plugin.initialize(settings: const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')));
   await plugin.show(
@@ -217,4 +223,27 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
     payload: content.chatId?.toString(),
     notificationDetails: NotificationDetails(android: MessageTones.android(MessageTones.fromPrefs(prefs, content.chatId))),
   );
+}
+
+/// The newest message per chat that already rang. The push isolate and the running app can both see the same
+/// message (the push, and TDLib's live update), so whichever comes second stays quiet; older messages
+/// delivered after a reconnect stay quiet too.
+abstract final class NotifiedMessages {
+  static String _key(int chatId) => 'notified.$chatId';
+
+  /// True when [serverMessageId] is newer than anything notified in [chatId] (and records it).
+  static Future<bool> claim(int chatId, int serverMessageId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload(); // the other isolate may have written since
+      if ((prefs.getInt(_key(chatId)) ?? 0) >= serverMessageId) return false;
+      await prefs.setInt(_key(chatId), serverMessageId);
+    } on Exception catch (error) {
+      debugPrint('notified-message check failed: $error'); // better a second ring than a lost notification
+    }
+    return true;
+  }
+
+  /// Telegram's server id of a TDLib message id; 0 for local (not yet sent) messages.
+  static int serverId(int tdMessageId) => tdMessageId % (1 << 20) == 0 ? tdMessageId >> 20 : 0;
 }

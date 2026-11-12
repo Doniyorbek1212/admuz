@@ -648,6 +648,24 @@ class BannedChannel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class QuickLink(Base):
+    """A site or app an admin pins to every user's hub "Tezkor" row (paid placement), before the user's own links.
+    Shown from position 1 up while active and until its last paid day (inclusive, Tashkent date)."""
+
+    __tablename__ = "quick_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(40))
+    url: Mapped[str] = mapped_column(String(500))
+    logo: Mapped[str] = mapped_column(String(64), default="")  # public media file name; "" = the app shows the letter
+    android_package: Mapped[str] = mapped_column(String(150), default="")  # opened instead of the site when installed
+    position: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str] = mapped_column(String(300), default="")  # who paid, contract: admins only
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class GiftItem(Base):
     """A gift in the UZARO catalog: an animated WebP/GIF on this server with a price in so'm."""
 

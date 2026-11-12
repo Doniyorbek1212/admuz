@@ -79,7 +79,7 @@ class _AdsScreenState extends ConsumerState<AdsScreen> {
       for (final ad in ads)
         ListTile(
           leading: ClipRRect(borderRadius: BorderRadius.circular(10), child: SizedBox(width: 64, height: 44, child: AdMediaPreview(url: ad.mediaUrl, isVideo: ad.isVideo))),
-          title: Text(ad.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(ad.label(s.t('hub_ads')), maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

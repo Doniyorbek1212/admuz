@@ -36,6 +36,7 @@ from app.routers import (
     places,
     profile,
     public,
+    quick_links,
     usernames,
 )
 from app.security import RedactingFilter
@@ -93,11 +94,12 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if settings.docs_enabled else None,
         redoc_url=None,
     )
-    routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests, usernames, banned_channels)
+    routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests, usernames, banned_channels, quick_links)
     admin_routers = (admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
     for module in routers + admin_routers:
         app.include_router(module.router)
     app.include_router(banned_channels.admin_router)
+    app.include_router(quick_links.admin_router)
     # The web admin panel: static files only; every action goes through the X-Admin-Key API.
     app.mount("/admin", StaticFiles(directory=ADMIN_WEB_DIR, html=True), name="admin")
 

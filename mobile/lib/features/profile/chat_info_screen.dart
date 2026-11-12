@@ -122,7 +122,7 @@ class ChatInfoScreen extends ConsumerWidget {
       if (user != null && user.phoneNumber.isNotEmpty)
         _InfoTile(icon: Icons.phone_rounded, title: '+${user.phoneNumber}', subtitle: s.t('mobile'), copy: '+${user.phoneNumber}'),
       if (info != null && info.about.isNotEmpty)
-        _InfoTile(icon: Icons.info_outline_rounded, title: info.about, subtitle: s.t(user != null ? 'bio' : 'description'), copy: info.about),
+        _InfoTile(icon: Icons.info_outline_rounded, title: info.about, subtitle: s.t(user != null ? 'bio' : 'description'), copy: info.about, links: true),
       if (username != null)
         _InfoTile(
           icon: Icons.alternate_email_rounded,
@@ -651,9 +651,12 @@ class _ProfileCard extends StatelessWidget {
 }
 
 class _InfoTile extends StatelessWidget {
-  const _InfoTile({required this.icon, required this.title, required this.subtitle, this.copy, this.share = false, this.onInfo});
+  const _InfoTile({required this.icon, required this.title, required this.subtitle, this.copy, this.share = false, this.onInfo, this.links = false});
 
   final VoidCallback? onInfo;
+
+  /// Links and @mentions in the text open on tap, as in Telegram (bio, group description).
+  final bool links;
   final IconData icon;
   final String title;
   final String subtitle;
@@ -663,7 +666,7 @@ class _InfoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListTile(
     leading: Icon(icon),
-    title: SelectableText(title),
+    title: links ? FormattedTextView(text: linkified(title)) : SelectableText(title),
     subtitle: Text(subtitle),
     onTap: onInfo,
     trailing: share

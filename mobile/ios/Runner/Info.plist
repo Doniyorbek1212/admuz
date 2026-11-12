@@ -5,7 +5,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>UZARO needs the camera to take photos and videos for your chats.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>UZARO needs the microphone to record voice messages.</string>
+	<string>UZARO needs the microphone for voice and video calls, voice messages and video messages.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>UZARO uses the local network to connect calls directly when the other person is nearby.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>UZARO needs access to your photos to send them in chats.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

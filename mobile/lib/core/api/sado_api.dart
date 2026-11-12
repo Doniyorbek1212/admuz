@@ -272,6 +272,9 @@ class SadoApi {
 
   Future<void> releaseUzaroUsername() => _delete('/v1/usernames/me');
 
+  /// Deletes this customer's UZARO data (profile, shops, links, balance access) on the server.
+  Future<void> deleteMyData() => _delete('/v1/customers/me');
+
   /// Stores this account's Telegram contact-link token so people without a shared chat can open it.
   Future<void> setUzaroContact(String token, int expiresIn) => _put('/v1/usernames/me/contact', {'token': token, 'expires_in': expiresIn});
 
@@ -379,6 +382,10 @@ class SadoApi {
 
   Future<List<Ad>> activeAds(String region) async =>
       [for (final a in await _get('/v1/ads/active', query: {'region': region}) as List) Ad.fromJson(a as Map<String, dynamic>)];
+
+  /// Sites and apps admins pin to everyone's hub "Tezkor" row, in their paid order.
+  Future<List<Map<String, dynamic>>> quickLinks() async =>
+      [for (final l in (await _get('/v1/quick-links') as Map<String, dynamic>)['items'] as List) l as Map<String, dynamic>];
 
   Future<List<Ad>> myAds() async => [for (final a in await _get('/v1/ads/mine') as List) Ad.fromJson(a as Map<String, dynamic>)];
 

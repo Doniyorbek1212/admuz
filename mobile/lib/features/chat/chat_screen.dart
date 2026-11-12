@@ -93,6 +93,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   late final ChatHistory _history;
   final _scroll = ScrollController();
   final _itemKeys = <int, GlobalKey>{};
+  static const _maxJumpPages = 60;
   final Set<int> _selected = {};
   td.Message? _replyTo;
   td.Message? _editing;
@@ -127,7 +128,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _history
       ..addListener(_onHistory)
       ..onLiveMessage = ((message) {
-        if (message.content case td.MessageText(:final text)) _playEffect(effectForText(text.text));
+        // Channel posts are announcements, not a conversation: a "rahmat" in one should not rain hearts.
+        final chat = _account.chats[widget.chatId];
+        if (chat != null && _account.isChannel(chat)) return;
+        switch (message.content) {
+          case td.MessageText(:final text):
+            _playEffect(effectForText(text.text));
+          // A lone emoji is sent as an animated one, not as text.
+          case td.MessageAnimatedEmoji(:final emoji):
+            _playEffect(effectForText(emoji));
+        }
       })
       ..onInteractionChanged = ((before, after) => _playEffect(effectForNewReaction(before, after)));
     _scroll.addListener(_onScroll);
@@ -225,18 +235,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
     setState(() => _highlighted = messageId);
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    final key = _itemKeys[messageId];
-    if (key?.currentContext != null) {
-      await Scrollable.ensureVisible(key!.currentContext!, alignment: 0.5, duration: const Duration(milliseconds: 300));
-    } else {
-      final index = _history.indexOf(messageId);
-      if (index >= 0 && _scroll.hasClients) {
-        await _scroll.animateTo(index * 80.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-      }
-    }
+    await _scrollUntilBuilt(messageId);
     Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _highlighted = null);
     });
+  }
+
+  /// Bubbles differ wildly in height, so an off-screen message has no known offset: page toward it
+  /// until the lazy list builds it, then centre it.
+  Future<void> _scrollUntilBuilt(int messageId) async {
+    final messages = _history.messages;
+    var index = _history.indexOf(messageId);
+    if (index < 0) return;
+    // Only the newest message of an album is built; the others collapse into its grid.
+    final albumId = messages[index].mediaAlbumId;
+    while (albumId != 0 && index > 0 && messages[index - 1].mediaAlbumId == albumId) {
+      index--;
+    }
+    final targetId = messages[index].id;
+    for (var step = 0; step < _maxJumpPages && mounted && _scroll.hasClients; step++) {
+      final target = _itemKeys[targetId]?.currentContext;
+      if (target != null && target.mounted) {
+        await Scrollable.ensureVisible(target, alignment: 0.5, duration: const Duration(milliseconds: 300));
+        return;
+      }
+      // Reversed list: older messages (higher index) sit at larger offsets.
+      final built = [for (var i = 0; i < messages.length; i++) if (_itemKeys[messages[i].id]?.currentContext != null) i];
+      final towardOlder = built.isEmpty || index > built.last;
+      final position = _scroll.position;
+      final page = position.viewportDimension * 0.9 * (towardOlder ? 1 : -1);
+      final next = (position.pixels + page).clamp(position.minScrollExtent, position.maxScrollExtent);
+      if (next == position.pixels) return;
+      _scroll.jumpTo(next);
+      await WidgetsBinding.instance.endOfFrame;
+    }
   }
 
   Future<void> _scrollToBottom() async {
@@ -519,7 +551,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'delete':
         await _delete(_albumOf(message), canRevoke: props?.canBeDeletedForAllUsers ?? false, onlySelf: props?.canBeDeletedOnlyForSelf ?? true);
       case 'history':
-        await _showEditHistory(message);
+        await showEditHistory(context, _account, message);
       case 'mark':
         final marks = ref.read(markedMessagesProvider.notifier);
         final wasMarked = marks.isMarked(message.chatId, message.id);
@@ -574,39 +606,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  /// Every version of an edited message, oldest first, ending with the current one.
-  Future<void> _showEditHistory(td.Message message) {
-    final s = context.s;
-    final versions = [
-      ..._account.archive.versionsOf(message.chatId, message.id),
-      (content: message.content, date: message.editDate > 0 ? message.editDate : message.date),
-    ];
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(s.t('edit_history')),
-        content: SizedBox(
-          width: 420,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              for (final (index, version) in versions.indexed)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: SelectableText(contentPreview(version.content, s) ?? ''),
-                  subtitle: Text([
-                    if (index == versions.length - 1) s.t('edit_history_current'),
-                    '${formatDayHeader(version.date, s)} ${formatTime(version.date, s.locale)}',
-                  ].join(' · ')),
-                ),
-            ],
-          ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('ok')))],
-      ),
-    );
-  }
-
   static bool _isGalleryMedia(td.Message m) =>
       m.content is td.MessagePhoto || m.content is td.MessageVideo || m.content is td.MessageAnimation || m.content is td.MessageVideoNote;
 
@@ -655,44 +654,62 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     showToast(context, context.t('forwarded'));
   }
 
+  /// Deletes from the menu or the selection bar: when Telegram allows both, the user picks "only for me" or
+  /// "for both sides" (everyone in groups) with separate buttons instead of a checkbox that is easy to miss.
   Future<void> _delete(List<td.Message> messages, {required bool canRevoke, required bool onlySelf}) async {
     final s = context.s;
     final chat = _account.chats[widget.chatId]!;
-    var revoke = canRevoke && !onlySelf;
     final peer = _account.privateUser(chat);
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(s.count('delete_messages', messages.length)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(s.t('delete_messages_confirm')),
-              if (canRevoke && onlySelf)
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: revoke,
-                  onChanged: (v) => setDialogState(() => revoke = v ?? false),
-                  title: Text(peer != null ? s.t('delete_also_for', {'name': peer.firstName}) : s.t('delete_for_everyone')),
+    final error = Theme.of(context).colorScheme.error;
+    final bothLabel = peer != null ? s.t('delete_for_both', {'name': peer.firstName}) : s.t('delete_for_everyone');
+    Widget choice(String label, bool revoke, {bool strong = false}) => SizedBox(
+          width: double.infinity,
+          child: strong
+              ? FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: error, foregroundColor: Theme.of(context).colorScheme.onError),
+                  onPressed: () => Navigator.pop(context, revoke),
+                  child: Text(label, textAlign: TextAlign.center),
+                )
+              : OutlinedButton(
+                  style: OutlinedButton.styleFrom(foregroundColor: error),
+                  onPressed: () => Navigator.pop(context, revoke),
+                  child: Text(label, textAlign: TextAlign.center),
                 ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(s.t('cancel'))),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
-              child: Text(s.t('delete')),
-            ),
-          ],
-        ),
+        );
+    final revoke = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(s.count('delete_messages', messages.length)),
+        content: Text(s.t(canRevoke && onlySelf && peer != null ? 'delete_choose_hint' : 'delete_messages_confirm')),
+        actionsOverflowDirection: VerticalDirection.down,
+        actions: [
+          if (canRevoke) choice(onlySelf ? bothLabel : s.t('delete'), true, strong: true),
+          if (onlySelf) choice(canRevoke ? s.t('delete_for_me') : s.t('delete'), false, strong: !canRevoke),
+          SizedBox(width: double.infinity, child: TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel')))),
+        ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (revoke == null || !mounted) return;
     await guard(context, () => _account.deleteMessages(widget.chatId, messages.map((m) => m.id).toList(), revoke: revoke));
     if (mounted) setState(_selected.clear);
+  }
+
+  /// Delete rights of the selected messages: both sides only when every one of them allows it.
+  Future<void> _deleteSelected(List<td.Message> messages) async {
+    var canRevoke = true;
+    var onlySelf = true;
+    for (final message in messages) {
+      try {
+        final props = await _account.send<td.MessageProperties>(td.GetMessageProperties(chatId: message.chatId, messageId: message.id));
+        canRevoke &= props.canBeDeletedForAllUsers;
+        onlySelf &= props.canBeDeletedOnlyForSelf;
+      } on TdException catch (error) {
+        // A kept copy of a message deleted by someone else: Telegram no longer knows it.
+        debugPrint('message properties failed: $error');
+        canRevoke = false;
+      }
+    }
+    if (mounted) await _delete(messages, canRevoke: canRevoke, onlySelf: onlySelf || !canRevoke);
   }
 
   // ------------------------------------------------------------------ build
@@ -1160,7 +1177,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         IconButton(icon: const Icon(Icons.forward_rounded), onPressed: () => _forward(messages)),
         IconButton(
           icon: const Icon(Icons.delete_rounded),
-          onPressed: () => _delete(messages, canRevoke: messages.every((m) => m.isOutgoing), onlySelf: true),
+          onPressed: () => _deleteSelected(messages),
         ),
       ],
     );
@@ -1209,12 +1226,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           if (end > index) {
             album = messages.sublist(index, end + 1).reversed.toList();
             olderIndex = end + 1;
-            if (!message.isOutgoing) _history.markViewed(album.map((m) => m.id));
+            if (!message.isOutgoing) {
+              _history.markViewed(album.map((m) => m.id));
+            } else {
+              for (final m in album) {
+                if (m.unreadReactions.isNotEmpty) _history.markReactionsSeen(m.id);
+              }
+            }
           }
         }
         final older = olderIndex < messages.length ? messages[olderIndex] : null;
         final newer = index > 0 ? messages[index - 1] : null;
-        if (!message.isOutgoing) _history.markViewed([message.id]);
+        if (!message.isOutgoing) {
+          _history.markViewed([message.id]);
+        } else if (message.unreadReactions.isNotEmpty) {
+          // Someone reacted to my message: seeing it clears the chat's ❤ badge.
+          _history.markReactionsSeen(message.id);
+        }
         final newDay = older == null || !isSameDay(older.date, message.date);
         final sameSenderAsOlder = older != null && !newDay && _account.senderKey(older.senderId) == _account.senderKey(message.senderId) && !isServiceMessage(older);
         final sameSenderAsNewer = newer != null && isSameDay(newer.date, message.date) &&
@@ -1321,6 +1349,8 @@ class _PinnedBar extends ConsumerWidget {
     final account = ref.watch(accountProvider);
     final s = context.s;
     final primary = Theme.of(context).colorScheme.primary;
+    final thumb = replyThumb(message.content);
+    final preview = messagePreview(message, account, s);
     return Material(
       color: Theme.of(context).colorScheme.surface,
       elevation: 1,
@@ -1332,12 +1362,13 @@ class _PinnedBar extends ConsumerWidget {
             children: [
               Container(width: 2, height: 34, color: primary),
               const SizedBox(width: 10),
+              if (thumb != null) ...[thumb, const SizedBox(width: 8)],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(s.t('pinned_message'), style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 13.5)),
-                    Text(messagePreview(message, account, s).replaceAll('\n', ' '), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text((thumb == null ? preview : withoutMediaEmoji(preview)).replaceAll('\n', ' '), maxLines: 1, overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),

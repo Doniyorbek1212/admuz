@@ -8,6 +8,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import 'core/app_lock.dart';
 import 'core/calls/call_service.dart';
+import 'core/calls/call_session.dart' show CallPhase;
 import 'core/chat_sounds.dart';
 import 'core/file_guard.dart';
 import 'core/formatters.dart';
@@ -19,6 +20,7 @@ import 'core/push.dart';
 import 'core/tdlib/td_client.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screens.dart';
+import 'features/calls/call_overlay.dart';
 import 'features/calls/call_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/home_shell.dart';
@@ -57,7 +59,7 @@ class SadoApp extends ConsumerWidget {
         data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(settings.textScale.clamp(0.85, 1.2))),
         child: CallbackShortcuts(
           bindings: {const SingleActivator(LogicalKeyboardKey.escape): () => _closeTopPage(ref)},
-          child: AppLockGate(child: child!),
+          child: AppLockGate(child: CallOverlay(child: child!)),
         ),
       ),
       home: const AuthGate(),
@@ -181,21 +183,38 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   Route<void>? _callRoute;
 
   /// Opens the call screen over everything when a call starts and closes it when the call is gone.
+  /// Back on the call screen only hides it; the "return to call" bar ([CallOverlay]) brings it back.
   void _onCallChanged() {
     final session = CallService.instance.current.value;
     final navigator = navigatorKey.currentState;
     if (navigator == null) return;
+    CallPresence.instance
+      ..onOpen = _openCallScreen
+      ..track(session, navigator.context.s);
     if (session != null && _callRoute == null) {
-      final route = MaterialPageRoute<void>(builder: (_) => CallScreen(session: session), fullscreenDialog: true);
-      _callRoute = route;
-      unawaited(navigator.push(route).whenComplete(() {
-        if (_callRoute == route) _callRoute = null;
-      }));
+      _openCallScreen();
     } else if (session == null && _callRoute != null) {
       final route = _callRoute!;
       _callRoute = null;
+      CallPresence.instance.screenOpen.value = false;
       if (route.isActive) navigator.removeRoute(route);
     }
+  }
+
+  void _openCallScreen() {
+    final session = CallService.instance.current.value;
+    final navigator = navigatorKey.currentState;
+    if (session == null || navigator == null || _callRoute != null) return;
+    final route = MaterialPageRoute<void>(builder: (_) => CallScreen(session: session), fullscreenDialog: true);
+    _callRoute = route;
+    CallPresence.instance.screenOpen.value = true;
+    unawaited(navigator.push(route).whenComplete(() {
+      if (_callRoute != route) return;
+      _callRoute = null;
+      CallPresence.instance.screenOpen.value = false;
+      // Back on the "call ended" / rating screen skips it instead of leaving a finished call behind.
+      if (session.phase == CallPhase.ended) CallService.instance.close(session);
+    }));
   }
 
   void _configureArchive(AppSettings settings) => _account.archive
@@ -227,6 +246,15 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
       if (settings.chatSounds) unawaited(ChatSounds.instance.play(settings.receiveSound));
       return;
     }
+    if (!mounted) return;
+    unawaited(_notify(message, settings, inForeground: inForeground));
+  }
+
+  Future<void> _notify(td.Message message, AppSettings settings, {required bool inForeground}) async {
+    // One message rings once: a push for it may have been shown already (or comes later and stays quiet),
+    // and the backlog TDLib delivers after a reconnect is not news.
+    final serverId = NotifiedMessages.serverId(message.id);
+    if (serverId > 0 && !await NotifiedMessages.claim(message.chatId, serverId)) return;
     if (!mounted) return;
     final tone = settings.toneFor(message.chatId);
     // MIUI and others mute the notification of the app on screen; ring from the app instead.

@@ -638,8 +638,9 @@ class TelegramAccount {
         final user = users[userId];
         if (user != null) {
           users[userId] = user.copyWith(status: status);
+          // Presence never reorders or filters chats; tiles show the online dot through usersRevision.
+          // Rebuilding every chat list on it (the most frequent update) cost battery.
           _markUsers();
-          _markList();
         }
       case td.UpdateSecretChat(:final secretChat):
         secretChats[secretChat.id] = secretChat;

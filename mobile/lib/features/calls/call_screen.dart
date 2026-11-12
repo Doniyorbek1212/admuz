@@ -71,8 +71,9 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     final incomingRinging = !session.isOutgoing && session.phase == CallPhase.ringing;
     final user = session.account.users[session.call.userId];
     final name = user == null ? '' : '${user.firstName} ${user.lastName}'.trim();
+    // Back hides the screen without ending the call: the "return to call" bar brings it back (call_overlay.dart).
     return PopScope(
-      canPop: session.phase == CallPhase.ended,
+      canPop: true,
       child: Scaffold(
         backgroundColor: const Color(0xFF0E1A24),
         body: Stack(
@@ -89,14 +90,22 @@ class _CallScreenState extends ConsumerState<CallScreen> {
             SafeArea(
               child: Column(
                 children: [
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: session.emojis.isEmpty
-                        ? const SizedBox(height: 48)
-                        : TextButton(
-                            onPressed: () => setState(() => _showKey = !_showKey),
-                            child: Text(session.emojis.join(' '), style: const TextStyle(fontSize: 22)),
-                          ),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: s.t('call_minimize'),
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 32),
+                        onPressed: () => Navigator.maybePop(context),
+                      ),
+                      const Spacer(),
+                      if (session.emojis.isEmpty)
+                        const SizedBox(height: 48)
+                      else
+                        TextButton(
+                          onPressed: () => setState(() => _showKey = !_showKey),
+                          child: Text(session.emojis.join(' '), style: const TextStyle(fontSize: 22)),
+                        ),
+                    ],
                   ),
                   if (_showKey)
                     Padding(

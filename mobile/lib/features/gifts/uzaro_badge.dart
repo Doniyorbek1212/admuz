@@ -6,6 +6,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../../core/api/gift_models.dart';
 import '../../core/api/id_batcher.dart';
 import '../../core/api/sado_api.dart';
+import '../../core/store_rules.dart';
 import '../../core/theme.dart' show brandGold;
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
@@ -214,7 +215,8 @@ class _BadgeSheetState extends ConsumerState<_BadgeSheet> {
                 child: Text(s.t('uzaro_badge_change')),
               ),
             ),
-          if (offer.priceUzs > 0)
+          // Store builds: the balance was bought outside the store, so it may not buy digital goods there.
+          if (offer.priceUzs > 0 && !storeBlocksExternalPayments)
             FilledButton.icon(
               onPressed: _busy ? null : (enough ? () => _run(() => ref.read(sadoApiProvider).buyBadge(picked), 'uzaro_badge_bought') : _topUp),
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),

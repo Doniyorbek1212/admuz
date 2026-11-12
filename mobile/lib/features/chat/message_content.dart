@@ -326,6 +326,17 @@ class MessageMedia extends ConsumerWidget {
       td.MessageVideoNote(:final videoNote, :final isViewed) => VideoNoteView(message: message, videoNote: videoNote, isViewed: isViewed),
       td.MessageVoiceNote(:final voiceNote) => VoiceNoteView(message: message, voiceNote: voiceNote),
       td.MessageAudio(:final audio) => _AudioView(message: message, audio: audio),
+      // A video sent "as a file" shows and plays like a video (Telegram does the same); other formats stay files.
+      td.MessageDocument(:final document) when _playsInApp(document.mimeType) => _VideoThumb(
+          file: document.document,
+          thumbnail: document.thumbnail,
+          minithumbnail: document.minithumbnail,
+          width: document.thumbnail?.width ?? 0,
+          height: document.thumbnail?.height ?? 0,
+          duration: 0,
+          maxWidth: maxWidth,
+          fill: fillWidth,
+        ),
       td.MessageDocument(:final document) => _FileView(
           message: message,
           file: document.document,
@@ -395,6 +406,9 @@ class _BlockedFileView extends StatelessWidget {
   }
 }
 
+/// Video files the in-app player can open on this platform (Android's player also takes webm/mkv and others).
+bool _playsInApp(String mimeType) => mimeType == 'video/mp4' || mimeType == 'video/quicktime' || (Platform.isAndroid && mimeType.startsWith('video/'));
+
 Size _fit(int width, int height, double maxWidth, {double maxHeight = 380, bool fill = false}) {
   if (width <= 0 || height <= 0) return Size(maxWidth, maxWidth * 0.75);
   if (fill) return Size(maxWidth, (maxWidth * height / width).clamp(80.0, maxHeight));
@@ -415,8 +429,13 @@ double? mediaWidth(td.MessageContent content, double maxWidth) => switch (conten
         },
       td.MessageVideo(:final video) => _fit(video.width, video.height, maxWidth).width,
       td.MessageAnimation(:final animation) => _fit(animation.width, animation.height, maxWidth).width,
+      td.MessageDocument(:final document) when _playsInApp(document.mimeType) =>
+        _fit(document.thumbnail?.width ?? 0, document.thumbnail?.height ?? 0, maxWidth).width,
       _ => null,
     };
+
+/// A video sent as a file that is shown as a video (edge-to-edge media bubble).
+bool isVideoDocument(td.MessageContent content) => content is td.MessageDocument && _playsInApp(content.document.mimeType);
 
 class _PhotoView extends StatefulWidget {
   const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler, this.fill = false});
@@ -567,8 +586,11 @@ class _VideoThumb extends ConsumerWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(formatDuration(Duration(seconds: duration)), style: const TextStyle(color: Colors.white, fontSize: 12.5)),
-                        const SizedBox(width: 4),
+                        // Video files carry no duration.
+                        if (duration > 0) ...[
+                          Text(formatDuration(Duration(seconds: duration)), style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                          const SizedBox(width: 4),
+                        ],
                         const Icon(Icons.volume_off_rounded, color: Colors.white, size: 15),
                       ],
                     ),
@@ -608,7 +630,12 @@ class _VideoThumb extends ConsumerWidget {
                   if (!isGif && !watchFile(false).local.isDownloadingCompleted)
                     const Padding(padding: EdgeInsets.only(right: 3), child: Icon(Icons.arrow_downward_rounded, size: 14, color: Colors.white)),
                   Text(
-                    isGif ? 'GIF' : '${formatDuration(Duration(seconds: duration))}  ${formatFileSize(file.size == 0 ? file.expectedSize : file.size)}',
+                    isGif
+                        ? 'GIF'
+                        : [
+                            if (duration > 0) formatDuration(Duration(seconds: duration)),
+                            formatFileSize(file.size == 0 ? file.expectedSize : file.size),
+                          ].join('  '),
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ],

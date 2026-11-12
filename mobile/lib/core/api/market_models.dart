@@ -399,6 +399,9 @@ class Ad {
   /// Distinct viewers who saw / tapped the banner (own ads only).
   final int views;
   final int clicks;
+
+  /// Name for lists: the headline is optional, so the short text stands in, then [fallback].
+  String label(String fallback) => title.isNotEmpty ? title : (text.isNotEmpty ? text : fallback);
 }
 
 class AdDraft {

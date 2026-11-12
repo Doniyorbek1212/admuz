@@ -1,6 +1,5 @@
 package uz.sado.app
 
-import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
@@ -8,8 +7,6 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
-import android.provider.Settings
 import android.util.Rational
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -23,6 +20,9 @@ class MainActivity : FlutterActivity() {
         FlutterEngineCache.getInstance().get(MainApplication.ENGINE_ID)
 
     private var pipChannel: MethodChannel? = null
+    private var callChannel: MethodChannel? = null
+    private var callPip = false
+    private var callPipRatio = Rational(1, 1)
     private var privacyChannel: MethodChannel? = null
     private var tone: android.media.Ringtone? = null
 
@@ -64,6 +64,36 @@ class MainActivity : FlutterActivity() {
                             }
                             result.success(null)
                         }
+                        // Hub quick links open the service's own app when installed; false lets Dart open the website.
+                        "openApp" -> {
+                            // Any launcher app is visible through the manifest's MAIN/LAUNCHER <queries> entry, so admin-added apps work too.
+                            val launch = call.argument<String>("package")?.let { packageManager.getLaunchIntentForPackage(it) }
+                            val opened = launch != null && runCatching { startActivity(launch) }.isSuccess
+                            result.success(opened)
+                        }
+                        // Apps on the phone the user can pin to the hub: [{package, label}] by name. Labels load slowly, so off the UI thread.
+                        "installedApps" -> Thread {
+                            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                            val apps = packageManager.queryIntentActivities(launcher, 0)
+                                .filter { it.activityInfo.packageName != packageName }
+                                .distinctBy { it.activityInfo.packageName }
+                                .map { mapOf("package" to it.activityInfo.packageName, "label" to it.loadLabel(packageManager).toString()) }
+                                .sortedBy { it["label"]?.lowercase() }
+                            runOnUiThread { result.success(apps) }
+                        }.start()
+                        // An app's launcher icon as PNG bytes (null when it is gone).
+                        "appIcon" -> Thread {
+                            val png = call.argument<String>("package")?.let { pkg ->
+                                runCatching {
+                                    val icon = packageManager.getApplicationIcon(pkg)
+                                    val bitmap = android.graphics.Bitmap.createBitmap(APP_ICON_PX, APP_ICON_PX, android.graphics.Bitmap.Config.ARGB_8888)
+                                    icon.setBounds(0, 0, APP_ICON_PX, APP_ICON_PX)
+                                    icon.draw(android.graphics.Canvas(bitmap))
+                                    java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                                }.getOrNull()
+                            }
+                            runOnUiThread { result.success(png) }
+                        }.start()
                         // Cover of an outgoing video: without one receivers (and reply quotes) see a grey box.
                         "videoThumbnail" -> {
                             val path = call.argument<String>("path")
@@ -81,7 +111,37 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
-        askBatteryExemptionOnce()
+        // Calls: the ongoing-call service, and a floating window (picture-in-picture) when the user leaves mid-call.
+        callChannel = flutterEngine?.let { engine ->
+            MethodChannel(engine.dartExecutor.binaryMessenger, CALL_CHANNEL).apply {
+                setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "update" -> {
+                            val active = call.argument<Boolean>("active") == true
+                            val video = call.argument<Boolean>("video") == true
+                            callPipRatio = if (video) Rational(9, 16) else Rational(1, 1)
+                            callPip = active
+                            if (active) {
+                                OngoingCallService.start(
+                                    this@MainActivity,
+                                    call.argument<String>("title").orEmpty(),
+                                    call.argument<String>("text").orEmpty(),
+                                    call.argument<Number>("since")?.toLong() ?: 0L,
+                                    video,
+                                )
+                            } else {
+                                OngoingCallService.stop(this@MainActivity)
+                                // The call ended in the floating window: close it like Telegram does, not leave the app shrunk.
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) moveTaskToBack(false)
+                            }
+                            applyCallAutoPip()
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+        }
         // Picture-in-picture for the video viewer ("Kichraytirish"); Dart learns about mode changes over the same channel.
         pipChannel = flutterEngine?.let { engine ->
             MethodChannel(engine.dartExecutor.binaryMessenger, PIP_CHANNEL).apply {
@@ -95,7 +155,30 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** Android 12+: the system itself shrinks the call into a floating window on Home / app switch. */
+    private fun applyCallAutoPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        runCatching {
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(callPip).setAspectRatio(callPipRatio).build())
+        }
+    }
+
+    // Android 8-11: no auto-enter, so the call enters the floating window when the user leaves with Home.
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (callPip && Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S) {
+            enterPip(callPipRatio.numerator, callPipRatio.denominator)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // The ongoing-call notification: show the call screen again.
+        if (intent.getBooleanExtra(EXTRA_OPEN_CALL, false)) callChannel?.invokeMethod("open", null)
+    }
+
     override fun onDestroy() {
+        callChannel?.setMethodCallHandler(null)
         pipChannel?.setMethodCallHandler(null)
         privacyChannel?.setMethodCallHandler(null)
         super.onDestroy()
@@ -149,33 +232,28 @@ class MainActivity : FlutterActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pipChannel?.invokeMethod("changed", isInPictureInPictureMode)
+        callChannel?.invokeMethod("pip", isInPictureInPictureMode)
     }
 
     override fun onResume() {
         super.onResume()
         // Foreground starts are always allowed here; covers a start refused while the app was in the background.
         if (KeepAliveService.isEnabled(this)) KeepAliveService.start(this)
-    }
-
-    /** Battery optimisation kills background connections (aggressively on MIUI); ask once to be exempt. */
-    @SuppressLint("BatteryLife")
-    private fun askBatteryExemptionOnce() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        val prefs = getSharedPreferences("uz.sado.native", MODE_PRIVATE)
-        if (prefs.getBoolean("askedBattery", false)) return
-        prefs.edit().putBoolean("askedBattery", true).apply()
-        val power = getSystemService(PowerManager::class.java)
-        if (power.isIgnoringBatteryOptimizations(packageName)) return
-        try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-        } catch (error: RuntimeException) {
-            // Some ROMs hide this screen; the keep-alive service still runs, just less reliably.
+        // The call notification tapped after this activity was destroyed (the call service kept the engine):
+        // onNewIntent does not run then, so the extra arrives with the launch intent. Read once.
+        if (intent?.getBooleanExtra(EXTRA_OPEN_CALL, false) == true) {
+            intent.removeExtra(EXTRA_OPEN_CALL)
+            callChannel?.invokeMethod("open", null)
         }
     }
 
     companion object {
         const val PIP_CHANNEL = "uz.sado.app/pip"
+        const val CALL_CHANNEL = "uz.sado.app/call"
+        const val EXTRA_OPEN_CALL = "uz.sado.app.OPEN_CALL"
         const val PRIVACY_CHANNEL = "uz.sado.app/privacy"
+        // Hub quick-link tiles are 58dp: 144px stays sharp up to ~2.5x screens.
+        private const val APP_ICON_PX = 144
         private const val THUMB_MAX_SIDE = 320
 
         // Process-wide like the cached engine: a recreated activity (rotation) keeps the flag Dart last sent.

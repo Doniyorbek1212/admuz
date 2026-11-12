@@ -8,6 +8,7 @@ import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../core/interests.dart';
+import '../../core/theme.dart' show brandGold, brandGoldGradient;
 import '../business/ads_screen.dart';
 import '../business/business_widgets.dart' show isLoadableMedia;
 import 'ad_banner_card.dart';
@@ -61,6 +62,9 @@ class HubBanners extends ConsumerStatefulWidget {
 }
 
 class _HubBannersState extends ConsumerState<HubBanners> {
+  static const _radius = 22.0;
+  static const _frame = 2.5;
+
   static const _interval = Duration(seconds: 6);
 
   final _controller = PageController();
@@ -72,7 +76,8 @@ class _HubBannersState extends ConsumerState<HubBanners> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(_interval, (_) {
-      if (!_controller.hasClients || _count < 2) return;
+      // Another tab or screen on top, or the app in the background: the carousel waits.
+      if (!_controller.hasClients || _count < 2 || !_visible) return;
       _controller.animateToPage((_page + 1) % _count, duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
     });
   }
@@ -99,8 +104,16 @@ class _HubBannersState extends ConsumerState<HubBanners> {
     }
   }
 
+  /// On screen: this tab is selected, no route covers it and the app is in the foreground.
+  bool get _visible =>
+      mounted &&
+      TickerMode.getValuesNotifier(context).value.enabled &&
+      (ModalRoute.of(context)?.isCurrent ?? true) &&
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+
   void _markSeen(List<Ad> ads, int index) {
-    if (index >= ads.length || !_seen.add(ads[index].id)) return;
+    // Advertisers pay for views: a banner in a hidden tab was not seen.
+    if (index >= ads.length || !TickerMode.valuesOf(context).enabled || !_seen.add(ads[index].id)) return;
     unawaited(ref.read(sadoApiProvider).adEvent(ads[index].id, 'view'));
   }
 
@@ -126,8 +139,17 @@ class _HubBannersState extends ConsumerState<HubBanners> {
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
           child: AspectRatio(
             aspectRatio: 2.2,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
+            // Gold frame with a soft glow around the banners, like the UZARO badge.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: brandGoldGradient,
+                borderRadius: BorderRadius.circular(_radius + _frame),
+                boxShadow: [BoxShadow(color: brandGold.withValues(alpha: 0.35), blurRadius: 10, spreadRadius: 0.5)],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(_frame),
+                child: ClipRRect(
+              borderRadius: BorderRadius.circular(_radius),
               child: PageView.builder(
                 key: ValueKey('banners-$region-${ads.length}'),
                 controller: _controller,
@@ -136,6 +158,8 @@ class _HubBannersState extends ConsumerState<HubBanners> {
                 itemBuilder: (context, index) => index < ads.length
                     ? AdBannerCard(ad: ads[index], onTap: () => _openAd(ads[index]))
                     : _PromoCard(promo: promos[index - ads.length]),
+              ),
+                ),
               ),
             ),
           ),

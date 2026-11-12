@@ -15,6 +15,7 @@ import '../../widgets/custom_emoji.dart' show EmojiStatusBadge;
 import '../../widgets/emoji_pattern.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart' show apiGuard;
+import '../chat/message_content.dart' show FormattedTextView;
 import '../chat/marked_messages_screen.dart';
 import '../gifts/gift_showcase.dart' show giftShowcaseProvider;
 import '../gifts/gift_widgets.dart';
@@ -213,10 +214,12 @@ class MyProfileTab extends ConsumerWidget {
     final birthdate = info?.birthdate;
     final username = me.usernames?.activeUsernames.firstOrNull;
     final hint = Theme.of(context).hintColor;
-    Widget row(IconData icon, String value, String label) => ListTile(
+    const valueStyle = TextStyle(fontSize: 16, height: 1.25);
+    Widget row(IconData icon, String value, String label, {bool links = false}) => ListTile(
           visualDensity: const VisualDensity(vertical: -2),
           leading: Icon(icon, color: Theme.of(context).colorScheme.primary, size: 22),
-          title: Text(value, style: const TextStyle(fontSize: 16, height: 1.25)),
+          // The bio's links and @mentions open on tap, as in Telegram.
+          title: links ? FormattedTextView(text: linkified(value), style: DefaultTextStyle.of(context).style.merge(valueStyle)) : Text(value, style: valueStyle),
           subtitle: Text(label, style: TextStyle(fontSize: 13, color: hint)),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: value));
@@ -225,7 +228,7 @@ class MyProfileTab extends ConsumerWidget {
         );
     return SettingsGroup(children: [
       row(Icons.phone_outlined, '+${me.phoneNumber}', s.t('mobile')),
-      if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio')),
+      if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio'), links: true),
       if (username != null) row(Icons.alternate_email_rounded, '@$username', s.t('username')),
       _uzaroNameRow(context, ref, hint),
       if (birthdate != null) row(Icons.cake_outlined, _formatBirthdate(birthdate, s), s.t('birthday')),

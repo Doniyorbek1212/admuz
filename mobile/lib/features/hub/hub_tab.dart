@@ -18,13 +18,18 @@ import '../business/shops_screen.dart';
 import '../gifts/gifts_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_screen.dart';
+import '../webapp/web_app_screen.dart' show hasWebView;
 import 'hub_banners.dart';
 import 'games_screen.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
+import 'hub_quick_links.dart';
 import 'movies_screen.dart';
 import 'music_screen.dart';
 import 'places_screen.dart';
+
+/// Quick link icons: three links and the add tile across a phone, one-line names, no empty band below.
+const _quickIconSize = 60.0;
 
 /// "Hub" tab of the bottom bar: banners, local services, entertainment and tools.
 class HubTab extends ConsumerWidget {
@@ -36,29 +41,58 @@ class HubTab extends ConsumerWidget {
     final region = ref.watch(hubRegionProvider);
     // iOS store builds cannot sell ads (paid outside the App Store), so the tile is hidden there.
     final toolItems = [for (final item in hubToolItems) if (item.action != HubAction.ads || !storeBlocksExternalPayments) item];
+    final quickLinks = ref.watch(quickLinksProvider);
+    final adminLinks = ref.watch(adminQuickLinksProvider).value ?? const <QuickLink>[];
     return Scaffold(
       backgroundColor: groupedBackground(context),
       appBar: BrandTabBar(title: s.t('tab_hub')),
       body: RefreshIndicator(
-        onRefresh: () async => ref.invalidate(activeAdsProvider(region)),
+        onRefresh: () async {
+          ref.invalidate(activeAdsProvider(region));
+          ref.invalidate(adminQuickLinksProvider);
+        },
         child: ListView(
           // Clears the shell's floating bottom bar (reported as bottom padding), or the last section hides under it.
           padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
           children: [
             const HubBanners(),
+            // Quick links: just the icons, no header (the user's choice).
+            _HubSection(
+              oneRow: true,
+              tiles: [
+                // Paid admin links first, in their order; the user cannot remove them.
+                for (final link in adminLinks)
+                  _HubTile(icon: QuickLinkBadge(link: link, size: _quickIconSize), label: link.name, labelLines: 1, onTap: () => openQuickLink(context, link)),
+                for (final link in quickLinks)
+                  _HubTile(
+                    icon: QuickLinkBadge(link: link, size: _quickIconSize),
+                    label: link.name,
+                    labelLines: 1,
+                    onTap: () => openQuickLink(context, link),
+                    onLongPress: () => confirmRemoveQuickLink(context, ref, link),
+                  ),
+                if (quickLinks.length < maxQuickLinks)
+                  _HubTile(
+                    icon: _IconTile(icon: Icons.add_rounded, color: Theme.of(context).hintColor, size: _quickIconSize, iconSize: 30, radius: 17),
+                    label: s.t('add'),
+                    labelLines: 1,
+                    onTap: () => addQuickLink(context, ref),
+                  ),
+              ],
+            ),
             _HubSection(
               icon: Icons.auto_awesome_rounded,
               color: const Color(0xFFFF5C8A),
               title: s.t('hub_fun'),
               trailing: _count(context, hubFunItems.length),
-              items: hubFunItems,
+              tiles: _itemTiles(context, ref, hubFunItems),
             ),
             _HubSection(
               icon: Icons.handyman_rounded,
               color: const Color(0xFF2EC27E),
               title: s.t('hub_tools'),
               trailing: _count(context, toolItems.length),
-              items: toolItems,
+              tiles: _itemTiles(context, ref, toolItems),
             ),
             _HubSection(
               icon: Icons.location_on_rounded,
@@ -77,13 +111,22 @@ class HubTab extends ConsumerWidget {
               onHeaderTap: () => ref.read(sadoApiProvider).configured
                   ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlacesScreen()))
                   : _pickRegion(context, ref),
-              items: hubLocalItems,
+              tiles: _itemTiles(context, ref, hubLocalItems),
             ),
           ],
         ),
       ),
     );
   }
+
+  static List<Widget> _itemTiles(BuildContext context, WidgetRef ref, List<HubItem> items) => [
+    for (final item in items)
+      _HubTile(
+        icon: _IconTile(icon: item.icon, color: item.color, size: 58, iconSize: 30, radius: 18),
+        label: context.t(item.labelKey),
+        onTap: () => openHubItem(context, ref, item),
+      ),
+  ];
 
   static Widget _count(BuildContext context, int n) => Text(
     '$n',
@@ -181,7 +224,8 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
     case HubAction.music:
       push(ref.read(sadoApiProvider).configured ? const MusicScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.games:
-      push(ref.read(sadoApiProvider).configured ? const GamesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+      // The games page is a web view: without one (Windows) the public game channels are shown.
+      push(ref.read(sadoApiProvider).configured && hasWebView ? const GamesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.gifts:
       push(ref.read(sadoApiProvider).configured ? const GiftsScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.themes:
@@ -202,46 +246,78 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
   }
 }
 
-class _HubSection extends ConsumerWidget {
-  const _HubSection({required this.icon, required this.color, required this.title, required this.trailing, required this.items, this.onHeaderTap});
+class _HubSection extends StatelessWidget {
+  const _HubSection({
+    this.icon = Icons.apps_rounded,
+    this.color = Colors.grey,
+    this.title,
+    this.trailing = const SizedBox.shrink(),
+    required this.tiles,
+    this.onHeaderTap,
+    this.oneRow = false,
+  });
 
   final IconData icon;
   final Color color;
-  final String title;
+
+  /// Header text; without one the section is just its tiles (the quick links row).
+  final String? title;
   final Widget trailing;
-  final List<HubItem> items;
+  final List<Widget> tiles;
   final VoidCallback? onHeaderTap;
 
+  /// One compact row (the user's links plus the add tile fit on a phone; paid admin links make it swipeable).
+  final bool oneRow;
+
+  static const _rowTilesOnScreen = 4.0;
+  // Tile padding 2×6 + icon + gap 7 + one label line; nothing left over under the names.
+  static const _rowHeight = _quickIconSize + 34;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final title = this.title;
     return SettingsGroup(
       children: [
-        InkWell(
-          onTap: onHeaderTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
-            child: Row(
-              children: [
-                _IconTile(icon: icon, color: color, size: 40, iconSize: 22, radius: 12),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
-                ),
-                trailing,
-              ],
+        if (title != null)
+          InkWell(
+            onTap: onHeaderTap,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+              child: Row(
+                children: [
+                  _IconTile(icon: icon, color: color, size: 40, iconSize: 22, radius: 12),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+                  ),
+                  trailing,
+                ],
+              ),
             ),
           ),
-        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+          padding: EdgeInsets.fromLTRB(8, title == null ? 8 : (oneRow ? 0 : 4), 8, oneRow ? 2 : 8),
           // 4 tiles on a phone, more on an unfolded iPhone Duo or a tablet instead of stretched ones.
-          child: GridView(
+          child: oneRow
+              ? LayoutBuilder(
+                  builder: (context, box) => SizedBox(
+                    height: _rowHeight,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: EdgeInsets.zero,
+                      // Wide screens show every tile at grid width instead of stretched ones.
+                      itemExtent: (box.maxWidth / _rowTilesOnScreen).clamp(0, 112),
+                      children: tiles,
+                    ),
+                  ),
+                )
+              : GridView(
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 112, childAspectRatio: 0.82),
             shrinkWrap: true,
             // Without this the grid inherits the bottom bar's padding.
             padding: EdgeInsets.zero,
             physics: const NeverScrollableScrollPhysics(),
-            children: [for (final item in items) _HubTile(item: item, onTap: () => openHubItem(context, ref, item))],
+            children: tiles,
           ),
         ),
       ],
@@ -250,25 +326,31 @@ class _HubSection extends ConsumerWidget {
 }
 
 class _HubTile extends StatelessWidget {
-  const _HubTile({required this.item, required this.onTap});
+  const _HubTile({required this.icon, required this.label, required this.onTap, this.onLongPress, this.labelLines = 2});
 
-  final HubItem item;
+  final Widget icon;
+  final String label;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  /// Quick links keep their names on one line so the row stays short.
+  final int labelLines;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
         child: Column(
           children: [
-            _IconTile(icon: item.icon, color: item.color, size: 58, iconSize: 30, radius: 18),
+            icon,
             const SizedBox(height: 7),
             Text(
-              context.t(item.labelKey),
-              maxLines: 2,
+              label,
+              maxLines: labelLines,
               textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.15),

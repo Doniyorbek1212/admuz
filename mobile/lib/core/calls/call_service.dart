@@ -129,13 +129,14 @@ class CallService {
           current.value = session;
           _startRinging(session);
         }
-        final wasEnded = session.phase == CallPhase.ended;
         // Leaving the ringing state: silence the tone before the call opens the microphone.
         if (call.state is! td.CallStatePending) _stopRinging();
         await session.onCallUpdate(call);
         if (session.phase != CallPhase.ringing) _stopRinging();
-        // TDLib may repeat the final state; schedule the close only on the transition.
-        if (session.phase == CallPhase.ended && !wasEnded) {
+        // Close on TDLib's final state, not on the phase change: our own hang-up ends the session before
+        // that update arrives. A repeated final state only schedules a second close, which does nothing.
+        final finished = call.state is td.CallStateDiscarded || call.state is td.CallStateError;
+        if (finished && session.phase == CallPhase.ended) {
           _stopRinging();
           // A rating request keeps the screen open until the user rates or skips (see [close]).
           if (!session.needRating) {

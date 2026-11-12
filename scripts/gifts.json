@@ -1,0 +1,457 @@
+{
+  "_note": "price_uzs: lion is from the spec; the others are placeholders inside each tier's spec range (t1 5k-20k, t2 30k-100k, t3 150k-500k, t4 1M+).",
+  "gifts": [
+    {
+      "id": "rose_bloom",
+      "tier": 1,
+      "price_uzs": 5000,
+      "title": {
+        "uz": "Atirgul",
+        "ru": "Роза",
+        "en": "Rose"
+      },
+      "credits": [
+        "\"Red rose\" by Lassi Kaukonen, CC BY 4.0, https://sketchfab.com/3d-models/74520e87c3ed46898668c83356dd9cfa",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/"
+      ]
+    },
+    {
+      "id": "heart_balloons",
+      "tier": 1,
+      "price_uzs": 7000,
+      "title": {
+        "uz": "Yurak sharlar",
+        "ru": "Шарики-сердца",
+        "en": "Heart balloons"
+      },
+      "credits": [
+        "\"Balloon Pop\" by Lukeo135, CC0 1.0, https://freesound.org/s/563197/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
+      "id": "love_letter",
+      "tier": 1,
+      "price_uzs": 8000,
+      "title": {
+        "uz": "Sevgi maktubi",
+        "ru": "Любовное письмо",
+        "en": "Love letter"
+      },
+      "credits": [
+        "\"Paper Rustle\" by BenjaminNelan, CC0 1.0, https://freesound.org/s/353125/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"Wood block hit\" by thomasjaunism, CC0 1.0, https://freesound.org/s/218460/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
+      "id": "kitten",
+      "tier": 1,
+      "price_uzs": 10000,
+      "title": {
+        "uz": "Mushukcha",
+        "ru": "Котёнок",
+        "en": "Kitten"
+      },
+      "credits": [
+        "\"Stripe the Cat Rigged and Animated\" by DreamNoms, CC BY 4.0, https://sketchfab.com/3d-models/2e3030b71a6d4b219fdc7304f8e58013",
+        "\"Cute Kitten Meow\" by Breviceps, CC0 1.0, https://freesound.org/s/448084/"
+      ]
+    },
+    {
+      "id": "puppy",
+      "tier": 1,
+      "price_uzs": 10000,
+      "title": {
+        "uz": "Kuchukcha",
+        "ru": "Щенок",
+        "en": "Puppy"
+      },
+      "credits": [
+        "\"Golden Retriever Dog 🐕 3d model free\" by iRahulRajput, CC BY 4.0, https://sketchfab.com/3d-models/4d32f856099c4baca05da2da485c24c1",
+        "\"Chihuahua Puppy Bark\" by AustinXYZ, CC0 1.0, https://freesound.org/s/350591/",
+        "\"Chihuahua Puppy Whine\" by AustinXYZ, CC0 1.0, https://freesound.org/s/350593/"
+      ]
+    },
+    {
+      "id": "butterflies",
+      "tier": 1,
+      "price_uzs": 12000,
+      "title": {
+        "uz": "Kapalaklar",
+        "ru": "Бабочки",
+        "en": "Butterflies"
+      },
+      "credits": [
+        "\"Animated Flying Fluttering Butterfly Loop\" by LasquetiSpice, CC BY 4.0, https://sketchfab.com/3d-models/80f8d9a6dadc411e89ca366cb0cfb0d9",
+        "\"Light Wing Flap\" by TurboFool, CC0 1.0, https://freesound.org/s/561009/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "fireworks",
+      "tier": 1,
+      "price_uzs": 15000,
+      "title": {
+        "uz": "Mushakbozlik",
+        "ru": "Фейерверк",
+        "en": "Fireworks"
+      },
+      "credits": [
+        "\"Firework Explosion 1\" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212678/",
+        "\"Firework Explosion 3\" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212683/",
+        "\"Firework Explosion 4\" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212684/"
+      ]
+    },
+    {
+      "id": "champagne",
+      "tier": 1,
+      "price_uzs": 15000,
+      "title": {
+        "uz": "Shampan",
+        "ru": "Шампанское",
+        "en": "Champagne"
+      },
+      "credits": [
+        "\"Bottle of Champagne\" by Sirolalo, CC BY 4.0, https://sketchfab.com/3d-models/a3947c1c74484bc2940e60ffd2e84b9a",
+        "\"Champagne Cork\" by KenRT, CC0 1.0, https://freesound.org/s/392624/",
+        "\"Pouring Champagne\" by snakebarney, CC0 1.0, https://freesound.org/s/138125/",
+        "\"Wine glass clink deeper.wav\" by lmr9, CC0 1.0, https://freesound.org/s/178178/"
+      ]
+    },
+    {
+      "id": "birthday_cake",
+      "tier": 1,
+      "price_uzs": 18000,
+      "title": {
+        "uz": "Tort",
+        "ru": "Торт",
+        "en": "Birthday cake"
+      },
+      "credits": [
+        "\"Birthday Cake !\" by Vie Dinh, CC BY 4.0, https://sketchfab.com/3d-models/87f446798bb544c6b0dca2504b1f9d50",
+        "\"Match - Strike and Light 02.wav\" by JarredGibb, CC0 1.0, https://freesound.org/s/248236/",
+        "\"Party horn.wav\" by audiosmedia, CC0 1.0, https://freesound.org/s/170583/",
+        "\"Balloon Pop\" by Lukeo135, CC0 1.0, https://freesound.org/s/563197/"
+      ]
+    },
+    {
+      "id": "teddy_bear",
+      "tier": 1,
+      "price_uzs": 20000,
+      "title": {
+        "uz": "Ayiqcha",
+        "ru": "Мишка",
+        "en": "Teddy bear"
+      },
+      "credits": [
+        "\"Teddy Bear\" by Schmoldt5000, CC BY 4.0, https://sketchfab.com/3d-models/f7f6c575184e4b95b43f2e5fd9cebe4c",
+        "\"Squeaky Toy #4\" by Breviceps, CC0 1.0, https://freesound.org/s/483922/"
+      ]
+    },
+    {
+      "id": "sports_car",
+      "tier": 2,
+      "price_uzs": 100000,
+      "title": {
+        "uz": "Sport mashina",
+        "ru": "Спорткар",
+        "en": "Sports car"
+      },
+      "credits": [
+        "\"Generic Sport Coupé Car\" by MMC Works, CC BY 4.0, https://sketchfab.com/3d-models/generic-sport-coupe-car-820a13c4831c41959ce75e6c2014e882",
+        "\"V8 Supercar Acceleration\" by FFKoenigsegg20012017, CC0 1.0, https://freesound.org/s/339137/",
+        "\"Nissan Maxima burnout (04-25-2009).wav\" by audible-edge, CC0 1.0, https://freesound.org/s/71740/"
+      ]
+    },
+    {
+      "id": "motorbike",
+      "tier": 2,
+      "price_uzs": 70000,
+      "title": {
+        "uz": "Mototsikl",
+        "ru": "Мотоцикл",
+        "en": "Motorbike"
+      },
+      "credits": [
+        "\"Cafe Racer\" by Andrei Milin, CC BY 4.0, https://sketchfab.com/3d-models/c02dec85ac0541b8ab6dd56098706b50",
+        "\"STE-007_Motorcycle_01.wav\" by crop_circles, CC0 1.0, https://freesound.org/s/74384/",
+        "\"Impact\" by chriskalos, CC0 1.0, https://freesound.org/s/172779/"
+      ]
+    },
+    {
+      "id": "helicopter",
+      "tier": 2,
+      "price_uzs": 80000,
+      "title": {
+        "uz": "Vertolyot",
+        "ru": "Вертолёт",
+        "en": "Helicopter"
+      },
+      "credits": [
+        "\"Helicopter\" by mohamed ouartassi, CC BY 4.0, https://sketchfab.com/3d-models/1172f6d424964e6388068076738be429",
+        "\"Helicopter Flyby\" by Wonko_7, CC0 1.0, https://freesound.org/s/723158/"
+      ]
+    },
+    {
+      "id": "plane",
+      "tier": 2,
+      "price_uzs": 90000,
+      "title": {
+        "uz": "Samolyot",
+        "ru": "Самолёт",
+        "en": "Private jet"
+      },
+      "credits": [
+        "\"Luxury Private Jet 3D Model Business Aircraft\" by pranavy94, CC BY 4.0, https://sketchfab.com/3d-models/luxury-private-jet-3d-model-business-aircraft-7fdfa52cb61a4ad09f0b218045400e9d",
+        "\"Airplane flyby\" by chungus43A, CC0 1.0, https://freesound.org/s/705381/"
+      ]
+    },
+    {
+      "id": "yacht",
+      "tier": 2,
+      "price_uzs": 90000,
+      "title": {
+        "uz": "Yaxta",
+        "ru": "Яхта",
+        "en": "Yacht"
+      },
+      "credits": [
+        "\"Yacht II\" by gogiart, CC BY 4.0, https://sketchfab.com/3d-models/dadc775d1d044aee9f6744fa7b47648e",
+        "\"Ocean Waves Rough.mp3\" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/"
+      ]
+    },
+    {
+      "id": "hot_air_balloon",
+      "tier": 2,
+      "price_uzs": 50000,
+      "title": {
+        "uz": "Havo shari",
+        "ru": "Воздушный шар",
+        "en": "Hot-air balloon"
+      },
+      "credits": [
+        "\"Hot Air Balloon\" by Anton Krupnov, CC BY 4.0, https://sketchfab.com/3d-models/0794a171bc7d45949a8bd5f13ab3dd71",
+        "\"Burner Gas Flame Sound\" by neilraouf, CC0 1.0, https://freesound.org/s/435643/"
+      ]
+    },
+    {
+      "id": "horse",
+      "tier": 2,
+      "price_uzs": 60000,
+      "title": {
+        "uz": "Arg'umoq",
+        "ru": "Скакун",
+        "en": "Stallion"
+      },
+      "credits": [
+        "\"Horse\" by victorberdugo1, CC BY 4.0, https://sketchfab.com/3d-models/2f4639623e684c44acb68922585d7a09",
+        "\"Horse_neighing.wav\" by Lydmakeren, CC0 1.0, https://freesound.org/s/510903/",
+        "\"Horse Gallop - Loopable.mp3\" by HebronTheatre, CC0 1.0, https://freesound.org/s/197212/",
+        "\"Impact\" by chriskalos, CC0 1.0, https://freesound.org/s/172779/"
+      ]
+    },
+    {
+      "id": "eagle",
+      "tier": 2,
+      "price_uzs": 40000,
+      "title": {
+        "uz": "Burgut",
+        "ru": "Орёл",
+        "en": "Eagle"
+      },
+      "credits": [
+        "\"Free Eagle\" by Filip, CC BY 4.0, https://sketchfab.com/3d-models/9f25e7c83840435396225970ba47b75e",
+        "\"Hawk,Cry,Bird,Ext.wav\" by Framing_Noise, CC0 1.0, https://freesound.org/s/319619/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/"
+      ]
+    },
+    {
+      "id": "dolphin",
+      "tier": 2,
+      "price_uzs": 30000,
+      "title": {
+        "uz": "Delfin",
+        "ru": "Дельфин",
+        "en": "Dolphin"
+      },
+      "credits": [
+        "\"Dolphin - animated - marine mammals series\" by nolanfa, CC BY 4.0, https://sketchfab.com/3d-models/f4abb460956240f98b7a6f19cc3037a1",
+        "\"Dolphin Noise-.wav\" by jfournier18, CC0 1.0, https://freesound.org/s/456151/",
+        "\"water splash\" by audiosmedia, CC0 1.0, https://freesound.org/s/243519/",
+        "\"Ocean Waves Rough.mp3\" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/"
+      ]
+    },
+    {
+      "id": "rocket",
+      "tier": 2,
+      "price_uzs": 100000,
+      "title": {
+        "uz": "Raketa",
+        "ru": "Ракета",
+        "en": "Rocket"
+      },
+      "credits": [
+        "\"Tomahawk Missile Rocket Launch 2\" by qubodup, CC0 1.0, https://freesound.org/s/162379/"
+      ]
+    },
+    {
+      "id": "lion",
+      "tier": 3,
+      "price_uzs": 300000,
+      "title": {
+        "uz": "Sher",
+        "ru": "Лев",
+        "en": "Lion"
+      },
+      "credits": [
+        "\"Realistic Lion 3D Model\" by Tarun.Teja, CC BY 4.0, https://sketchfab.com/3d-models/realistic-lion-3d-model-6da45f5d5a9f4733b195c6f03c92d33c",
+        "\"Golden crown\" by Pieter Ferreira (@Badboy17Aiden), CC BY 4.0, https://sketchfab.com/3d-models/golden-crown-5689a9525a2c425d93f7d483b93d8cfa",
+        "\"lion roar\" by bkyte, CC0 1.0, https://freesound.org/s/510476/"
+      ]
+    },
+    {
+      "id": "tiger",
+      "tier": 3,
+      "price_uzs": 300000,
+      "title": {
+        "uz": "Yo'lbars",
+        "ru": "Тигр",
+        "en": "Tiger"
+      },
+      "credits": [
+        "\"White Tiger (RIGGED ANIMATED)\" by MotionStreamStudios, CC BY 4.0, https://sketchfab.com/3d-models/9dd099d283e54f99b7cbd40b531b1a29",
+        "\"Tiger Roar\" by lauramellis, CC0 1.0, https://freesound.org/s/263115/",
+        "\"lion roar\" by bkyte, CC0 1.0, https://freesound.org/s/510476/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/"
+      ]
+    },
+    {
+      "id": "dragon",
+      "tier": 3,
+      "price_uzs": 500000,
+      "title": {
+        "uz": "Ajdaho",
+        "ru": "Дракон",
+        "en": "Dragon"
+      },
+      "credits": [
+        "\"European Dragon\" by Regina Cachoa, CC BY 4.0, https://sketchfab.com/3d-models/european-dragon-82f393a2e6c048ad80c171ce3b3a7b87",
+        "\"Dragon Roar\" by frasbr, CC0 1.0, https://freesound.org/s/145729/",
+        "\"flamewind.wav\" by scarbelly25, CC0 1.0, https://freesound.org/s/33943/"
+      ]
+    },
+    {
+      "id": "phoenix",
+      "tier": 3,
+      "price_uzs": 400000,
+      "title": {
+        "uz": "Semurg'",
+        "ru": "Феникс",
+        "en": "Phoenix"
+      },
+      "credits": [
+        "\"Phoenix\" by NORBERTO-3D, CC BY 4.0, https://sketchfab.com/3d-models/243fea4f846f44d18d37bf371272b7ec",
+        "\"fire-whoosh.wav\" by hnhnh, CC0 1.0, https://freesound.org/s/244926/",
+        "\"Kea screaming\" by Breviceps, CC0 1.0, https://freesound.org/s/456802/"
+      ]
+    },
+    {
+      "id": "castle",
+      "tier": 3,
+      "price_uzs": 250000,
+      "title": {
+        "uz": "Qasr",
+        "ru": "Замок",
+        "en": "Castle"
+      },
+      "credits": [
+        "\"Floating Castle\" by Shahriar Shahrabi, CC BY 4.0, https://sketchfab.com/3d-models/1e157bab3a4042eb834ca07d73aa28ce",
+        "\"Church Bell 1\" by nomiqbomi, CC0 1.0, https://freesound.org/s/578543/",
+        "\"Firework Explosion 1\" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212678/"
+      ]
+    },
+    {
+      "id": "golden_crown",
+      "tier": 3,
+      "price_uzs": 200000,
+      "title": {
+        "uz": "Oltin toj",
+        "ru": "Корона",
+        "en": "Golden crown"
+      },
+      "credits": [
+        "\"Golden crown\" by Pieter Ferreira (@Badboy17Aiden), CC BY 4.0, https://sketchfab.com/3d-models/golden-crown-5689a9525a2c425d93f7d483b93d8cfa",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
+      "id": "diamond_ring",
+      "tier": 3,
+      "price_uzs": 150000,
+      "title": {
+        "uz": "Olmos uzuk",
+        "ru": "Кольцо",
+        "en": "Diamond ring"
+      },
+      "credits": [
+        "\"Diamond Ring - Day 1 #3DInktober2019-Ring\" by MMKH, CC BY 4.0, https://sketchfab.com/3d-models/7482e3dcb4a8495cb5dc87689ecd045c",
+        "\"Glove Box Open and Close.mp3\" by Yin_Yang_Jake007, CC0 1.0, https://freesound.org/s/415302/",
+        "\"Shimmer\" by adh.dreaming, CC0 1.0, https://freesound.org/s/632344/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
+      "id": "treasure_chest",
+      "tier": 3,
+      "price_uzs": 200000,
+      "title": {
+        "uz": "Xazina",
+        "ru": "Сундук",
+        "en": "Treasure chest"
+      },
+      "credits": [
+        "\"Medieval Treasure Chest - animated\" by Theo Kain, CC BY 4.0, https://sketchfab.com/3d-models/719d7c1639a64cdebb878fdf1ce26dcf",
+        "\"Foley_Object_Metal_Chest_Open&Close_Mono.wav\" by Nox_Sound, CC0 1.0, https://freesound.org/s/570484/",
+        "\"coin fall 2.wav\" by FenrirFangs, CC0 1.0, https://freesound.org/s/213986/",
+        "\"coin falling on floor.wav\" by sethlind, CC0 1.0, https://freesound.org/s/265011/"
+      ]
+    },
+    {
+      "id": "universe",
+      "tier": 4,
+      "price_uzs": 1000000,
+      "title": {
+        "uz": "Koinot",
+        "ru": "Вселенная",
+        "en": "Universe"
+      },
+      "credits": [
+        "\"Realistic Earth 8K\" by Shady Tex, CC BY 4.0, https://sketchfab.com/3d-models/899b7a8202ed48f0a0903c33cb5501b6",
+        "\"Low spacey sound\" by User391915396, CC0 1.0, https://freesound.org/s/495010/",
+        "\"Deep Boom\" by Za-Games, CC0 1.0, https://freesound.org/s/539968/",
+        "\"Space Swoosh - brighter\" by GameAudio, CC0 1.0, https://freesound.org/s/220191/"
+      ]
+    },
+    {
+      "id": "pegasus",
+      "tier": 4,
+      "price_uzs": 1500000,
+      "title": {
+        "uz": "Oltin Pegas",
+        "ru": "Пегас",
+        "en": "Golden Pegasus"
+      },
+      "credits": [
+        "\"Horse\" by victorberdugo1, CC BY 4.0, https://sketchfab.com/3d-models/2f4639623e684c44acb68922585d7a09",
+        "\"Horse_neighing.wav\" by Lydmakeren, CC0 1.0, https://freesound.org/s/510903/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/",
+        "\"Impact\" by chriskalos, CC0 1.0, https://freesound.org/s/172779/"
+      ]
+    }
+  ]
+}

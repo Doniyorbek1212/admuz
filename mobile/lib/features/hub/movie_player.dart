@@ -51,6 +51,7 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
   Timer? _hideTimer;
   Timer? _hintTimer;
   Timer? _saveTimer;
+  bool _awake = false;
 
   // Read once: dispose() saves the position and stops the download after ref is no longer usable.
   late final SharedPreferences _prefs;
@@ -71,6 +72,7 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
     // Any orientation: the viewer turns the phone, or taps the rotate button.
     SystemChrome.setPreferredOrientations(const []);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _awake = true;
     unawaited(WakelockPlus.enable());
     _saveTimer = Timer.periodic(const Duration(seconds: 5), (_) => _savePosition());
     unawaited(_open());
@@ -149,6 +151,11 @@ class _MoviePlayerScreenState extends ConsumerState<MoviePlayerScreen> with Widg
   void _onTick() {
     final value = _controller?.value;
     if (value == null || !value.isInitialized) return;
+    // The screen stays on only while the movie plays; a paused one lets the phone sleep.
+    if (value.isPlaying != _awake) {
+      _awake = value.isPlaying;
+      unawaited(_awake ? WakelockPlus.enable() : WakelockPlus.disable());
+    }
     // Finished: forget the position and go on with the next episode.
     if (value.duration > Duration.zero && value.position >= value.duration - const Duration(milliseconds: 500) && !value.isPlaying) {
       _prefs.remove('movie.pos.${_video.id}');

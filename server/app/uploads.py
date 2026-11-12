@@ -66,6 +66,17 @@ async def save_public(file: UploadFile) -> tuple[str, str, int]:
     return name, kind[0], len(data)
 
 
+async def save_public_image(file: UploadFile) -> str:
+    """Stores a JPEG, PNG or WebP image publicly (a quick link's logo); returns its name."""
+    data = await read_limited(file, get_settings().max_image_bytes)
+    kind = sniff(data)
+    if kind is None or kind[0] != "image":
+        raise bad_request("NOT_AN_IMAGE")
+    name = f"{uuid.uuid4()}.{kind[1]}"
+    await asyncio.to_thread(_write, public_dir() / name, data)
+    return name
+
+
 def sniff_audio(data: bytes) -> str | None:
     """Returns "mp3" (ID3 tag or MPEG frame sync) or "m4a" (MP4 with an M4A brand), else None."""
     if data.startswith(b"ID3") or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):

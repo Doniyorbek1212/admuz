@@ -35,7 +35,8 @@ def ad_price(regions: int, days: int, price_per_region_day: int) -> int:
 
 
 class AdIn(BaseModel):
-    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=60)]
+    # Optional: an ad may be just its picture, with no headline over it.
+    title: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] = ""
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] = ""
     media_type: Literal["image", "video"]
     media_url: MediaUrl

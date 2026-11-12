@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/api/gift_models.dart';
+import '../../core/store_rules.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
@@ -487,6 +488,9 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       value: _anonymous,
                       onChanged: _sending ? null : (value) => setState(() => _anonymous = value),
                     ),
+                    // Store builds: paid gifts are bought from a balance topped up outside the store, which the
+                    // store rules forbid; free ones still go.
+                    if (!storeBlocksExternalPayments || selected.priceUzs == 0)
                     FilledButton.icon(
                       onPressed: _sending ? null : (enough ? () => _send(selected) : _topUp),
                       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),

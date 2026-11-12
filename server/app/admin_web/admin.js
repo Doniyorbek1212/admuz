@@ -142,6 +142,7 @@ const PAGES = {
   music: { title: 'Musiqa', role: 'viewer', render: (el, arg) => renderMusic(el, arg) }, // admin_music.js
   gifts: { title: "Sovg'alar", role: 'viewer', render: (el, arg) => renderGifts(el, arg) }, // admin_gifts.js
   banned: { title: 'Taqiqlangan kanallar', role: 'viewer', render: (el) => renderBanned(el) }, // admin_banned.js
+  quick: { title: 'Tezkor havolalar', role: 'viewer', render: (el) => renderQuickLinks(el) }, // admin_quick_links.js
   users: { title: 'Foydalanuvchilar', role: 'support', render: renderUsers },
   settings: { title: 'Sozlamalar', role: 'viewer', render: renderSettings },
   admins: { title: 'Adminlar', role: 'owner', render: renderAdmins },
@@ -275,7 +276,7 @@ function adCard(ad) {
     <div class="media">${mediaHtml(ad.media_type, ad.media_url)}</div>
     <div class="body">
       <div class="toolbar">${pill(AD_STATUS, ad.status)}<span class="pill gold">${esc(som(ad.price_uzs))}</span></div>
-      <h4>${esc(ad.title)}</h4>
+      <h4>${ad.title ? esc(ad.title) : '<span class="muted">Sarlavhasiz</span>'}</h4>
       ${ad.text ? `<p class="text">${esc(ad.text)}</p>` : ''}
       <dl class="facts">
         <dt>Hududlar</dt><dd>${esc(ad.regions.join(', '))}</dd>

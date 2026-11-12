@@ -85,7 +85,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         body: IndexedStack(
           index: _index,
           children: [
-            for (var i = 0; i < _tabs.length; i++) _visited.contains(i) ? _tabs[i] : const SizedBox.shrink(),
+            // Hidden tabs stay alive but their animations stop (IndexedStack alone keeps them ticking: battery).
+            for (var i = 0; i < _tabs.length; i++)
+              _visited.contains(i) ? TickerMode(enabled: i == _index, child: _tabs[i]) : const SizedBox.shrink(),
           ],
         ),
         bottomNavigationBar: _BottomBar(index: _index, onSelect: _select),

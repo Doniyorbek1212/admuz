@@ -24,13 +24,19 @@ class MessageNotifier {
   void Function(int chatId)? onOpenChat;
 
   Future<void> initialize() async {
-    if (_initialized || !(Platform.isAndroid || Platform.isIOS)) return;
+    if (_initialized || !(Platform.isAndroid || Platform.isIOS || Platform.isWindows)) return;
     _initialized = true;
     try {
       await _plugin.initialize(
         settings: const InitializationSettings(
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(),
+          // Windows toasts: the id and GUID must never change, or old toasts lose their app.
+          windows: WindowsInitializationSettings(
+            appName: 'UZARO',
+            appUserModelId: 'uz.uzaro.app',
+            guid: '6f1c2a4e-8b3d-4e5f-9a7c-2d1e0b4c8f63',
+          ),
         ),
         onDidReceiveNotificationResponse: (response) {
           final chatId = int.tryParse(response.payload ?? '');

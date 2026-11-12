@@ -242,6 +242,20 @@ class ChatHistory extends ChangeNotifier {
         .catchError((Object _) => const td.Ok()));
   }
 
+  /// My message with new reactions came on screen. TDLib counts them read once the message is viewed, but
+  /// [markViewed] skips outgoing messages. Ghost mode must not view (an outgoing id would mark everything
+  /// before it read), so it clears reactions only; reading reactions is never shown to anyone.
+  void markReactionsSeen(int messageId) {
+    if (messageId <= 0 || !_reactionsSeen.add(messageId)) return;
+    final request = ghostMode
+        ? td.ReadAllChatReactions(chatId: chatId) as td.TdFunction
+        : td.ViewMessages(chatId: chatId, messageIds: [messageId], source: null, forceRead: true);
+    // Called from the list's item builder: the reply (and the badge update it brings) lands after the frame.
+    unawaited(account.send<td.Ok>(request).catchError((Object _) => const td.Ok()));
+  }
+
+  final Set<int> _reactionsSeen = {};
+
   void _onEvent(td.Update update) {
     switch (update) {
       case td.UpdateNewMessage(:final message) when message.chatId == chatId:
