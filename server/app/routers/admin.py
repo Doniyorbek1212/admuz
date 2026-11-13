@@ -10,7 +10,7 @@ from app.catalog import Entitlement
 from app.deps import DbDep, require_admin
 from app.errors import bad_request, not_found
 from app.models import AdminRole, AdminUser, AuditLog, Customer, EntitlementOverride, Purchase, Subscription
-from app.services import credits
+from app.services import credits, wallet
 from app.services.audit import audit
 from app.services.entitlements import load_entitlements
 from app.services.metrics import compute_metrics
@@ -59,6 +59,7 @@ async def customer_detail(customer_id: uuid.UUID, admin: Support, db: DbDep) -> 
         ],
         "purchases": [{"id": str(p.id), "product_id": p.product_id, "status": p.status.value} for p in purchases],
         "credits": {"allowance": balance.allowance, "purchased": balance.available, "reserved": balance.reserved},
+        "wallet_uzs": await wallet.balance(db, customer_id),
     }
 
 

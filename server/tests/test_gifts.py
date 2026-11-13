@@ -293,3 +293,22 @@ async def test_admin_bonus_credits_the_balance(client, session_factory, new_cust
     assert [e["kind"] for e in wallet["entries"]] == ["bonus", "bonus"]
     incoming = (await dave.get("/v1/wallet/history", params={"direction": "in"})).json()["items"]
     assert len(incoming) == 2
+
+
+async def test_admin_bonus_by_customer_picked_in_the_users_list(client, session_factory, new_customer):
+    finance = await _admin(session_factory, AdminRole.FINANCE)
+    erin = await new_customer()  # never linked Telegram: the users list still reaches them
+    body = {"customer_id": erin.id, "amount_uzs": 5_000, "reason": "Keshbek"}
+
+    both = await client.post("/v1/admin/gifts/credit", headers=finance, json=body | {"telegram_user_id": 1})
+    assert both.status_code == 422
+    neither = await client.post("/v1/admin/gifts/credit", headers=finance, json={"amount_uzs": 5_000, "reason": "Keshbek"})
+    assert neither.status_code == 422
+    unknown = await client.post("/v1/admin/gifts/credit", headers=finance, json=body | {"customer_id": str(uuid.uuid4())})
+    assert unknown.json()["detail"]["code"] == "CUSTOMER_NOT_FOUND"
+
+    credited = await client.post("/v1/admin/gifts/credit", headers=finance, json=body)
+    assert credited.status_code == 200, credited.text
+    assert credited.json()["balance_uzs"] == 5_000
+    detail = (await client.get(f"/v1/admin/customers/{erin.id}", headers=finance)).json()
+    assert detail["wallet_uzs"] == 5_000

@@ -425,17 +425,22 @@ async function customerDetail(id) {
   if (!c) return;
   const body = openModal('Foydalanuvchi', `
     <dl class="facts"><dt>ID</dt><dd class="mono">${esc(c.customer_id)}</dd><dt>Tarif</dt><dd>${esc(c.tier)}</dd><dt>Hudud</dt><dd>${esc(c.region || '—')}</dd>
-      <dt>Ro'yxatdan o'tgan</dt><dd>${esc(date(c.created_at))}</dd><dt>Kreditlar</dt><dd class="num">${c.credits.allowance} limit · ${c.credits.purchased} sotib olingan · ${c.credits.reserved} band</dd></dl>
+      <dt>Ro'yxatdan o'tgan</dt><dd>${esc(date(c.created_at))}</dd><dt>Hamyon</dt><dd class="num">${som(c.wallet_uzs)}</dd>
+      <dt>AI kreditlar</dt><dd class="num">${c.credits.allowance} limit · ${c.credits.purchased} sotib olingan · ${c.credits.reserved} band</dd></dl>
+    ${can('finance') ? `<form id="bonus" class="card stack"><b>Hamyonga bonus (keshbek)</b>
+      <div class="form-grid"><div class="field"><label for="bn-amount">Summa (so'm)</label><input id="bn-amount" type="number" min="100" max="5000000" step="100" required></div>
+      <div class="field"><label for="bn-reason">Sabab</label><input id="bn-reason" required minlength="3" maxlength="256" placeholder="Keshbek: noyabr aksiyasi"></div></div>
+      <button class="btn primary" type="submit">Hamyonga qo'shish</button></form>` : ''}
     <h4>Imkoniyatlar</h4>
     ${c.entitlements.length ? `<ul>${c.entitlements.map((e) => `<li>${esc(e.entitlement)} · ${esc(e.source)} · ${esc(date(e.expires_at))} gacha</li>`).join('')}</ul>` : '<p class="muted">Pullik imkoniyat yo\'q</p>'}
     <h4>Obunalar</h4>
     ${c.subscriptions.length ? `<ul>${c.subscriptions.map((s) => `<li>${esc(s.product_id)} · ${esc(s.status)} · ${esc(date(s.expires_at))}</li>`).join('')}</ul>` : '<p class="muted">Obuna yo\'q</p>'}
     <form id="grant" class="card stack"><b>Imkoniyat berish</b>
-      <div class="form-grid"><div class="field"><label for="g-ent">Imkoniyat</label><input id="g-ent" required placeholder="masalan: premium"></div>
+      <div class="form-grid"><div class="field"><label for="g-ent">Imkoniyat</label><select id="g-ent" required><option value="pro">Pro (mavzular, ko'rinish)</option><option value="ai_writer">AI yozuvchi</option><option value="business">Biznes</option></select></div>
       <div class="field"><label for="g-exp">Qachongacha</label><input id="g-exp" type="date" required></div></div>
       <div class="field"><label for="g-reason">Sabab</label><input id="g-reason" required minlength="5"></div>
       <button class="btn primary" type="submit">Berish</button></form>
-    ${can('finance') ? `<form id="credits" class="card stack"><b>Kreditlarni o'zgartirish</b>
+    ${can('finance') ? `<form id="credits" class="card stack"><b>AI kreditlarni o'zgartirish</b>
       <div class="form-grid"><div class="field"><label for="cr-amount">Miqdor (+/−)</label><input id="cr-amount" type="number" required></div>
       <div class="field"><label for="cr-ref">Hujjat raqami</label><input id="cr-ref" required pattern="[A-Za-z0-9._:-]+"></div></div>
       <div class="field"><label for="cr-reason">Sabab</label><input id="cr-reason" required minlength="5"></div>
@@ -446,6 +451,15 @@ async function customerDetail(id) {
     const ok = await run(() => api(`/v1/admin/customers/${id}/overrides`, { method: 'POST', body: { entitlement: body.querySelector('#g-ent').value.trim(), expires_at: expires, reason: body.querySelector('#g-reason').value.trim() } }), 'Imkoniyat berildi');
     if (ok) { closeModal(); customerDetail(id); }
   };
+  body.querySelector('#bonus')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = { customer_id: id, amount_uzs: Number(body.querySelector('#bn-amount').value), reason: body.querySelector('#bn-reason').value.trim() };
+    // The confirmation replaces this modal, so the detail is reopened afterwards either way.
+    const yes = await confirmBox('Bonusni tasdiqlang', `${som(payload.amount_uzs)} shu foydalanuvchi hamyoniga qo'shiladi. Qaytarib bo'lmaydi.`, "Qo'shish");
+    const done = yes && await run(() => api('/v1/admin/gifts/credit', { method: 'POST', body: payload }));
+    if (done) toast(`Qo'shildi. Yangi balans: ${som(done.balance_uzs)}`);
+    customerDetail(id);
+  });
   body.querySelector('#credits')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const ok = await run(() => api(`/v1/admin/customers/${id}/credits`, { method: 'POST', body: { amount: Number(body.querySelector('#cr-amount').value), reference: body.querySelector('#cr-ref').value.trim(), reason: body.querySelector('#cr-reason').value.trim() } }), 'Kreditlar yangilandi');

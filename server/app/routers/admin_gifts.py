@@ -7,12 +7,12 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import func, select
 
 from app.deps import DbDep, require_admin
 from app.errors import bad_request, conflict, not_found
-from app.models import AdminRole, AdminUser, GiftItem, SentGift, TelegramLink, TopupStatus, WalletTopup
+from app.models import AdminRole, AdminUser, Customer, GiftItem, SentGift, TelegramLink, TopupStatus, WalletTopup
 from app.routers.admin_market import ReasonIn
 from app.routers.gifts import gift_out, topup_out
 from app.services import wallet
@@ -165,20 +165,35 @@ async def reject_topup(topup_id: uuid.UUID, body: ReasonIn, admin: Support, db: 
 
 
 class CreditIn(BaseModel):
-    telegram_user_id: Annotated[int, Field(gt=0)]
+    """The user is named by exactly one of: their Telegram id, or the customer picked in the users list."""
+
+    telegram_user_id: Annotated[int | None, Field(gt=0)] = None
+    customer_id: uuid.UUID | None = None
     amount_uzs: Annotated[int, Field(ge=100, le=5_000_000)]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=256)]
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "CreditIn":
+        if (self.telegram_user_id is None) == (self.customer_id is None):
+            raise ValueError("give telegram_user_id or customer_id, not both")
+        return self
 
 
 @router.post("/credit")
 async def credit_balance(body: CreditIn, admin: Finance, db: DbDep) -> dict[str, Any]:
     """Money from UZARO to a user's balance (cashback, bonus, goodwill): one ledger line, audited."""
-    customer_id = await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.telegram_user_id == body.telegram_user_id))
-    if customer_id is None:
-        raise not_found("TELEGRAM_NOT_LINKED")
+    if body.customer_id is not None:
+        customer = await db.get(Customer, body.customer_id)
+        if customer is None or customer.deleted_at is not None:
+            raise not_found("CUSTOMER_NOT_FOUND")
+        customer_id = customer.id
+    else:
+        customer_id = await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.telegram_user_id == body.telegram_user_id))
+        if customer_id is None:
+            raise not_found("TELEGRAM_NOT_LINKED")
     reference = f"admin:{uuid.uuid4().hex}"
     await wallet.record(db, customer_id, body.amount_uzs, "bonus", reference)
-    audit(db, f"admin:{admin.name}", "wallet_bonus", reference, telegram_user_id=body.telegram_user_id,
-          amount_uzs=body.amount_uzs, reason=body.reason)
+    audit(db, f"admin:{admin.name}", "wallet_bonus", str(customer_id), telegram_user_id=body.telegram_user_id,
+          amount_uzs=body.amount_uzs, reason=body.reason, reference=reference)
     await db.commit()
-    return {"telegram_user_id": body.telegram_user_id, "amount_uzs": body.amount_uzs, "balance_uzs": await wallet.balance(db, customer_id)}
+    return {"customer_id": str(customer_id), "amount_uzs": body.amount_uzs, "balance_uzs": await wallet.balance(db, customer_id)}
