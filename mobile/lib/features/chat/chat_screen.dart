@@ -1210,6 +1210,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
         final index = rawIndex - sponsoredSlots;
         if (index == messages.length) {
+          // A chat shorter than the screen never scrolls, so the loader on screen asks for older itself.
+          WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_history.loadOlder()));
           return const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
         }
         final message = messages[index];
