@@ -1434,15 +1434,24 @@ class ComposerState extends ConsumerState<Composer> {
         Expanded(
           child: isDesktop
               ? fields
-              : Container(
-                  constraints: const BoxConstraints(minHeight: 52),
+              // White pill in a polished gold frame (the UZARO look).
+              : DecoratedBox(
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: theme.dividerColor),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
+                    gradient: _goldMetal,
+                    borderRadius: BorderRadius.circular(26 + _goldRim),
+                    boxShadow: [
+                      BoxShadow(color: brandGold.withValues(alpha: 0.35), blurRadius: 10),
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 3)),
+                    ],
                   ),
-                  child: fields,
+                  child: Padding(
+                    padding: const EdgeInsets.all(_goldRim),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      decoration: BoxDecoration(color: theme.colorScheme.surface, borderRadius: BorderRadius.circular(26)),
+                      child: fields,
+                    ),
+                  ),
                 ),
         ),
         if (!isDesktop) const SizedBox(width: 6),
@@ -1600,26 +1609,32 @@ class ComposerState extends ConsumerState<Composer> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
-        width: _recording ? 60 : (isDesktop ? 48 : 52),
-        height: _recording ? 60 : (isDesktop ? 48 : 52),
+        width: _recording ? 60 : (isDesktop ? 48 : 54),
+        height: _recording ? 60 : (isDesktop ? 48 : 54),
+        padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.all(_goldRim),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: _recording || !isDesktop ? brandGradient(primary, vertical: true) : null,
+          gradient: isDesktop ? (_recording ? brandGradient(primary, vertical: true) : null) : _goldMetal,
           boxShadow: [
             if (_recording) BoxShadow(color: primary.withValues(alpha: 0.28), spreadRadius: 6 + 14 * pulse),
             if (_recording || !isDesktop)
               BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4)),
           ],
         ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 160),
-          transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-          child: Icon(
-            _recording && _locked
-                ? Icons.send_rounded
-                : (_videoMode ? Icons.photo_camera_outlined : Icons.mic_rounded),
-            key: ValueKey('$_videoMode$_locked$_recording'),
-            color: _recording || !isDesktop ? Colors.white : theme.hintColor,
+        child: DecoratedBox(
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: isDesktop ? null : brandGradient(primary, vertical: true)),
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+              child: Icon(
+                _recording && _locked
+                    ? Icons.send_rounded
+                    : (_videoMode ? Icons.photo_camera_outlined : Icons.mic_rounded),
+                key: ValueKey('$_videoMode$_locked$_recording'),
+                color: _recording || !isDesktop ? Colors.white : theme.hintColor,
+              ),
+            ),
           ),
         ),
       ),
@@ -1632,7 +1647,7 @@ class ComposerState extends ConsumerState<Composer> {
     final elapsed = DateTime.now().difference(_recordStart ?? DateTime.now());
     final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
     return SizedBox(
-      height: 52,
+      height: 48,
       child: Row(
         children: [
           const SizedBox(width: 14),
@@ -1679,6 +1694,17 @@ class ComposerState extends ConsumerState<Composer> {
 }
 
 /// Round accent send button beside the floating field, matching the mic button.
+/// Width of the gold rim around the phone composer's field and its send/mic button.
+const _goldRim = 3.0;
+
+/// Polished gold: a bright highlight on top, deeper toward the bottom edge.
+const _goldMetal = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [Color(0xFFFFF0C2), Color(0xFFE2BC62), Color(0xFFA9792A), Color(0xFFE8C877)],
+  stops: [0, 0.4, 0.75, 1],
+);
+
 class _RoundButton extends StatelessWidget {
   const _RoundButton({required this.onTap, required this.child});
 
@@ -1689,18 +1715,22 @@ class _RoundButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
-      width: 52,
-      height: 52,
+      width: 54,
+      height: 54,
+      padding: const EdgeInsets.all(_goldRim),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: brandGradient(primary, vertical: true),
+        gradient: _goldMetal,
         boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Material(
-        type: MaterialType.transparency,
+        color: Colors.transparent,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
-        child: InkWell(onTap: onTap, child: Center(child: child)),
+        child: Ink(
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(primary, vertical: true)),
+          child: InkWell(onTap: onTap, child: Center(child: child)),
+        ),
       ),
     );
   }

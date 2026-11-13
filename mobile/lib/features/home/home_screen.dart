@@ -28,7 +28,6 @@ import 'chat_tile.dart';
 import 'ghost_mode_button.dart';
 import 'home_drawer.dart';
 import 'home_shell.dart';
-import 'unread_browser.dart';
 
 /// Right-hand pane of the tablet split view; null on phones.
 final chatPaneNavigatorKey = GlobalKey<NavigatorState>();
@@ -134,7 +133,6 @@ class HomeScreen extends ConsumerWidget {
                       ],
                     ),
                     actions: [
-                      const _UnreadBrowserButton(),
                       IconButton(
                         icon: const Icon(Icons.search_rounded, size: 27),
                         tooltip: s.t('search'),
@@ -172,25 +170,6 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Opens the unread chats as swipeable cards; shows how many chats wait, and hides when none do.
-class _UnreadBrowserButton extends ConsumerWidget {
-  const _UnreadBrowserButton();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final count = ref.watch(unreadChatIdsProvider.select((ids) => ids.length));
-    if (count == 0) return const SizedBox.shrink();
-    return IconButton(
-      tooltip: context.t('unread_browser'),
-      onPressed: () => openUnreadBrowser(context, ref),
-      icon: Badge(
-        label: Text(count > 99 ? '99+' : '$count'),
-        child: const Icon(Icons.mark_chat_unread_rounded, size: 26),
-      ),
     );
   }
 }

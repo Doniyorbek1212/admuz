@@ -21,6 +21,20 @@ abstract final class MessageTones {
   /// Android fixes a channel's sound when it is created, so every tone has its own channel.
   /// [silent]: the app already played the tone itself (it is on screen).
   static AndroidNotificationDetails android(String tone, {bool silent = false}) {
+    // MIUI ignores the silent flag and still plays the channel's sound, so the app on screen (which rang
+    // itself) posts to a channel created without one.
+    if (silent) {
+      return const AndroidNotificationDetails(
+        'messages_quiet',
+        'Messages (app open)',
+        channelDescription: 'New messages while UZARO is on screen; the app plays the tone itself',
+        importance: Importance.high,
+        priority: Priority.high,
+        category: AndroidNotificationCategory.message,
+        playSound: false,
+        silent: true,
+      );
+    }
     final known = ids.contains(tone) ? tone : 'default';
     return AndroidNotificationDetails(
       switch (known) { 'default' => 'messages', _ => 'messages_$known' },
@@ -31,7 +45,6 @@ abstract final class MessageTones {
       category: AndroidNotificationCategory.message,
       playSound: known != 'none',
       sound: switch (known) { 'default' || 'none' => null, _ => RawResourceAndroidNotificationSound('tone_$known') },
-      silent: silent,
     );
   }
 
