@@ -108,6 +108,15 @@ async def test_gift_bought_for_oneself(client, session_factory, new_customer):
     profile = (await carol.get("/v1/gifts/users/777")).json()
     assert profile["total"] == 1 and profile["items"][0]["sender_telegram_id"] == 777
 
+    # Full history: the purchase names the gift and that it was for oneself; filters split money in and out.
+    spent = (await carol.get("/v1/wallet/history", params={"direction": "out"})).json()
+    assert [(i["kind"], i["title"], i["to_self"]) for i in spent["items"]] == [("gift", "Atirgul", True)]
+    assert spent["has_more"] is False
+    came_in = (await carol.get("/v1/wallet/history", params={"direction": "in"})).json()["items"]
+    assert [(i["kind"], i["method"]) for i in came_in] == [("topup", "card")]
+    assert (await carol.get("/v1/wallet/history", params={"limit": 1})).json()["has_more"] is True
+    assert (await carol.get("/v1/wallet/history", params={"direction": "x"})).status_code == 422
+
 
 async def test_group_gifts_and_chat_list_showcase(client, session_factory, new_customer):
     admin = await _admin(session_factory)

@@ -197,19 +197,59 @@ class Wallet {
   final bool payme;
 }
 
-/// One line of the balance history; [kind] is topup, gift, badge, username or adjust.
+/// One line of the balance history; [kind] is topup, refund, gift, badge, username or adjust.
 class WalletEntry {
-  const WalletEntry({required this.deltaUzs, required this.kind, required this.createdAt});
+  const WalletEntry({
+    required this.deltaUzs,
+    required this.kind,
+    required this.createdAt,
+    this.title,
+    this.titles = const {},
+    this.method,
+    this.recipientId,
+    this.toSelf = false,
+  });
 
   factory WalletEntry.fromJson(Map<String, dynamic> j) => WalletEntry(
         deltaUzs: j['delta_uzs'] as int? ?? 0,
         kind: j['kind'] as String? ?? '',
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? '')?.toLocal(),
+        title: j['title'] as String?,
+        titles: {for (final e in (j['titles'] as Map? ?? const {}).entries) '${e.key}': '${e.value}'},
+        method: j['method'] as String?,
+        recipientId: j['recipient_id'] as int?,
+        toSelf: j['to_self'] as bool? ?? false,
       );
 
   final int deltaUzs;
   final String kind;
   final DateTime? createdAt;
+
+  /// The gift's name or the bought @name.
+  final String? title;
+  final Map<String, String> titles;
+
+  /// How a top-up (or refund) was paid: payme or card.
+  final String? method;
+
+  /// Who got the gift (a Telegram user id, or a group's chat id).
+  final int? recipientId;
+  final bool toSelf;
+
+  String? titleFor(String locale) => titles[locale] ?? title;
+}
+
+/// A page of the full balance history.
+class WalletHistoryPage {
+  const WalletHistoryPage({required this.items, required this.hasMore});
+
+  factory WalletHistoryPage.fromJson(Map<String, dynamic> j) => WalletHistoryPage(
+        items: [for (final e in j['items'] as List? ?? const []) WalletEntry.fromJson(e as Map<String, dynamic>)],
+        hasMore: j['has_more'] as bool? ?? false,
+      );
+
+  final List<WalletEntry> items;
+  final bool hasMore;
 }
 
 /// The user's own UZARO badge (checkmark or custom emoji next to the name), its monthly price and the balance.

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/api/gift_models.dart';
 import '../../core/api/sado_api.dart';
@@ -13,6 +12,7 @@ import '../profile/uzaro_username.dart';
 import 'gift_widgets.dart' show buyUzaroGiftForMe;
 import 'gifts_screen.dart';
 import 'topup_screen.dart';
+import 'wallet_history_screen.dart';
 import 'uzaro_badge.dart' show showUzaroBadgeSheet;
 
 /// The UZARO balance with its history; refreshed after every purchase or top-up.
@@ -87,7 +87,6 @@ class WalletScreen extends ConsumerWidget {
   Widget _history(BuildContext context, Wallet wallet) {
     final s = context.s;
     final theme = Theme.of(context);
-    final date = DateFormat.yMMMd(s.locale).add_Hm();
     final pending = [for (final t in wallet.topups) if (t.status == 'pending') t];
     return SettingsGroup(title: s.t('wallet_history'), children: [
       for (final topup in pending)
@@ -101,43 +100,13 @@ class WalletScreen extends ConsumerWidget {
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
           child: Text(s.t('wallet_history_empty'), style: TextStyle(color: theme.hintColor)),
         ),
-      for (final entry in wallet.entries)
+      for (final entry in wallet.entries) WalletEntryTile(entry: entry, showDate: true),
+      if (wallet.entries.isNotEmpty)
         ListTile(
-          leading: TileIcon(_kindIcon(entry.kind), _kindColor(entry.kind)),
-          title: Text(_kindLabel(s, entry.kind)),
-          subtitle: entry.createdAt == null ? null : Text(date.format(entry.createdAt!)),
-          trailing: Text(
-            '${entry.deltaUzs > 0 ? '+' : '−'}${formatUzs(context, entry.deltaUzs.abs())}',
-            style: TextStyle(
-              color: entry.deltaUzs > 0 ? const Color(0xFF2EAD5B) : theme.colorScheme.onSurface,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          title: Text(s.t('wallet_history_all'), style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)),
+          trailing: Icon(Icons.chevron_right_rounded, color: theme.colorScheme.primary),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WalletHistoryScreen())),
         ),
     ]);
   }
-
-  static IconData _kindIcon(String kind) => switch (kind) {
-        'topup' => Icons.add_card_rounded,
-        'gift' => Icons.card_giftcard_rounded,
-        'badge' => Icons.verified_rounded,
-        'username' => Icons.alternate_email_rounded,
-        _ => Icons.tune_rounded,
-      };
-
-  static Color _kindColor(String kind) => switch (kind) {
-        'topup' => const Color(0xFF2EAD5B),
-        'gift' => const Color(0xFFE5486A),
-        'badge' => const Color(0xFF2E9BF0),
-        'username' => const Color(0xFF7E57C2),
-        _ => const Color(0xFF8E8E93),
-      };
-
-  static String _kindLabel(Strings s, String kind) => switch (kind) {
-        'topup' => s.t('wallet_kind_topup'),
-        'gift' => s.t('gifts_title'),
-        'badge' => s.t('uzaro_badge'),
-        'username' => s.t('uzaro_username'),
-        _ => s.t('wallet_kind_adjust'),
-      };
 }

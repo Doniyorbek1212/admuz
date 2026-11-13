@@ -21,6 +21,7 @@ class TopupScreen extends ConsumerStatefulWidget {
 }
 
 class _TopupScreenState extends ConsumerState<TopupScreen> {
+  static const _paymeTeal = Color(0xFF33CCCC);
   static const _minAmount = 1000;
   static const _quickAmounts = [10000, 25000, 50000, 100000];
   late Future<Wallet> _wallet = ref.read(sadoApiProvider).wallet();
@@ -110,9 +111,11 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
               Padding(padding: const EdgeInsets.all(20), child: Text(s.t('topup_unavailable'), textAlign: TextAlign.center))
             else
               _steps(context, wallet),
-            if (wallet.topups.isNotEmpty)
+            // Approved receipts already show in the wallet history; only those still in review or rejected stay here.
+            if (wallet.topups.any((t) => t.status != 'approved'))
               SettingsGroup(title: s.t('topup_history'), children: [
                 for (final topup in wallet.topups)
+                  if (topup.status != 'approved')
                   ListTile(
                     title: Text(formatUzs(context, topup.amountUzs), style: const TextStyle(fontWeight: FontWeight.w700)),
                     subtitle: topup.rejectReason.isNotEmpty ? Text(s.t('reject_reason', {'reason': topup.rejectReason})) : null,
@@ -157,27 +160,36 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
       ),
       if (wallet.payme) ...[
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-          child: FilledButton.icon(
-            onPressed: _openingPayme ? null : _payWithPayme,
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52), backgroundColor: const Color(0xFF33CCCC), foregroundColor: Colors.white),
-            icon: _openingPayme ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.flash_on_rounded),
-            label: Text(s.t('topup_payme'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Semantics(
+            button: true,
+            label: s.t('topup_payme'),
+            child: Material(
+              color: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: _paymeTeal, width: 1.6)),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: _openingPayme ? null : _payWithPayme,
+                child: SizedBox(
+                  height: 56,
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    if (_openingPayme)
+                      const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: _paymeTeal))
+                    else
+                      Image.asset('assets/payme.png', height: 28),
+                    const SizedBox(width: 12),
+                    Text(s.t('topup_payme_via'), style: const TextStyle(color: Color(0xFF1F2A30), fontSize: 16.5, fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+              ),
+            ),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
           child: Text(s.t('topup_payme_hint'), textAlign: TextAlign.center, style: TextStyle(color: theme.hintColor, fontSize: 12.5)),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-          child: Row(children: [
-            const Expanded(child: Divider()),
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: Text(s.t('topup_or_card'), style: TextStyle(color: theme.hintColor))),
-            const Expanded(child: Divider()),
-          ]),
-        ),
-      ],
+      ] else ...[
       step(1, s.t('topup_step1')),
       if (wallet.card.isEmpty)
         Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 8), child: Text(s.t('ad_card_missing'), style: TextStyle(color: theme.colorScheme.error)))
@@ -221,6 +233,7 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
         ),
       ),
       step(3, s.t('topup_step3')),
+      ],
     ]);
   }
 }

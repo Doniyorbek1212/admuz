@@ -100,6 +100,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/logo.png
+    - assets/payme.png
     - assets/gift_effects/
     - assets/gift_credits.txt
   # assets:

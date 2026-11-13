@@ -35,4 +35,19 @@ void main() {
     expect(Wallet.fromJson({'balance_uzs': 0}).payme, isFalse);
     expect(Wallet.fromJson({'balance_uzs': 0, 'payme': true}).payme, isTrue);
   });
+
+  test('history lines carry the gift name per language, recipient and payment method', () {
+    final page = WalletHistoryPage.fromJson({
+      'items': [
+        {'delta_uzs': -5000, 'kind': 'gift', 'created_at': '2026-11-13T10:00:00+00:00', 'title': 'Atirgul',
+         'titles': {'uz': 'Atirgul', 'ru': 'Роза'}, 'recipient_id': 42, 'to_self': true},
+        {'delta_uzs': 7000, 'kind': 'topup', 'created_at': '2026-11-12T09:00:00+00:00', 'method': 'payme'},
+      ],
+      'has_more': true,
+    });
+    final (gift, topup) = (page.items[0], page.items[1]);
+    expect((gift.titleFor('ru'), gift.titleFor('en'), gift.recipientId, gift.toSelf), ('Роза', 'Atirgul', 42, true));
+    expect((topup.method, topup.title, topup.toSelf), ('payme', null, false));
+    expect(page.hasMore, isTrue);
+  });
 }

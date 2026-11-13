@@ -360,6 +360,11 @@ class SadoApi {
     await _post('/v1/wallet/topups', data: form);
   }
 
+  /// Balance history newest first; [direction] all, in (money in) or out (spending).
+  Future<WalletHistoryPage> walletHistory({int offset = 0, int limit = 50, String direction = 'all'}) async => WalletHistoryPage.fromJson(
+        await _get('/v1/wallet/history', query: {'offset': offset, 'limit': limit, 'direction': direction}) as Map<String, dynamic>,
+      );
+
   /// A Payme order for [amountUzs]; returns the checkout page to open. The balance is credited when Payme pays.
   Future<Uri> paymeCheckout(int amountUzs) async {
     final body = await _post('/v1/wallet/payme', data: {'amount_uzs': amountUzs}) as Map<String, dynamic>;
