@@ -1293,7 +1293,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           };
         } else {
           item = MessageBubble(
-            message: message,
+            message: message.shown,
             chat: chat,
             showSender: group ? !sameSenderAsOlder : !sameSenderAsOlder,
             showTail: !sameSenderAsNewer,

@@ -699,7 +699,11 @@ class TelegramAccount {
       case td.UpdateDeleteMessages(:final chatId, :final messageIds, :final isPermanent, :final fromCache):
         if (isPermanent && !fromCache) archive.onDeleted(chatId, messageIds);
         _messageEvents.add(object);
-      case td.UpdateMessageSendFailed() || td.UpdateMessageInteractionInfo() || td.UpdateMessageIsPinned() || td.UpdateMessageSendAcknowledged():
+      case td.UpdateMessageSendFailed() ||
+            td.UpdateMessageInteractionInfo() ||
+            td.UpdateMessageIsPinned() ||
+            td.UpdateMessageSendAcknowledged() ||
+            td.UpdateMessageEphemeralContent():
         _messageEvents.add(object as td.Update);
       case td.UpdateSavedMessagesTopic() || td.UpdateSavedMessagesTags() || td.UpdateQuickReplyShortcutMessages():
         _messageEvents.add(object as td.Update);

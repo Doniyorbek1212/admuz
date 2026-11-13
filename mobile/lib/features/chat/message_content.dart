@@ -27,6 +27,7 @@ import '../../state/link_policy.dart';
 import '../../state/playback.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
+import '../../state/telegram.dart' show TelegramAccount;
 import '../../widgets/common.dart';
 import '../../widgets/custom_emoji.dart';
 import '../../widgets/map_thumbnail.dart';
@@ -359,6 +360,7 @@ class MessageMedia extends ConsumerWidget {
       td.MessageCall(:final isVideo, :final duration) => _CallView(isVideo: isVideo, duration: duration, outgoing: message.isOutgoing),
       td.MessageInvoice() => InvoiceView(message: message),
       td.MessageAnimatedEmoji(:final animatedEmoji) when animatedEmoji.sticker != null => _AnimatedEmojiView(message: message, sticker: animatedEmoji.sticker!),
+      td.MessageUnsupported() => _UnsupportedView(message: message),
       td.MessageAnimatedEmoji(:final emoji) || td.MessageDice(:final emoji) =>
         Text(emoji, style: const TextStyle(fontSize: 56)),
       _ => const SizedBox.shrink(),
@@ -993,6 +995,72 @@ class _ContactView extends ConsumerWidget {
 
 /// Hook set by the chat screen so content widgets can open chats without importing navigation.
 void Function(BuildContext context, int chatId) openChatFromContent = (_, _) {};
+
+/// Content this TDLib build does not know yet (e.g. Bot API HTML widgets): says so instead of an empty bubble,
+/// and opens the message in the Telegram app when it has a public link.
+class _UnsupportedView extends ConsumerWidget {
+  const _UnsupportedView({required this.message});
+
+  final td.Message message;
+
+  Future<void> _openInTelegram(BuildContext context, TelegramAccount account) async {
+    final link = await guard(
+      context,
+      () => account.send<td.MessageLink>(td.GetMessageLink(
+        chatId: message.chatId,
+        messageId: message.id,
+        mediaTimestamp: 0,
+        checklistTaskId: 0,
+        pollOptionId: '',
+        forAlbum: false,
+        inMessageThread: false,
+      )),
+    );
+    final uri = link == null ? null : Uri.tryParse(link.link);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final account = ref.read(accountProvider);
+    // Only supergroups and channels have message links; private and basic group chats do not.
+    final chat = account.chats[message.chatId];
+    final linkable = chat != null && chat.type is td.ChatTypeSupergroup;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(theme.colorScheme.primary, vertical: true)),
+                child: const Icon(Icons.widgets_rounded, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(s.t('unsupported_message'), style: const TextStyle(fontWeight: FontWeight.w700))),
+            ]),
+            const SizedBox(height: 6),
+            Text(s.t('unsupported_hint'), style: TextStyle(fontSize: 13, color: theme.hintColor)),
+            if (linkable)
+              TextButton.icon(
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                onPressed: () => _openInTelegram(context, account),
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: Text(s.t('unsupported_open')),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _CallView extends StatelessWidget {
   const _CallView({required this.isVideo, required this.duration, required this.outgoing});

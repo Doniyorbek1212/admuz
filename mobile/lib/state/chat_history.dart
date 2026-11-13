@@ -270,6 +270,8 @@ class ChatHistory extends ChangeNotifier {
         _replace(oldMessageId, (_) => message);
       case td.UpdateMessageContent(chatId: final id, :final messageId, :final newContent) when id == chatId:
         _replace(messageId, (m) => m.copyWith(content: newContent));
+      case td.UpdateMessageEphemeralContent(chatId: final id, :final messageId, :final ephemeralContent) when id == chatId:
+        _replace(messageId, (m) => _withJson(m, {'ephemeral_content': ephemeralContent?.toJson()}));
       case td.UpdateMessageEdited(chatId: final id, :final messageId, :final editDate, :final replyMarkup) when id == chatId:
         _replace(messageId, (m) => _withJson(m, {'edit_date': editDate, 'reply_markup': replyMarkup?.toJson()}));
       case td.UpdateMessageInteractionInfo(chatId: final id, :final messageId, :final interactionInfo) when id == chatId:

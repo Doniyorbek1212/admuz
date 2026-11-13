@@ -51,12 +51,16 @@ abstract final class MessageTones {
   static const _channel = MethodChannel('uz.sado.app/privacy');
   static DateTime _lastPlayed = DateTime(0);
 
-  /// Plays [tone] in the app: MIUI and others mute notification sounds of the app on screen.
-  /// A burst of messages rings once.
+  /// A burst of messages rings once, as the system does for an app's notifications in the background:
+  /// one message often lands in two chats (a channel post and its discussion group, album parts) 1.5–3 s apart.
+  static const _burst = Duration(seconds: 5);
+
+  /// Plays [tone] in the app (MIUI and others mute notification sounds of the app on screen),
+  /// unless one played within [_burst].
   static Future<void> play(String tone, {bool preview = false}) async {
     if (tone == 'none' || !Platform.isAndroid) return;
     final now = DateTime.now();
-    if (!preview && now.difference(_lastPlayed) < const Duration(milliseconds: 1500)) return;
+    if (!preview && now.difference(_lastPlayed) < _burst) return;
     _lastPlayed = now;
     try {
       await _channel.invokeMethod<void>('playTone', {'name': ids.contains(tone) && tone != 'default' ? 'tone_$tone' : null});
