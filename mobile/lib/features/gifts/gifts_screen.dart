@@ -152,7 +152,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
                     Expanded(
                       child: FilledButton.icon(
                         onPressed: () => _send(),
-                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52), padding: const EdgeInsets.symmetric(horizontal: 10)),
                         icon: const Icon(Icons.card_giftcard_rounded),
                         label: Text(s.t('gifts_send'), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
@@ -161,7 +161,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _buyForMe(),
-                        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52), padding: const EdgeInsets.symmetric(horizontal: 10)),
                         icon: const Icon(Icons.shopping_bag_rounded),
                         label: Text(s.t('gifts_buy_for_me'), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),

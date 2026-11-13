@@ -7,6 +7,7 @@ Object.assign(ERRORS, {
   NOT_A_GIFT_ANIMATION: "Fayl animatsion WebP yoki GIF bo'lishi kerak", GIFT_NOT_FOUND: "Sovg'a topilmadi",
   GIFT_IN_USE: "Bu sovg'a allaqachon yuborilgan: o'chirib bo'lmaydi, faqat yashirish mumkin",
   TOPUP_NOT_FOUND: "To'lov topilmadi", TOPUP_NOT_PENDING: "Bu to'lov allaqachon ko'rib chiqilgan",
+  TELEGRAM_NOT_LINKED: "Bu Telegram ID UZARO hisobiga bog'lanmagan: foydalanuvchi ilovada Sovg'alar bo'limida bog'lashi kerak",
 });
 
 const TOPUP_STATUS = { pending: 'Kutilmoqda', approved: 'Tasdiqlangan', rejected: 'Rad etilgan' };
@@ -25,10 +26,12 @@ async function renderGifts(el, arg) {
   el.innerHTML = `
     <div class="tabs"><a class="tab" href="#gifts" aria-pressed="true">Katalog · ${list.items.length}</a>
       <a class="tab" href="#gifts/pending" aria-pressed="false">To'lovlar · ${topups.pending} kutilmoqda</a></div>
-    <div class="toolbar">${support ? '<button class="btn primary" id="g-new" type="button">+ Sovg\'a qo\'shish</button>' : ''}</div>
+    <div class="toolbar">${support ? '<button class="btn primary" id="g-new" type="button">+ Sovg\'a qo\'shish</button>' : ''}
+      ${can('finance') ? '<button class="btn" id="g-bonus" type="button">+ Balansga bonus (keshbek)</button>' : ''}</div>
     ${list.items.length ? `<div class="gift-grid">${cards}</div>` : '<div class="empty">Hali sovg\'a yo\'q. Serverda <code>python -m app.cli seed-gifts</code> boshlang\'ich to\'plamni qo\'shadi.</div>'}
     <p class="muted">Sovg'alar UZARO balansidan sotib olinadi va faqat UZARO foydalanuvchilariga ko'rinadi. Fayl: animatsion WebP yoki GIF, 2 MB gacha, kvadrat (256×256 tavsiya).</p>`;
   el.querySelector('#g-new')?.addEventListener('click', () => giftForm(null, el));
+  el.querySelector('#g-bonus')?.addEventListener('click', bonusForm);
   el.querySelectorAll('[data-g]').forEach((b) => { b.onclick = () => giftAction(b.dataset.g, list.items.find((g) => g.id === b.dataset.id), el); });
   return undefined;
 }
@@ -109,4 +112,29 @@ async function renderTopups(el, state) {
       return undefined;
     };
   });
+}
+
+// Money from UZARO to a user's balance (cashback, a promo bonus, goodwill); the app shows it as "Bonus".
+function bonusForm() {
+  const body = openModal('Balansga bonus', `
+    <form class="stack" id="b-form">
+      <div class="form-grid">
+        <div class="field"><label for="b-tg">Telegram ID</label><input id="b-tg" type="number" min="1" required></div>
+        <div class="field"><label for="b-amount">Summa (so'm)</label><input id="b-amount" type="number" min="100" max="5000000" step="100" required></div>
+      </div>
+      <div class="field"><label for="b-reason">Sabab (jurnalga yoziladi)</label><input id="b-reason" required minlength="3" maxlength="256" placeholder="Keshbek: noyabr aksiyasi"></div>
+      <div><button class="btn primary" type="submit">Balansga qo'shish</button></div>
+    </form>`);
+  body.querySelector('#b-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const payload = {
+      telegram_user_id: Number(body.querySelector('#b-tg').value),
+      amount_uzs: Number(body.querySelector('#b-amount').value),
+      reason: body.querySelector('#b-reason').value.trim(),
+    };
+    // The confirmation replaces the form in the shared modal; nothing to close afterwards.
+    if (!(await confirmBox('Bonusni tasdiqlang', `${som(payload.amount_uzs)} → Telegram ID ${payload.telegram_user_id}`, "Qo'shish"))) return;
+    const done = await run(() => api('/v1/admin/gifts/credit', { method: 'POST', body: payload }));
+    if (done) toast(`Qo'shildi. Yangi balans: ${som(done.balance_uzs)}`);
+  };
 }

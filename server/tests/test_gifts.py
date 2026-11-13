@@ -22,10 +22,10 @@ def gifts_bot(monkeypatch):
     monkeypatch.setattr(settings, "gifts_bot_username", "uzaro_uzbot")
 
 
-async def _admin(session_factory) -> dict[str, str]:
+async def _admin(session_factory, role: AdminRole = AdminRole.SUPPORT) -> dict[str, str]:
     key = new_secret()
     async with session_factory() as db:
-        db.add(AdminUser(name=f"gifts-{uuid.uuid4().hex[:6]}", key_hash=sha256_hex(key), role=AdminRole.SUPPORT))
+        db.add(AdminUser(name=f"gifts-{uuid.uuid4().hex[:6]}", key_hash=sha256_hex(key), role=role))
         await db.commit()
     return {"X-Admin-Key": key}
 
@@ -268,3 +268,28 @@ async def test_premium_gift_carries_its_video(client, session_factory, new_custo
     assert (await client.get(lion["video_url"])).headers["content-type"] == "video/mp4"
     plane = next(g for g in catalog if g["title"] == "Samolyot")
     assert plane["effect"] == "plane" and plane["video_url"] is None and plane["show_url"] is None
+
+
+async def test_admin_bonus_credits_the_balance(client, session_factory, new_customer):
+    finance = await _admin(session_factory, AdminRole.FINANCE)
+    support = await _admin(session_factory)
+    dave = await new_customer()
+    await _link(client, dave, 7777)
+    body = {"telegram_user_id": 7777, "amount_uzs": 15_000, "reason": "Keshbek: aksiya"}
+
+    assert (await client.post("/v1/admin/gifts/credit", headers=support, json=body)).status_code == 403
+    missing = await client.post("/v1/admin/gifts/credit", headers=finance, json=body | {"telegram_user_id": 9999})
+    assert missing.json()["detail"]["code"] == "TELEGRAM_NOT_LINKED"
+    assert (await client.post("/v1/admin/gifts/credit", headers=finance, json=body | {"amount_uzs": -5})).status_code == 422
+
+    credited = await client.post("/v1/admin/gifts/credit", headers=finance, json=body)
+    assert credited.status_code == 200, credited.text
+    assert credited.json()["balance_uzs"] == 15_000
+    # Each credit is its own ledger line, never deduplicated away.
+    assert (await client.post("/v1/admin/gifts/credit", headers=finance, json=body)).json()["balance_uzs"] == 30_000
+
+    wallet = (await dave.get("/v1/wallet")).json()
+    assert wallet["balance_uzs"] == 30_000
+    assert [e["kind"] for e in wallet["entries"]] == ["bonus", "bonus"]
+    incoming = (await dave.get("/v1/wallet/history", params={"direction": "in"})).json()["items"]
+    assert len(incoming) == 2

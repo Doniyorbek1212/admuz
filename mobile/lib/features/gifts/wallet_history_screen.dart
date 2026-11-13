@@ -169,6 +169,7 @@ class WalletEntryTile extends ConsumerWidget {
   String _title(Strings s) => switch (entry.kind) {
         'topup' => s.t('wallet_kind_topup'),
         'refund' => s.t('wallet_kind_refund'),
+        'bonus' => s.t('wallet_kind_bonus'),
         'gift' => entry.titleFor(s.locale) ?? s.t('gifts_title'),
         'badge' => s.t('uzaro_badge'),
         'username' => entry.title == null ? s.t('uzaro_username') : '@${entry.title}',
@@ -181,6 +182,7 @@ class WalletEntryTile extends ConsumerWidget {
         'gift' when entry.toSelf => s.t('wallet_gift_self'),
         'gift' => _recipientName(ref) ?? s.t('wallet_gift_sent'),
         'badge' => s.t('wallet_badge_bought'),
+        'bonus' => s.t('wallet_bonus_from'),
         'username' => s.t('uzaro_username'),
         _ => null,
       };
@@ -196,6 +198,7 @@ class WalletEntryTile extends ConsumerWidget {
   IconData _icon() => switch (entry.kind) {
         'topup' => Icons.add_card_rounded,
         'refund' => Icons.undo_rounded,
+        'bonus' => Icons.redeem_rounded,
         'gift' => entry.toSelf ? Icons.shopping_bag_rounded : Icons.card_giftcard_rounded,
         'badge' => Icons.verified_rounded,
         'username' => Icons.alternate_email_rounded,
@@ -205,6 +208,7 @@ class WalletEntryTile extends ConsumerWidget {
   Color _color() => switch (entry.kind) {
         'topup' => const Color(0xFF2EAD5B),
         'refund' => const Color(0xFFF5A623),
+        'bonus' => const Color(0xFFD4A94E),
         'gift' => const Color(0xFFE5486A),
         'badge' => const Color(0xFF2E9BF0),
         'username' => const Color(0xFF7E57C2),
