@@ -15,6 +15,7 @@ import '../../state/providers.dart';
 import 'members_grid.dart';
 import 'uzaro_username.dart';
 import '../../state/telegram.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../chat/call_options.dart';
@@ -596,7 +597,7 @@ class _ActionTile extends StatelessWidget {
           color: tint.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.1),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
-            side: BorderSide(color: tint.withValues(alpha: 0.18)),
+            side: const BorderSide(color: brandGold, width: 1.4),
           ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -642,8 +643,8 @@ class _ProfileCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Theme.of(context).dividerColor),
-            boxShadow: [BoxShadow(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06), blurRadius: 14, offset: const Offset(0, 4))],
+            border: Border.all(color: brandGold, width: 1.4),
+            boxShadow: [BoxShadow(color: brandGold.withValues(alpha: 0.18), blurRadius: 14, offset: const Offset(0, 4))],
           ),
           // ListTile ink paints on the nearest Material; without this the card's colour hides it.
           child: Material(type: MaterialType.transparency, child: Column(children: children)),
@@ -828,6 +829,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                       final n? when n > 0 => '${s.t('stories')} $n',
                       _ => s.t('stories'),
                     }),
+                    side: const BorderSide(color: brandGold),
                     selected: tab == 'stories',
                     onSelected: (_) => setState(() => _picked = 'stories'),
                   ),
@@ -837,6 +839,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
                     label: Text(widget.membersLabel),
+                    side: const BorderSide(color: brandGold),
                     selected: tab == 'members',
                     onSelected: (_) => setState(() => _picked = 'members'),
                   ),
@@ -849,6 +852,7 @@ class _SharedMediaSectionState extends ConsumerState<_SharedMediaSection> {
                       final n? when n > 0 => '${s.t('shared_$kind')} $n',
                       _ => s.t('shared_$kind'),
                     }),
+                    side: const BorderSide(color: brandGold),
                     selected: tab == kind,
                     onSelected: (_) => setState(() => _picked = kind),
                   ),

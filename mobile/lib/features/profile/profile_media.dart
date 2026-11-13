@@ -5,6 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
@@ -88,7 +89,7 @@ class ProfileMusicChip extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
         child: Material(
           color: foreground.withValues(alpha: 0.1),
-          shape: const StadiumBorder(),
+          shape: const StadiumBorder(side: BorderSide(color: brandGold, width: 1.2)),
           child: InkWell(
             customBorder: const StadiumBorder(),
             onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProfileAudiosScreen(userId: userId))),
