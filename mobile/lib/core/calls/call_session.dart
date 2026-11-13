@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
@@ -49,6 +50,8 @@ class CallSession extends ChangeNotifier {
   RTCPeerConnection? _pc;
   RTCDataChannel? _data;
   MediaStream? _local;
+  Future<MediaStream>? _opening;
+  bool _cameraPaused = false;
   SignalingCrypto? _crypto;
   final List<RTCIceCandidate> _pendingCandidates = [];
   bool _remoteSet = false;
@@ -68,6 +71,40 @@ class CallSession extends ChangeNotifier {
     await localRenderer.initialize();
     await remoteRenderer.initialize();
     videoOn = call.isVideo;
+    // The caller sees their own camera while it rings, like Telegram; the callee opens media on answer.
+    if (isOutgoing) {
+      unawaited(_openLocal().then<void>((_) => _notify()).catchError((Object error) => debugPrint('call media not opened: $error')));
+    }
+  }
+
+  /// Microphone, plus the camera when video is on; one stream however many callers ask at once.
+  Future<MediaStream> _openLocal() => _opening ??= _open().catchError((Object error) {
+        _opening = null;
+        throw error;
+      });
+
+  Future<MediaStream> _open() async {
+    const audio = {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true};
+    MediaStream stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({'audio': audio, 'video': videoOn ? {'facingMode': 'user'} : false});
+    } on Exception catch (error) {
+      // Camera denied or busy: the call goes on as voice instead of failing.
+      if (!videoOn) rethrow;
+      debugPrint('camera unavailable: $error');
+      videoOn = false;
+      stream = await navigator.mediaDevices.getUserMedia({'audio': audio, 'video': false});
+    }
+    if (phase == CallPhase.ended) {
+      for (final track in stream.getTracks()) {
+        await track.stop();
+      }
+      await stream.dispose();
+      throw StateError('call ended while opening media');
+    }
+    _local = stream;
+    if (videoOn) localRenderer.srcObject = stream;
+    return stream;
   }
 
   /// Applies an updateCall from TDLib.
@@ -132,13 +169,30 @@ class CallSession extends ChangeNotifier {
     _notify();
   }
 
-  void toggleMute() {
+  Future<void> toggleMute() async {
     muted = !muted;
+    _notify();
     for (final track in _local?.getAudioTracks() ?? const <MediaStreamTrack>[]) {
       track.enabled = !muted;
+      // Some Android builds keep sending a disabled track's audio; the native mute stops the capture itself.
+      try {
+        await Helper.setMicrophoneMute(muted, track);
+      } on Object catch (error) {
+        debugPrint('native mute failed: $error');
+      }
     }
     _sendMediaState();
-    _notify();
+  }
+
+  /// Like Telegram: the camera pauses while the call is a floating window or the app is in the background
+  /// (MIUI blacks out a background camera anyway), and resumes on return.
+  void setCameraPaused(bool paused) {
+    if (!videoOn) return;
+    for (final track in _local?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
+      track.enabled = !paused;
+    }
+    _cameraPaused = paused;
+    _sendMediaState();
   }
 
   Future<void> toggleSpeaker() async {
@@ -147,28 +201,48 @@ class CallSession extends ChangeNotifier {
     _notify();
   }
 
+  /// Works in every phase: before the peer connection exists only the local stream changes, and
+  /// [_start] sends whatever it holds.
   Future<void> toggleVideo() async {
     final pc = _pc;
-    if (pc == null) return;
     if (videoOn) {
-      for (final track in _local?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
-        track.enabled = false;
-        await track.stop();
-        await _local?.removeTrack(track);
-      }
-      for (final sender in await pc.getSenders()) {
-        if (sender.track?.kind == 'video') await pc.removeTrack(sender);
-      }
-      localRenderer.srcObject = null;
       videoOn = false;
+      localRenderer.srcObject = null;
+      _notify();
+      // Senders and the stream let go of the track first: a stopped track is already gone natively.
+      for (final sender in pc == null ? const <RTCRtpSender>[] : await pc.getSenders()) {
+        if (sender.track?.kind == 'video') await pc!.removeTrack(sender);
+      }
+      for (final track in _local?.getVideoTracks() ?? const <MediaStreamTrack>[]) {
+        try {
+          await _local?.removeTrack(track);
+          await track.stop();
+        } on PlatformException catch (error) {
+          debugPrint('camera track not released: $error');
+        }
+      }
     } else {
-      final camera = await navigator.mediaDevices.getUserMedia({'audio': false, 'video': {'facingMode': 'user'}});
+      final local = _opening == null ? null : await _openLocal();
+      if (local == null) {
+        // Media is not open yet (an unanswered incoming call): the camera opens with it.
+        videoOn = true;
+        _notify();
+        return;
+      }
+      final MediaStream camera;
+      try {
+        camera = await navigator.mediaDevices.getUserMedia({'audio': false, 'video': {'facingMode': 'user'}});
+      } on Exception catch (error) {
+        debugPrint('camera unavailable: $error');
+        return;
+      }
       final track = camera.getVideoTracks().first;
-      await _local?.addTrack(track);
-      await pc.addTrack(track, _local!);
-      localRenderer.srcObject = _local;
-      videoOn = true;
+      await local.addTrack(track);
       // Adding a track needs a new offer/answer round; onRenegotiationNeeded drives it.
+      if (pc != null) await pc.addTrack(track, local);
+      localRenderer.srcObject = local;
+      videoOn = true;
+      _cameraPaused = false;
     }
     _sendMediaState();
     _notify();
@@ -176,7 +250,13 @@ class CallSession extends ChangeNotifier {
 
   Future<void> switchCamera() async {
     final tracks = _local?.getVideoTracks() ?? const <MediaStreamTrack>[];
-    if (tracks.isNotEmpty) await Helper.switchCamera(tracks.first);
+    if (tracks.isEmpty) return;
+    try {
+      await Helper.switchCamera(tracks.first);
+    } on PlatformException catch (error) {
+      // A phone with a single camera, or one another app holds.
+      debugPrint('camera switch failed: $error');
+    }
   }
 
   // ------------------------------------------------------------------ WebRTC
@@ -234,14 +314,10 @@ class CallSession extends ChangeNotifier {
     };
     pc.onDataChannel = _attachData;
 
-    _local = await navigator.mediaDevices.getUserMedia({
-      'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
-      'video': call.isVideo ? {'facingMode': 'user'} : false,
-    });
-    for (final track in _local!.getTracks()) {
-      await pc.addTrack(track, _local!);
+    final local = await _openLocal();
+    for (final track in local.getTracks()) {
+      await pc.addTrack(track, local);
     }
-    if (call.isVideo) localRenderer.srcObject = _local;
     await Helper.setSpeakerphoneOn(call.isVideo);
     speaker = call.isVideo;
 
@@ -334,7 +410,7 @@ class CallSession extends ChangeNotifier {
       '@type': 'MediaState',
       'muted': muted,
       'lowBattery': false,
-      'videoState': videoOn ? 'active' : 'inactive',
+      'videoState': !videoOn ? 'inactive' : (_cameraPaused ? 'paused' : 'active'),
       'videoRotation': 0,
       'screencastState': 'inactive',
     })));
@@ -376,6 +452,7 @@ class CallSession extends ChangeNotifier {
     await _data?.close();
     await _pc?.close();
     _local = null;
+    _opening = null;
     _pc = null;
     _data = null;
   }

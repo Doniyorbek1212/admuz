@@ -21,6 +21,7 @@ class CallPresence {
       switch (call.method) {
         case 'pip':
           inPip.value = call.arguments == true;
+          _session?.setCameraPaused(inPip.value);
         case 'open':
           onOpen?.call();
       }

@@ -175,7 +175,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
                         children: [
                           _RoundButton(icon: session.speaker ? Icons.volume_up_rounded : Icons.volume_down_rounded, active: session.speaker, label: s.t('call_speaker'), onTap: session.toggleSpeaker),
                           _RoundButton(icon: session.videoOn ? Icons.videocam_rounded : Icons.videocam_off_rounded, active: session.videoOn, label: s.t('call_video_short'), onTap: session.toggleVideo),
-                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: () async => session.toggleMute()),
+                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: session.toggleMute),
                           _RoundButton(icon: Icons.call_end_rounded, color: const Color(0xFFE5484D), label: s.t('call_end'), onTap: session.hangUp),
                         ],
                       ),

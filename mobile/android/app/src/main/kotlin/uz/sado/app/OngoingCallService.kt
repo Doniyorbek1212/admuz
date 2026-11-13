@@ -20,6 +20,8 @@ import android.util.Log
  * The ongoing notification (Telegram style) shows who is on the call and how long it has run; tapping it returns.
  */
 class OngoingCallService : Service() {
+    private var started = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -27,12 +29,16 @@ class OngoingCallService : Service() {
         val text = intent?.getStringExtra(EXTRA_TEXT).orEmpty()
         val since = intent?.getLongExtra(EXTRA_SINCE, 0L) ?: 0L
         val video = intent?.getBooleanExtra(EXTRA_VIDEO, false) ?: false
+        val notification = buildNotification(title, text, since)
         try {
-            startForegroundCompat(buildNotification(title, text, since), video)
+            startForegroundCompat(notification, video)
+            started = true
         } catch (error: RuntimeException) {
-            // Android 14 refuses a microphone service started from the background; the call still runs while visible.
-            Log.w(TAG, "call service not started: $error")
-            stopSelf()
+            // Android 14 refuses camera/microphone types from the background (a status update while the call is a
+            // floating window): a running service keeps its type and only the text changes, never a stop that
+            // would cut the microphone mid-call.
+            Log.w(TAG, "call service not (re)started: $error")
+            if (started) getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification) else stopSelf()
         }
         return START_NOT_STICKY
     }
