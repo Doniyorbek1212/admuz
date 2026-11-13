@@ -104,6 +104,14 @@ class Settings(BaseSettings):
     movie_crf: int = 26  # x264 quality: higher = smaller file; 23 near-transparent, 28 visibly soft
     movie_ffmpeg_threads: int = 3  # the VPS is shared with other services
 
+    # Payme (Merchant API): balance top-ups paid in Payme and credited automatically. Payme calls
+    # POST /v1/payments/payme with Basic auth "Paycom:<key>". Sandbox: the cashbox's test key and
+    # https://test.paycom.uz; live: the real key and https://checkout.paycom.uz. Empty = Payme off.
+    payme_merchant_id: str = ""
+    payme_key: str = ""
+    payme_checkout_url: str = "https://checkout.paycom.uz"
+    payme_return_url: str = "https://uzaromessenger.uz"
+
     # Online shops: the first ones are free, every further shop costs a one-time fee (manual transfer + admin check).
     shop_free_limit: int = 2
     extra_shop_price_uzs: int = 150_000

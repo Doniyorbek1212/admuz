@@ -20,4 +20,19 @@ void main() {
     expect((gift.soundUrl, gift.durationMs, gift.tier, gift.premium), (null, null, null, false));
     expect(gift.titleFor('en'), 'Yurak');
   });
+
+  test('wallet history parses, and older servers without it give an empty list', () {
+    final wallet = Wallet.fromJson({
+      'balance_uzs': 2000,
+      'entries': [
+        {'delta_uzs': -5000, 'kind': 'gift', 'created_at': '2026-11-13T10:00:00+00:00'},
+        {'delta_uzs': 7000, 'kind': 'topup', 'created_at': '2026-11-12T09:00:00+00:00'},
+      ],
+    });
+    expect([for (final e in wallet.entries) (e.kind, e.deltaUzs)], [('gift', -5000), ('topup', 7000)]);
+    expect(wallet.entries.first.createdAt?.toUtc(), DateTime.utc(2026, 11, 13, 10));
+    expect(Wallet.fromJson({'balance_uzs': 0}).entries, isEmpty);
+    expect(Wallet.fromJson({'balance_uzs': 0}).payme, isFalse);
+    expect(Wallet.fromJson({'balance_uzs': 0, 'payme': true}).payme, isTrue);
+  });
 }

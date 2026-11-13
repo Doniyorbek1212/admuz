@@ -40,7 +40,10 @@ class HubTab extends ConsumerWidget {
     final s = context.s;
     final region = ref.watch(hubRegionProvider);
     // iOS store builds cannot sell ads (paid outside the App Store), so the tile is hidden there.
-    final toolItems = [for (final item in hubToolItems) if (item.action != HubAction.ads || !storeBlocksExternalPayments) item];
+    final toolItems = [
+      for (final item in hubToolItems)
+        if (item.action != HubAction.ads || !storeBlocksExternalPayments) item,
+    ];
     final quickLinks = ref.watch(quickLinksProvider);
     final adminLinks = ref.watch(adminQuickLinksProvider).value ?? const <QuickLink>[];
     return Scaffold(
@@ -62,7 +65,12 @@ class HubTab extends ConsumerWidget {
               tiles: [
                 // Paid admin links first, in their order; the user cannot remove them.
                 for (final link in adminLinks)
-                  _HubTile(icon: QuickLinkBadge(link: link, size: _quickIconSize), label: link.name, labelLines: 1, onTap: () => openQuickLink(context, link)),
+                  _HubTile(
+                    icon: QuickLinkBadge(link: link, size: _quickIconSize),
+                    label: link.name,
+                    labelLines: 1,
+                    onTap: () => openQuickLink(context, link),
+                  ),
                 for (final link in quickLinks)
                   _HubTile(
                     icon: QuickLinkBadge(link: link, size: _quickIconSize),
@@ -87,13 +95,7 @@ class HubTab extends ConsumerWidget {
               trailing: _count(context, hubFunItems.length),
               tiles: _itemTiles(context, ref, hubFunItems),
             ),
-            _HubSection(
-              icon: Icons.handyman_rounded,
-              color: const Color(0xFF2EC27E),
-              title: s.t('hub_tools'),
-              trailing: _count(context, toolItems.length),
-              tiles: _itemTiles(context, ref, toolItems),
-            ),
+            _HubSection(icon: Icons.handyman_rounded, color: const Color(0xFF2EC27E), title: s.t('hub_tools'), trailing: _count(context, toolItems.length), tiles: _itemTiles(context, ref, toolItems)),
             _HubSection(
               icon: Icons.location_on_rounded,
               color: const Color(0xFF2EC27E),
@@ -108,9 +110,7 @@ class HubTab extends ConsumerWidget {
                   Icon(Icons.chevron_right_rounded, color: Theme.of(context).hintColor),
                 ],
               ),
-              onHeaderTap: () => ref.read(sadoApiProvider).configured
-                  ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlacesScreen()))
-                  : _pickRegion(context, ref),
+              onHeaderTap: () => ref.read(sadoApiProvider).configured ? Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlacesScreen())) : _pickRegion(context, ref),
               tiles: _itemTiles(context, ref, hubLocalItems),
             ),
           ],
@@ -247,15 +247,7 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
 }
 
 class _HubSection extends StatelessWidget {
-  const _HubSection({
-    this.icon = Icons.apps_rounded,
-    this.color = Colors.grey,
-    this.title,
-    this.trailing = const SizedBox.shrink(),
-    required this.tiles,
-    this.onHeaderTap,
-    this.oneRow = false,
-  });
+  const _HubSection({this.icon = Icons.apps_rounded, this.color = Colors.grey, this.title, this.trailing = const SizedBox.shrink(), required this.tiles, this.onHeaderTap, this.oneRow = false});
 
   final IconData icon;
   final Color color;
@@ -276,51 +268,64 @@ class _HubSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = this.title;
-    return SettingsGroup(
-      children: [
-        if (title != null)
-          InkWell(
-            onTap: onHeaderTap,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
-              child: Row(
-                children: [
-                  _IconTile(icon: icon, color: color, size: 40, iconSize: 22, radius: 12),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
-                  ),
-                  trailing,
-                ],
-              ),
-            ),
-          ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(8, title == null ? 8 : (oneRow ? 0 : 4), 8, oneRow ? 2 : 8),
-          // 4 tiles on a phone, more on an unfolded iPhone Duo or a tablet instead of stretched ones.
-          child: oneRow
-              ? LayoutBuilder(
-                  builder: (context, box) => SizedBox(
-                    height: _rowHeight,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: EdgeInsets.zero,
-                      // Wide screens show every tile at grid width instead of stretched ones.
-                      itemExtent: (box.maxWidth / _rowTilesOnScreen).clamp(0, 112),
-                      children: tiles,
+    // Gold-framed card, matching the banners above and the bottom bar.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
+      child: GoldFrame(
+        child: Material(
+          color: groupCardColor(context),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (title != null)
+                  InkWell(
+                    onTap: onHeaderTap,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                      child: Row(
+                        children: [
+                          _IconTile(icon: icon, color: color, size: 40, iconSize: 22, radius: 12),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+                          ),
+                          trailing,
+                        ],
+                      ),
                     ),
                   ),
-                )
-              : GridView(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 112, childAspectRatio: 0.82),
-            shrinkWrap: true,
-            // Without this the grid inherits the bottom bar's padding.
-            padding: EdgeInsets.zero,
-            physics: const NeverScrollableScrollPhysics(),
-            children: tiles,
+                Padding(
+                  padding: EdgeInsets.fromLTRB(8, title == null ? 8 : (oneRow ? 0 : 4), 8, oneRow ? 2 : 8),
+                  // 4 tiles on a phone, more on an unfolded iPhone Duo or a tablet instead of stretched ones.
+                  child: oneRow
+                      ? LayoutBuilder(
+                          builder: (context, box) => SizedBox(
+                            height: _rowHeight,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              padding: EdgeInsets.zero,
+                              // Wide screens show every tile at grid width instead of stretched ones.
+                              itemExtent: (box.maxWidth / _rowTilesOnScreen).clamp(0, 112),
+                              children: tiles,
+                            ),
+                          ),
+                        )
+                      : GridView(
+                          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 112, childAspectRatio: 0.82),
+                          shrinkWrap: true,
+                          // Without this the grid inherits the bottom bar's padding.
+                          padding: EdgeInsets.zero,
+                          physics: const NeverScrollableScrollPhysics(),
+                          children: tiles,
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
-      ],
+      ),
     );
   }
 }

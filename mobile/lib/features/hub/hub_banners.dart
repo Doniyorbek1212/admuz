@@ -8,7 +8,7 @@ import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../core/interests.dart';
-import '../../core/theme.dart' show brandGold, brandGoldGradient;
+import '../../widgets/brand.dart' show GoldFrame;
 import '../business/ads_screen.dart';
 import '../business/business_widgets.dart' show isLoadableMedia;
 import 'ad_banner_card.dart';
@@ -140,16 +140,9 @@ class _HubBannersState extends ConsumerState<HubBanners> {
           child: AspectRatio(
             aspectRatio: 2.2,
             // Gold frame with a soft glow around the banners, like the UZARO badge.
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: brandGoldGradient,
-                borderRadius: BorderRadius.circular(_radius + _frame),
-                boxShadow: [BoxShadow(color: brandGold.withValues(alpha: 0.35), blurRadius: 10, spreadRadius: 0.5)],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(_frame),
-                child: ClipRRect(
-              borderRadius: BorderRadius.circular(_radius),
+            child: GoldFrame(
+              radius: _radius,
+              width: _frame,
               child: PageView.builder(
                 key: ValueKey('banners-$region-${ads.length}'),
                 controller: _controller,
@@ -158,8 +151,6 @@ class _HubBannersState extends ConsumerState<HubBanners> {
                 itemBuilder: (context, index) => index < ads.length
                     ? AdBannerCard(ad: ads[index], onTap: () => _openAd(ads[index]))
                     : _PromoCard(promo: promos[index - ads.length]),
-              ),
-                ),
               ),
             ),
           ),

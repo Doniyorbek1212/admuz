@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api/gift_models.dart';
 import '../../core/api/sado_api.dart';
@@ -26,15 +27,46 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
   final _amount = TextEditingController(text: '25000');
   bool _sending = false;
 
+  bool _openingPayme = false;
+
+  /// Back from Payme: the balance may already be credited.
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _reload);
+  }
+
   @override
   void dispose() {
+    _lifecycle.dispose();
     _amount.dispose();
     super.dispose();
   }
 
+  void _reload() {
+    if (mounted) setState(() => _wallet = ref.read(sadoApiProvider).wallet());
+  }
+
+  int get _enteredAmount => int.tryParse(_amount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+
+  /// Opens the Payme checkout for the entered amount; Payme credits the balance itself, no receipt needed.
+  Future<void> _payWithPayme() async {
+    final s = context.s;
+    final amount = _enteredAmount;
+    if (amount < _minAmount) return showToast(context, s.t('topup_min'));
+    setState(() => _openingPayme = true);
+    final url = await apiGuard(context, () => ref.read(sadoApiProvider).paymeCheckout(amount));
+    if (!mounted) return;
+    setState(() => _openingPayme = false);
+    if (url == null) return;
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication) && mounted) showToast(context, s.t('topup_payme_open_failed'));
+  }
+
   Future<void> _sendReceipt() async {
     final s = context.s;
-    final amount = int.tryParse(_amount.text.replaceAll(RegExp(r'\D'), '')) ?? 0;
+    final amount = _enteredAmount;
     if (amount < _minAmount) return showToast(context, s.t('topup_min'));
     final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 90, maxWidth: 2000);
     if (file == null || !mounted) return;
@@ -123,6 +155,29 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
             ActionChip(label: Text(formatUzs(context, amount)), onPressed: () => setState(() => _amount.text = '$amount')),
         ]),
       ),
+      if (wallet.payme) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+          child: FilledButton.icon(
+            onPressed: _openingPayme ? null : _payWithPayme,
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52), backgroundColor: const Color(0xFF33CCCC), foregroundColor: Colors.white),
+            icon: _openingPayme ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.flash_on_rounded),
+            label: Text(s.t('topup_payme'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 2, 20, 6),
+          child: Text(s.t('topup_payme_hint'), textAlign: TextAlign.center, style: TextStyle(color: theme.hintColor, fontSize: 12.5)),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+          child: Row(children: [
+            const Expanded(child: Divider()),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: Text(s.t('topup_or_card'), style: TextStyle(color: theme.hintColor))),
+            const Expanded(child: Divider()),
+          ]),
+        ),
+      ],
       step(1, s.t('topup_step1')),
       if (wallet.card.isEmpty)
         Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 8), child: Text(s.t('ad_card_missing'), style: TextStyle(color: theme.colorScheme.error)))

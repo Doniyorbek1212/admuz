@@ -34,7 +34,7 @@ from app.providers.mock import make_token, sign_notification
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 TABLES = (
-    "banned_channels, uzaro_usernames, customer_interests, profile_styles, wallet_topups, wallet_ledger, sent_gifts, gift_items, telegram_links, "
+    "banned_channels, uzaro_usernames, customer_interests, profile_styles, wallet_topups, payme_orders, wallet_ledger, sent_gifts, gift_items, telegram_links, "
     "music_tracks, activity_days,movie_videos, movie_titles, "
     "places, app_settings, stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
     "ai_usage, credit_reservations, credit_ledger, credit_accounts, entitlement_overrides, transactions, "

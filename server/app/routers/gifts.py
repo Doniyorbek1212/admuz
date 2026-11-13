@@ -19,7 +19,8 @@ from sqlalchemy import delete, func, select
 from app.config import get_settings
 from app.deps import CustomerDep, DbDep, get_redis, rate_limit
 from app.errors import bad_request, conflict, forbidden, not_found, unauthorized, unavailable
-from app.models import GiftItem, ProfileStyle, SentGift, TelegramLink, TopupStatus, WalletTopup
+from app.models import GiftItem, ProfileStyle, SentGift, TelegramLink, TopupStatus, WalletEntry, WalletTopup
+from app.routers.payme import payme_configured
 from app.security import constant_time_equals, sha256_hex
 from app.services import username_bot, wallet
 from app.services.audit import audit
@@ -33,6 +34,7 @@ LINK_CODE_TTL_SECONDS = 600
 MAX_PENDING_TOPUPS = 3
 TOP_PER_RECIPIENT = 3
 MAX_TOP_LOOKUP = 100
+WALLET_HISTORY_LIMIT = 30
 TelegramId = Annotated[int, Field(gt=0, lt=1 << 53)]
 
 
@@ -390,11 +392,23 @@ async def get_wallet(current: CustomerDep, db: DbDep) -> dict[str, Any]:
     topups = await db.scalars(
         select(WalletTopup).where(WalletTopup.customer_id == current.id).order_by(WalletTopup.created_at.desc()).limit(10)
     )
+    entries = await db.scalars(
+        select(WalletEntry)
+        .where(WalletEntry.customer_id == current.id)
+        .order_by(WalletEntry.created_at.desc(), WalletEntry.id)
+        .limit(WALLET_HISTORY_LIMIT)
+    )
     return {
         "balance_uzs": await wallet.balance(db, current.id),
         "card": settings.ad_payment_card,
         "card_holder": settings.ad_payment_card_holder,
         "topups": [topup_out(t) for t in topups],
+        # The app offers "Pay with Payme" only while the server has the cashbox keys.
+        "payme": payme_configured(),
+        # The wallet screen's history: what came in and what was bought, newest first.
+        "entries": [
+            {"delta_uzs": e.delta_uzs, "kind": e.kind, "created_at": e.created_at.isoformat()} for e in entries
+        ],
     }
 
 

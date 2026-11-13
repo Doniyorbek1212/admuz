@@ -360,6 +360,12 @@ class SadoApi {
     await _post('/v1/wallet/topups', data: form);
   }
 
+  /// A Payme order for [amountUzs]; returns the checkout page to open. The balance is credited when Payme pays.
+  Future<Uri> paymeCheckout(int amountUzs) async {
+    final body = await _post('/v1/wallet/payme', data: {'amount_uzs': amountUzs}) as Map<String, dynamic>;
+    return Uri.parse(body['checkout_url'] as String);
+  }
+
   // ------------------------------------------------------------------ usage statistics
 
   /// Reports [event] ("app_open", "hub_open", "movies_open") at most once per calendar day; never throws.

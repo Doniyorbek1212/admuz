@@ -5,7 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
-import '../../core/theme.dart' show brandGold, brandGradient;
+import '../../core/theme.dart' show brandGold, brandGoldGradient, brandGradient;
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -14,7 +14,7 @@ import '../../widgets/common.dart';
 import '../../widgets/custom_emoji.dart' show EmojiStatusBadge;
 import '../../widgets/emoji_pattern.dart';
 import '../../widgets/settings_group.dart';
-import '../business/business_widgets.dart' show apiGuard;
+import '../business/business_widgets.dart' show apiGuard, formatUzs;
 import '../chat/message_content.dart' show FormattedTextView;
 import '../chat/marked_messages_screen.dart';
 import '../gifts/gift_showcase.dart' show giftShowcaseProvider;
@@ -22,6 +22,7 @@ import '../gifts/gift_widgets.dart';
 import '../gifts/gifts_screen.dart';
 import '../gifts/profile_background.dart';
 import '../gifts/uzaro_badge.dart' show UzaroBadge;
+import '../gifts/wallet_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/downloads_screen.dart';
 import '../settings/settings_screen.dart';
@@ -71,6 +72,7 @@ class MyProfileTab extends ConsumerWidget {
           : _StatusBarShield(
               child: RefreshIndicator(
                 onRefresh: () async {
+                  ref.invalidate(walletProvider);
                   ref.invalidate(_myStoriesProvider);
                   ref.invalidate(_myFullInfoProvider);
                   await ref.read(_myStoriesProvider.future).catchError((Object _) => const <td.Story>[]);
@@ -82,6 +84,7 @@ class MyProfileTab extends ConsumerWidget {
                     _header(context, ref, me),
                     const SizedBox(height: 12),
                     _actions(context, ref),
+                    if (ref.watch(sadoApiProvider).configured) const _WalletCard(),
                     _infoCard(context, ref, me),
                     _stories(context, ref),
                   ],
@@ -335,6 +338,60 @@ class MyProfileTab extends ConsumerWidget {
       ..invalidate(userGiftsProvider(myId))
       ..invalidate(giftShowcaseProvider(myId));
     if (context.mounted) showToast(context, context.t(hide ? 'gifts_hidden_done' : 'gifts_shown_done'));
+  }
+}
+
+/// Gold-framed wallet entry under the profile actions: the UZARO balance at a glance, tap for top-up and purchases.
+class _WalletCard extends ConsumerWidget {
+  const _WalletCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final wallet = ref.watch(walletProvider);
+    // Offline: the card still opens the wallet, which shows the error and a retry.
+    final balance = switch (wallet) {
+      AsyncValue(:final value?) => formatUzs(context, value.balanceUzs),
+      AsyncError() => '—',
+      _ => '…',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+      child: GoldFrame(
+        child: Material(
+          color: groupCardColor(context),
+          child: InkWell(
+            onTap: () async {
+              await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WalletScreen()));
+              ref.invalidate(walletProvider);
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+              child: Row(children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: brandGoldGradient),
+                  child: const Icon(Icons.account_balance_wallet_rounded, color: Colors.white, size: 26),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(s.t('wallet'), style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(s.t('wallet_card_sub'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor, fontSize: 13)),
+                  ]),
+                ),
+                const SizedBox(width: 8),
+                Text(balance, style: TextStyle(color: theme.colorScheme.primary, fontSize: 16, fontWeight: FontWeight.w800)),
+                Icon(Icons.chevron_right_rounded, color: theme.hintColor),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

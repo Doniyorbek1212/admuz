@@ -51,6 +51,43 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
     if (sent == true && mounted) _reload();
   }
 
+  Future<void> _buyForMe([GiftItem? gift]) async {
+    final bought = await buyUzaroGiftForMe(context, ref, initial: gift);
+    if (bought == true && mounted) _reload();
+  }
+
+  /// A catalog gift: send it to a contact or keep it for the user's own profile.
+  Future<void> _choose(GiftItem gift) async {
+    final s = context.s;
+    final forMe = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          GiftImage(gift, size: 96),
+          const SizedBox(height: 8),
+          Text(gift.titleFor(s.locale), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          Text(formatUzs(context, gift.priceUzs), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const TileIcon(Icons.send_rounded, Color(0xFF2E9BF0)),
+            title: Text(s.t('gifts_send_friend')),
+            onTap: () => Navigator.pop(context, false),
+          ),
+          ListTile(
+            leading: const TileIcon(Icons.shopping_bag_rounded, Color(0xFFD4A94E)),
+            title: Text(s.t('gifts_buy_for_me')),
+            subtitle: Text(s.t('gifts_for_me_hint')),
+            onTap: () => Navigator.pop(context, true),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (forMe == null || !mounted) return;
+    forMe ? await _buyForMe(gift) : await _send(gift);
+  }
+
   Future<void> _link() async {
     if (await ensureGiftsLinked(context, ref) && mounted) _reload();
   }
@@ -111,12 +148,25 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  child: FilledButton.icon(
-                    onPressed: () => _send(),
-                    style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                    icon: const Icon(Icons.card_giftcard_rounded),
-                    label: Text(s.t('gifts_send')),
-                  ),
+                  child: Row(children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _send(),
+                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                        icon: const Icon(Icons.card_giftcard_rounded),
+                        label: Text(s.t('gifts_send'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _buyForMe(),
+                        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                        icon: const Icon(Icons.shopping_bag_rounded),
+                        label: Text(s.t('gifts_buy_for_me'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    ),
+                  ]),
                 ),
               ),
               SliverToBoxAdapter(
@@ -130,7 +180,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
                 sliver: SliverGrid.builder(
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 116, childAspectRatio: 0.8, mainAxisSpacing: 8, crossAxisSpacing: 8),
                   itemCount: gifts.length,
-                  itemBuilder: (context, i) => _ShopTile(gift: gifts[i], onTap: () => _send(gifts[i])),
+                  itemBuilder: (context, i) => _ShopTile(gift: gifts[i], onTap: () => _choose(gifts[i])),
                 ),
               ),
               SliverToBoxAdapter(child: _receivedSection(context)),

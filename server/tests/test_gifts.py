@@ -75,7 +75,10 @@ async def test_link_send_list_and_hide(client, session_factory, new_customer):
     sent = await alice.post("/v1/gifts/send", json=send)
     assert sent.status_code == 201, sent.text
     assert sent.json()["balance_uzs"] == 2_000
-    assert (await alice.get("/v1/wallet")).json()["balance_uzs"] == 2_000
+    wallet_now = (await alice.get("/v1/wallet")).json()
+    assert wallet_now["balance_uzs"] == 2_000
+    # History: the gift charge, then the top-up it was paid from.
+    assert [(e["kind"], e["delta_uzs"]) for e in wallet_now["entries"]] == [("gift", -5_000), ("topup", 7_000)]
     assert (await alice.post("/v1/gifts/send", json=send)).json()["detail"]["code"] == "INSUFFICIENT_BALANCE"
 
     profile = (await alice.get("/v1/gifts/users/222")).json()
@@ -91,6 +94,19 @@ async def test_link_send_list_and_hide(client, session_factory, new_customer):
 
     # A gift that was sent cannot be deleted from the catalog, only hidden.
     assert (await client.delete(f"/v1/admin/gifts/{rose['id']}", headers=admin)).json()["detail"]["code"] == "GIFT_IN_USE"
+
+
+async def test_gift_bought_for_oneself(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    rose = await _gift(client, admin)
+    carol = await new_customer()
+    await _link(client, carol, 777)
+    await _top_up(client, admin, carol, 5_000)
+    mine = await carol.post("/v1/gifts/send", json={"gift_id": rose["id"], "recipient_telegram_id": 777})
+    assert mine.status_code == 201, mine.text
+    assert mine.json()["balance_uzs"] == 0
+    profile = (await carol.get("/v1/gifts/users/777")).json()
+    assert profile["total"] == 1 and profile["items"][0]["sender_telegram_id"] == 777
 
 
 async def test_group_gifts_and_chat_list_showcase(client, session_factory, new_customer):

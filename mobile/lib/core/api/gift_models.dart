@@ -166,19 +166,50 @@ class WalletTopup {
 
 /// The UZARO balance in so'm and where to transfer money to top it up.
 class Wallet {
-  const Wallet({required this.balanceUzs, required this.card, required this.cardHolder, required this.topups});
+  const Wallet({
+    required this.balanceUzs,
+    required this.card,
+    required this.cardHolder,
+    required this.topups,
+    this.entries = const [],
+    this.payme = false,
+  });
 
   factory Wallet.fromJson(Map<String, dynamic> j) => Wallet(
         balanceUzs: j['balance_uzs'] as int? ?? 0,
         card: j['card'] as String? ?? '',
         cardHolder: j['card_holder'] as String? ?? '',
         topups: [for (final t in j['topups'] as List? ?? const []) WalletTopup.fromJson(t as Map<String, dynamic>)],
+        // Older servers send no history.
+        entries: [for (final e in j['entries'] as List? ?? const []) WalletEntry.fromJson(e as Map<String, dynamic>)],
+        payme: j['payme'] as bool? ?? false,
       );
 
   final int balanceUzs;
   final String card;
   final String cardHolder;
   final List<WalletTopup> topups;
+
+  /// Balance history, newest first: top-ups (positive) and purchases (negative).
+  final List<WalletEntry> entries;
+
+  /// The server takes Payme payments (credited automatically, no receipt).
+  final bool payme;
+}
+
+/// One line of the balance history; [kind] is topup, gift, badge, username or adjust.
+class WalletEntry {
+  const WalletEntry({required this.deltaUzs, required this.kind, required this.createdAt});
+
+  factory WalletEntry.fromJson(Map<String, dynamic> j) => WalletEntry(
+        deltaUzs: j['delta_uzs'] as int? ?? 0,
+        kind: j['kind'] as String? ?? '',
+        createdAt: DateTime.tryParse(j['created_at'] as String? ?? '')?.toLocal(),
+      );
+
+  final int deltaUzs;
+  final String kind;
+  final DateTime? createdAt;
 }
 
 /// The user's own UZARO badge (checkmark or custom emoji next to the name), its monthly price and the balance.

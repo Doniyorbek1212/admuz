@@ -361,8 +361,12 @@ Future<void> showGiftDetails(BuildContext context, SentGift sent) => showGeneral
       }),
     );
 
+/// The gift shop for the user's own profile: no note, no hidden name.
+Future<bool?> buyUzaroGiftForMe(BuildContext context, WidgetRef ref, {GiftItem? initial}) =>
+    sendUzaroGift(context, recipientId: ref.read(accountProvider).myId, name: context.t('gifts_for_me'), initial: initial);
+
 /// Gift shop for a person ([recipientId] = their Telegram id) or a group/channel (its chat id): pick a gift,
-/// add a few words, pay from the UZARO balance.
+/// add a few words, pay from the UZARO balance. The user's own id buys the gift for their own profile.
 Future<bool?> sendUzaroGift(BuildContext context, {required int recipientId, required String name, GiftItem? initial}) =>
     showModalBottomSheet<bool>(
       context: context,
@@ -389,6 +393,9 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
   bool _sending = false;
   bool _anonymous = false;
 
+  /// Bought for the user's own profile rather than sent to someone.
+  bool get _forMe => widget.recipientId == ref.read(accountProvider).myId;
+
   Future<(List<GiftItem>, Wallet)> _load() async {
     final api = ref.read(sadoApiProvider);
     final results = await Future.wait([api.giftCatalog(), api.wallet()]);
@@ -408,13 +415,17 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
       if (mounted) setState(() => _sending = false);
       return;
     }
-    final balance = await apiGuard(context, () => ref.read(sadoApiProvider).sendGift(gift.id, widget.recipientId, _text.text.trim(), anonymous: _anonymous));
+    final self = _forMe;
+    final balance = await apiGuard(
+      context,
+      () => ref.read(sadoApiProvider).sendGift(gift.id, widget.recipientId, self ? '' : _text.text.trim(), anonymous: !self && _anonymous),
+    );
     if (!mounted) return;
     setState(() => _sending = false);
     if (balance == null) return;
     ref.invalidate(userGiftsProvider(widget.recipientId));
     ref.invalidate(giftShowcaseProvider(widget.recipientId));
-    showToast(context, context.t('gifts_sent'));
+    showToast(context, context.t(self ? 'gifts_bought' : 'gifts_sent'));
     final navigator = Navigator.of(context);
     navigator.pop(true);
     // The sender sees the premium show they just bought.
@@ -457,8 +468,9 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
             final (gifts, wallet) = data;
             final selected = _selected;
             final enough = selected != null && wallet.balanceUzs >= selected.priceUzs;
+            final self = _forMe;
             return Column(children: [
-              Text(s.t('gifts_for', {'name': name}), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              Text(self ? name : s.t('gifts_for', {'name': name}), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
               Text('${s.t('gifts_balance')}: ${formatUzs(context, wallet.balanceUzs)}', style: TextStyle(color: theme.hintColor)),
               const SizedBox(height: 8),
@@ -474,6 +486,12 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   child: Column(children: [
+                    if (self)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(s.t('gifts_for_me_hint'), textAlign: TextAlign.center, style: TextStyle(color: theme.hintColor)),
+                      )
+                    else ...[
                     TextField(
                       controller: _text,
                       maxLength: 140,
@@ -488,6 +506,7 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       value: _anonymous,
                       onChanged: _sending ? null : (value) => setState(() => _anonymous = value),
                     ),
+                    ],
                     // Store builds: paid gifts are bought from a balance topped up outside the store, which the
                     // store rules forbid; free ones still go.
                     if (!storeBlocksExternalPayments || selected.priceUzs == 0)
@@ -496,8 +515,10 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
                       icon: _sending
                           ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Icon(enough ? Icons.send_rounded : Icons.account_balance_wallet_rounded),
-                      label: Text(enough ? s.t('gifts_buy', {'price': formatUzs(context, selected.priceUzs)}) : s.t('gifts_topup')),
+                          : Icon(enough ? (self ? Icons.shopping_bag_rounded : Icons.send_rounded) : Icons.account_balance_wallet_rounded),
+                      label: Text(
+                        enough ? s.t(self ? 'gifts_buy_me' : 'gifts_buy', {'price': formatUzs(context, selected.priceUzs)}) : s.t('gifts_topup'),
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(s.t('gifts_only_uzaro'), textAlign: TextAlign.center, style: TextStyle(color: theme.hintColor, fontSize: 12.5)),

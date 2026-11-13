@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -736,6 +737,28 @@ class TopupStatus(StrEnum):
     PENDING = "pending"  # receipt uploaded, an admin checks the card transfer
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class PaymeOrder(Base):
+    """A balance top-up paid through Payme; [id] is the order_id Payme sends in the account.
+
+    One Payme transaction per order. state follows Payme: 0 no transaction yet, 1 created, 2 performed (credited),
+    -1 cancelled before, -2 cancelled after performing. Times are Payme-style epoch milliseconds.
+    """
+
+    __tablename__ = "payme_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    amount_uzs: Mapped[int] = mapped_column(Integer)
+    payme_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    payme_time: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    state: Mapped[int] = mapped_column(SmallInteger, default=0)
+    create_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    perform_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    cancel_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    reason: Mapped[int | None] = mapped_column(SmallInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class WalletTopup(Base):
