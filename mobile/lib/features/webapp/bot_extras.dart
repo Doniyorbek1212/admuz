@@ -15,10 +15,8 @@ import '../profile/profile_more.dart' show handleTooManyChannels;
 import 'web_app_screen.dart';
 
 /// Opens a Mini App page for [botUserId] at [url].
-Future<void> _pushWebApp(BuildContext context, String url, int botUserId) => Navigator.of(context).push(MaterialPageRoute<void>(
-      fullscreenDialog: true,
-      builder: (_) => WebAppScreen(url: url, botUserId: botUserId),
-    ));
+Future<void> _pushWebApp(BuildContext context, String url, int botUserId) =>
+    pushWebApp(context, url, (_) => WebAppScreen(url: url, botUserId: botUserId));
 
 // ------------------------------------------------------------------ joining chats
 

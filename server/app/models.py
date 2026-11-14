@@ -1,17 +1,19 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     Float,
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     UniqueConstraint,
     func,
@@ -437,7 +439,24 @@ class AdCampaign(Base):
     reviewed_by: Mapped[str | None] = mapped_column(String(64))
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Interest topics (app.interests.TOPICS) the ad is matched against; picked by the advertiser, guessed from the
+    # text when left empty, editable by admins.
+    topics: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    views: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    clicks: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CustomerInterest(Base):
+    """How much a customer cares about a topic, learnt from what they open in the hub and which ads they tap.
+    The score halves every `ads_interest_half_life_days`; the decay is applied lazily on write and read."""
+
+    __tablename__ = "customer_interests"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    topic: Mapped[str] = mapped_column(String(32), primary_key=True)
+    score: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PlaceCategory(StrEnum):
@@ -487,4 +506,299 @@ class Place(Base):
     # "osm:node/123" for imported places, so a re-import updates instead of duplicating; null for manual ones.
     source_ref: Mapped[str | None] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ActivityDay(Base):
+    """One row per customer, Tashkent calendar day and app event ("app_open", "hub_open", "movies_open"):
+    distinct-user counts per day, week, month and year come from it."""
+
+    __tablename__ = "activity_days"
+    __table_args__ = (Index("ix_activity_days_event_day", "event", "day"),)
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    event: Mapped[str] = mapped_column(String(32), primary_key=True)
+
+
+class MovieKind(StrEnum):
+    MOVIE = "movie"
+    SERIES = "series"
+
+
+class VideoStatus(StrEnum):
+    UPLOADING = "uploading"  # the admin's browser is still sending chunks
+    QUEUED = "queued"  # whole file on disk, waiting for the compress + Telegram upload worker
+    PROCESSING = "processing"
+    READY = "ready"  # in the Telegram channel; the local copy is gone
+    FAILED = "failed"  # original kept on disk so the admin can retry
+
+
+class MovieTitle(Base):
+    """A film or a series in the hub's "Movies" section; its videos live in a public Telegram channel."""
+
+    __tablename__ = "movie_titles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    kind: Mapped[MovieKind] = mapped_column(_enum(MovieKind, "movie_kind"))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(String(3000), default="")
+    year: Mapped[int | None] = mapped_column(Integer)
+    genres: Mapped[str] = mapped_column(String(200), default="")
+    country: Mapped[str] = mapped_column(String(80), default="")
+    language: Mapped[str] = mapped_column(String(40), default="")
+    poster: Mapped[str | None] = mapped_column(String(64))  # public media name
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class MusicCategory(StrEnum):
+    UZ_OLD = "uz_old"  # O'zbekcha eski qo'shiqlar
+    UZ_NEW = "uz_new"
+    WORLD = "world"
+    CAR = "car"  # mashinada eshitishga mos
+
+
+class MusicTrack(Base):
+    """A song in the hub's "Music" section; the admin uploads the file to this server and the app streams it from /media."""
+
+    __tablename__ = "music_tracks"
+    __table_args__ = (Index("ix_music_tracks_category_created", "category", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    category: Mapped[str] = mapped_column(String(16))  # MusicCategory value, checked by the API
+    title: Mapped[str] = mapped_column(String(200))
+    artist: Mapped[str] = mapped_column(String(200), default="")
+    audio: Mapped[str] = mapped_column(String(64))  # public media name
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MovieVideo(Base):
+    """One playable file: the whole film, or one episode of a series."""
+
+    __tablename__ = "movie_videos"
+    __table_args__ = (Index("ix_movie_videos_title", "title_id"), Index("ix_movie_videos_status", "status"))
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("movie_titles.id", ondelete="CASCADE"))
+    season: Mapped[int] = mapped_column(Integer, default=0)
+    episode: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[VideoStatus] = mapped_column(_enum(VideoStatus, "video_status"), default=VideoStatus.UPLOADING)
+    error: Mapped[str] = mapped_column(String(500), default="")
+    original_name: Mapped[str] = mapped_column(String(255), default="")
+    original_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    uploaded_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    compressed_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    tg_channel: Mapped[str] = mapped_column(String(64), default="")
+    tg_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class TelegramLink(Base):
+    """A customer's Telegram user id, proven by a one-time /start code the app sends to the gifts bot.
+
+    Kept apart from Customer (which stays Telegram-independent) and removed with the account. Gifts address
+    people by Telegram user id, so only a proven link may send gifts or manage the ones received.
+    """
+
+    __tablename__ = "telegram_links"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UzaroUsername(Base):
+    """A public @name chosen in UZARO, next to (not instead of) the person's Telegram username.
+
+    Owned by the customer; the Telegram account it points to is always the customer's current TelegramLink, so a
+    name can only ever lead to an account its owner proved. contact_token is the owner's own Telegram contact
+    link token (t.me/contact/...), refreshed by their app, so people without a Telegram username can be opened.
+    """
+
+    __tablename__ = "uzaro_usernames"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True)  # lowercase, without "@"
+    contact_token: Mapped[str] = mapped_column(String(80), default="")
+    contact_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BannedChannel(Base):
+    """A banned Telegram source (the Supreme Court list, kept up to date by admins); the app hides it from search
+    and will not open it. With a username it is matched by that alone, otherwise by its exact (normalized) title."""
+
+    __tablename__ = "banned_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    username: Mapped[str] = mapped_column(String(64), default="")  # no "@"/t.me/; "+hash" for an invite link
+    note: Mapped[str] = mapped_column(String(300), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuickLink(Base):
+    """A site or app an admin pins to every user's hub "Tezkor" row (paid placement), before the user's own links.
+    Shown from position 1 up while active and until its last paid day (inclusive, Tashkent date)."""
+
+    __tablename__ = "quick_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(40))
+    url: Mapped[str] = mapped_column(String(500))
+    logo: Mapped[str] = mapped_column(String(64), default="")  # public media file name; "" = the app shows the letter
+    android_package: Mapped[str] = mapped_column(String(150), default="")  # opened instead of the site when installed
+    position: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str] = mapped_column(String(300), default="")  # who paid, contract: admins only
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GiftItem(Base):
+    """A gift in the UZARO catalog: an animated WebP/GIF on this server with a price in so'm."""
+
+    __tablename__ = "gift_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(64))
+    price_uzs: Mapped[int] = mapped_column(Integer)
+    animation: Mapped[str] = mapped_column(String(64))  # public media name
+    # Premium gifts: an MP4 with sound played full screen when someone opens the recipient's profile.
+    video: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # Premium gifts the app draws over the screen instead (lion, plane, helicopter, ...); "" for plain gifts.
+    effect: Mapped[str] = mapped_column(String(24), default="", server_default="")
+    # Rendered full-screen show for an effect gift: a transparent animated WebP (public media name); "" = drawn by the app.
+    show: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # Rendered-show gifts imported from gift_renders/manifest.json: manifest id, sound (public media name), show
+    # length, tier 1-4 and the ru/en names (title is the uz one). Older gifts leave these empty.
+    key: Mapped[str | None] = mapped_column(String(32), unique=True)
+    sound: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tier: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    title_ru: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    title_en: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SentGift(Base):
+    """One gift sent to a Telegram user; UZARO users see it on that person's profile unless they hid it."""
+
+    __tablename__ = "sent_gifts"
+    __table_args__ = (Index("ix_sent_gifts_recipient_created", "recipient_telegram_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    gift_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("gift_items.id", ondelete="RESTRICT"))
+    sender_customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    sender_telegram_id: Mapped[int] = mapped_column(BigInteger)
+    recipient_telegram_id: Mapped[int] = mapped_column(BigInteger)
+    text: Mapped[str] = mapped_column(String(140), default="")
+    price_uzs: Mapped[int] = mapped_column(Integer)
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The sender chose to stay anonymous: only the recipient (and the sender) see who sent it.
+    anonymous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The recipient hid the sender's name from people opening their profile.
+    sender_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WalletEntry(Base):
+    """Append-only so'm ledger of a customer's UZARO balance; the balance is the sum of delta_uzs.
+
+    (customer, kind, reference) is unique, so a top-up approval or a gift charge is applied once.
+    """
+
+    __tablename__ = "wallet_ledger"
+    __table_args__ = (UniqueConstraint("customer_id", "kind", "reference", name="uq_wallet_ledger_ref"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    delta_uzs: Mapped[int] = mapped_column(BigInteger)
+    kind: Mapped[str] = mapped_column(String(16))  # topup | gift | adjust
+    reference: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TopupStatus(StrEnum):
+    PENDING = "pending"  # receipt uploaded, an admin checks the card transfer
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class PaymeOrder(Base):
+    """A balance top-up paid through Payme; [id] is the order_id Payme sends in the account.
+
+    One Payme transaction per order. state follows Payme: 0 no transaction yet, 1 created, 2 performed (credited),
+    -1 cancelled before, -2 cancelled after performing. Times are Payme-style epoch milliseconds.
+    """
+
+    __tablename__ = "payme_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    amount_uzs: Mapped[int] = mapped_column(Integer)
+    payme_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    payme_time: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    state: Mapped[int] = mapped_column(SmallInteger, default=0)
+    create_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    perform_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    cancel_time: Mapped[int] = mapped_column(BigInteger, default=0)
+    reason: Mapped[int | None] = mapped_column(SmallInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WalletTopup(Base):
+    """A balance top-up paid by card transfer; the money is credited when an admin approves the receipt."""
+
+    __tablename__ = "wallet_topups"
+    __table_args__ = (Index("ix_wallet_topups_status_created", "status", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    amount_uzs: Mapped[int] = mapped_column(Integer)
+    receipt_path: Mapped[str] = mapped_column(String(200))  # relative to the private media dir
+    status: Mapped[str] = mapped_column(String(16), default=TopupStatus.PENDING.value)
+    reject_reason: Mapped[str] = mapped_column(String(300), default="")
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProfileStyle(Base):
+    """How a Telegram user dressed their profile for UZARO viewers: the header background, "#rrggbb" or "#rrggbb,#rrggbb"."""
+
+    __tablename__ = "profile_styles"
+
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    background: Mapped[str] = mapped_column(String(15))  # "" = none
+    # Scattered over the header: a custom emoji id (digits) or a plain emoji; "" = none.
+    pattern: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    # Hides every received gift (also ones that arrive later) from people opening the profile.
+    hide_gifts: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProfileBadge(Base):
+    """A paid UZARO badge next to a Telegram user's name, seen by UZARO users: the gold checkmark or any Telegram
+    custom emoji. Bought by the month from the UZARO balance; it simply stops showing after expires_at."""
+
+    __tablename__ = "profile_badges"
+
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    emoji_id: Mapped[int] = mapped_column(BigInteger, default=0)  # Telegram custom emoji id; 0 = UZARO checkmark
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

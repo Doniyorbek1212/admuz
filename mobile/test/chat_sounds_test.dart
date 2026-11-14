@@ -13,6 +13,17 @@ void main() {
     }
   });
 
+  test('call tones are audible loops with a silent tail', () {
+    for (final id in ChatSounds.callTones) {
+      final samples = ChatSounds.synthesize(id);
+      expect(samples.length, inInclusiveRange(44100, 44100 * 5), reason: id);
+      expect(samples.every((s) => s.abs() <= 1), isTrue, reason: id);
+      expect(samples.any((s) => s.abs() > 0.2), isTrue, reason: id);
+      // The cycle ends in silence, so looping it gives the "tuut... tuut..." rhythm.
+      expect(samples.sublist(samples.length - 4410).every((s) => s == 0), isTrue, reason: id);
+    }
+  });
+
   test('wav header describes 16-bit mono PCM', () {
     final bytes = ChatSounds.wav(Float64List.fromList([0, 0.5, -0.5]));
     final data = ByteData.sublistView(bytes);

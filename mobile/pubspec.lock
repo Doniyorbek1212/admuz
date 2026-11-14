@@ -42,7 +42,7 @@ packages:
     source: hosted
     version: "2.13.1"
   audio_session:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: audio_session
       sha256: f9e7711a0e24ca8b40f5d7ac374c3c6e55016f3157912badd18199cdbbca5c4d
@@ -701,6 +701,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.2"
+  in_app_purchase:
+    dependency: "direct main"
+    description:
+      name: in_app_purchase
+      sha256: d8317ec2ed6fe33199957d67ee67e08a4fd4871ef93b91d7611d8ee560892afc
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.3.1"
+  in_app_purchase_android:
+    dependency: transitive
+    description:
+      name: in_app_purchase_android
+      sha256: b76ab601573f8a848e72d015496257235066ba3479bef6300482239f417e0d72
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.5.5"
+  in_app_purchase_platform_interface:
+    dependency: transitive
+    description:
+      name: in_app_purchase_platform_interface
+      sha256: "0b0076cac8ce4fa7048f01e76af8b123aeb6a7c4e0dea2a5206d6664454f3e36"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.1"
+  in_app_purchase_storekit:
+    dependency: transitive
+    description:
+      name: in_app_purchase_storekit
+      sha256: e9278eb778170ce65a9e2d17672924f41b0f2f3ad958cd9f6ea7ffc0826efa29
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.17"
   intl:
     dependency: "direct main"
     description:
@@ -717,6 +749,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.14.2"
+  json_annotation:
+    dependency: transitive
+    description:
+      name: json_annotation
+      sha256: "2a743920d81b7910627f68ee2c9ac1fc0bfee32b9fc3403587d7c6791ca12f80"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.12.0"
   just_audio:
     dependency: "direct main"
     description:
@@ -1434,6 +1474,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "15.4.0"
+  wakelock_plus:
+    dependency: "direct main"
+    description:
+      name: wakelock_plus
+      sha256: "39a1d99085cf3190d41305bca05f0c0d77522f355f7f99bb648ee231192d9d68"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.8.2"
+  wakelock_plus_platform_interface:
+    dependency: transitive
+    description:
+      name: wakelock_plus_platform_interface
+      sha256: "764c25504562abc8ac3406f5d175f126b276e6ba916c7c2675690b73368ca384"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.7.0"
   web:
     dependency: transitive
     description:

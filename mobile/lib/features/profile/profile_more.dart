@@ -17,11 +17,11 @@ import '../home/home_screen.dart';
 import '../settings/privacy_screen.dart' show promptText;
 
 final _personalPostsProvider = FutureProvider.autoDispose.family<List<td.Message>, int>((ref, userId) async {
-  final result = await ref.watch(accountProvider).send<td.Messages>(td.GetPersonalChatHistory(userId: userId, limit: 3));
+  final result = await ref.watch(accountProvider).send<td.Messages>(td.GetPersonalChatHistory(userId: userId, limit: 1));
   return result.messages ?? const [];
 });
 
-/// The channel a user pinned to their profile, with its newest posts.
+/// The channel a user pinned to their profile, with its newest post.
 class PersonalChannelCard extends ConsumerWidget {
   const PersonalChannelCard({super.key, required this.userId, required this.channelChatId});
 
@@ -33,24 +33,49 @@ class PersonalChannelCard extends ConsumerWidget {
     final account = ref.watch(accountProvider);
     final s = context.s;
     final chat = account.chats[channelChatId];
-    final posts = ref.watch(_personalPostsProvider(userId)).value ?? const [];
-    return Column(children: [
-      ListTile(
-        leading: ChatAvatar(chatId: channelChatId, size: 44, showOnline: false),
-        title: Text(chat == null ? s.t('personal_channel') : chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(s.t('personal_channel')),
-        trailing: const Icon(Icons.chevron_right_rounded),
-        onTap: () => openChat(context, channelChatId),
+    // TDLib may return no personal history for a channel it has not loaded; its last message is the same post.
+    final post = ref.watch(_personalPostsProvider(userId)).value?.firstOrNull ?? chat?.lastMessage;
+    final subscribers = chat == null ? 0 : account.supergroupOf(chat)?.memberCount ?? 0;
+    final theme = Theme.of(context);
+    // Telegram's layout: "Channel · N subscribers", then the channel with its newest post.
+    return InkWell(
+      onTap: () => post == null ? openChat(context, channelChatId) : openChat(context, channelChatId, messageId: post.id),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(s.t('profile_channel'), style: TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)),
+            if (subscribers > 0) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(color: theme.colorScheme.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+                child: Text(s.count('subscribers', subscribers), style: TextStyle(color: theme.colorScheme.primary, fontSize: 12.5)),
+              ),
+            ],
+          ]),
+          const SizedBox(height: 8),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            ChatAvatar(chatId: channelChatId, size: 48, showOnline: false),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(
+                    child: Text(chat == null ? s.t('personal_channel') : chatTitle(chat, account, s),
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  ),
+                  if (post != null) Text(formatChatTime(post.date, s.locale), style: TextStyle(color: theme.hintColor, fontSize: 13)),
+                ]),
+                const SizedBox(height: 2),
+                Text(post == null ? s.t('personal_channel') : messagePreview(post, account, s),
+                    maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor)),
+              ]),
+            ),
+          ]),
+        ]),
       ),
-      for (final post in posts)
-        ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.only(left: 72, right: 16),
-          title: Text(messagePreview(post, account, s), maxLines: 2, overflow: TextOverflow.ellipsis),
-          subtitle: Text(formatChatTime(post.date, s.locale)),
-          onTap: () => openChat(context, channelChatId, messageId: post.id),
-        ),
-    ]);
+    );
   }
 }
 

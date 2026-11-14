@@ -25,8 +25,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <!-- Music keeps playing with the UI closed, with notification / lock-screen controls. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Calls keep their microphone and camera when the user leaves the app (OngoingCallService). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -77,12 +79,19 @@
             android:name=".MusicService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name=".OngoingCallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
         <receiver android:name=".BootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- geolocator's background-location service is never used (live location runs while the app is open);
+             dropping it keeps a location foreground-service type out of the Play review. -->
+        <service android:name="com.baseflow.geolocator.GeolocatorLocationService" tools:node="remove" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -110,6 +119,11 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="*/*" />
+        </intent>
+        <!-- Hub quick links (hub_quick_links.dart) open a service's own app when it is installed. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 </manifest>

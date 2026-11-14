@@ -1,0 +1,29 @@
+UZARO sovg'a animatsiyalari — 3D model mualliflari (Sketchfab)
+=================================================================
+
+Litsenziya: CC BY 4.0 (Creative Commons Attribution). Tijoriy foydalanishga ruxsat bor,
+sharti — muallifni ko'rsatish va o'zgartirish kiritilganini aytish.
+Ilovada (masalan, "Haqida / Litsenziyalar" bo'limida) quyidagi matnni ko'rsating.
+
+1. "male lion" — iRahulRajput (@rt699448), CC BY 4.0
+   Ishlatilgan: lion.webp, lion_icon.webp
+   O'zgartirishlar: masshtab, yorug'lik, animatsiya, toj qo'shilgan.
+
+2. "Golden crown" — Pieter Ferreira (@Badboy17Aiden), CC BY 4.0
+   Ishlatilgan: lion.webp, lion_icon.webp
+   O'zgartirishlar: masshtab, sherning boshiga joylashtirilgan.
+   Eslatma: model sahifasida "NoAI" belgisi bor — modelni sun'iy intellekt
+   o'qitish ma'lumotlariga qo'shmang (render qilish mumkin).
+
+3. "A320-200 with cockpit (ver VIII)" — TonyWony, CC BY 4.0
+   Ishlatilgan: plane.webp, plane_icon.webp
+   O'zgartirishlar: aviakompaniya yozuvlari va logotiplari olib tashlangan
+   (fyuzelyaj teksturasi tozalangan, dum logotipi bir rangli bo'yoq bilan almashtirilgan).
+
+4. "EC 135" — GRIP420, CC BY 4.0
+   Ishlatilgan: helicopter.webp, helicopter_icon.webp
+   O'zgartirishlar: operator yozuvlari, bayroq va ro'yxat raqamlari olib tashlangan,
+   korpus tilla rangga bo'yalgan, parrak animatsiyasi qayta yozilgan.
+
+Qisqa variant (ilovada ko'rsatish uchun):
+"3D modellar: iRahulRajput, Pieter Ferreira, TonyWony, GRIP420 — Sketchfab, CC BY 4.0, o'zgartirilgan."

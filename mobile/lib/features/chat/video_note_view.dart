@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -10,6 +11,29 @@ import 'package:video_player/video_player.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
+import 'video_note_shapes.dart';
+
+/// Shape of a not-yet-downloaded note: fetches only the file's last bytes, where the shape marker lives,
+/// so the receiver sees the heart/star before the whole video comes in. Null when there is no marker.
+final _remoteShapeProvider = FutureProvider.family<VideoNoteShape?, int>((ref, fileId) async {
+  const tail = 64;
+  final account = ref.read(accountProvider);
+  try {
+    var file = await account.send<td.File>(td.GetFile(fileId: fileId));
+    final size = file.size;
+    if (size <= tail) return null;
+    if (!file.local.isDownloadingCompleted) {
+      file = await account
+          .send<td.File>(td.DownloadFile(fileId: fileId, priority: 1, offset: size - tail, limit: tail, synchronous: true))
+          .timeout(const Duration(seconds: 15));
+    }
+    final part = await account.send<td.Data>(td.ReadFilePart(fileId: fileId, offset: size - tail, count: tail));
+    return VideoNoteShape.markerIn(base64Decode(part.data));
+  } on Object catch (error) {
+    debugPrint('video note shape not fetched: $error');
+    return null;
+  }
+});
 
 /// Round video message as in Telegram/aka: downloads by itself and loops silently in the chat;
 /// a tap plays it from the start with sound and a progress ring, another tap pauses.
@@ -28,6 +52,12 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
   VideoPlayerController? _controller;
   String? _path;
 
+  /// Shape read from the file's marker; the server resets the note's length, so this is the one that lasts.
+  VideoNoteShape? _fileShape;
+
+  /// Tapped while auto-download is off: fetch it, then play with sound as soon as it is ready.
+  bool _requested = false;
+
   /// Playing from the start with sound (otherwise: muted preview loop).
   bool _withSound = false;
 
@@ -41,6 +71,12 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
   Future<void> _open(String path) async {
     if (_path == path) return;
     _path = path;
+    try {
+      final shape = await VideoNoteShape.readMarker(path);
+      if (shape != null && mounted) setState(() => _fileShape = shape);
+    } on FileSystemException catch (error) {
+      debugPrint('video note shape unreadable: $error');
+    }
     final controller = VideoPlayerController.file(File(path));
     try {
       await controller.initialize();
@@ -56,6 +92,7 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     if (!mounted) return controller.dispose();
     controller.addListener(_onTick);
     setState(() => _controller = controller);
+    if (_requested) unawaited(_tap());
   }
 
   void _onTick() {
@@ -64,17 +101,25 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     final value = controller.value;
     // Finished the audible run: back to the silent loop.
     if (_withSound && !value.isPlaying && value.position >= value.duration - const Duration(milliseconds: 200)) {
-      setState(() => _withSound = false);
-      final loop = ref.read(motionProvider).videos;
-      unawaited(controller.setVolume(0).then((_) => controller.setLooping(true)).then((_) => loop ? controller.play() : controller.seekTo(Duration.zero)));
+      _backToPreview(controller);
       return;
     }
     if (_withSound) setState(() {});
   }
 
+  /// Ends the audible run (finished or closed with ✕): small, silent, looping preview again.
+  void _backToPreview(VideoPlayerController controller) {
+    setState(() => _withSound = false);
+    final loop = ref.read(motionProvider).videos;
+    unawaited(controller.setVolume(0).then((_) => controller.setLooping(true)).then((_) => loop ? controller.play() : controller.seekTo(Duration.zero)));
+  }
+
   Future<void> _tap() async {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null) {
+      if (!_requested) setState(() => _requested = true);
+      return;
+    }
     if (!_withSound) {
       setState(() => _withSound = true);
       await controller.setLooping(false);
@@ -101,7 +146,9 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
   @override
   Widget build(BuildContext context) {
     final note = widget.videoNote;
-    final file = ref.watch(fileProvider(note.video.id)).value ?? note.video;
+    final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
+    final fetch = auto || _requested;
+    final file = (fetch ? ref.watch(fileProvider(note.video.id)).value : ref.watch(fileStateProvider(note.video.id)).value) ?? note.video;
     if (file.local.isDownloadingCompleted && file.local.path.isNotEmpty) unawaited(_open(file.local.path));
     final width = MediaQuery.sizeOf(context).width;
     // Grows while playing with sound, as in Telegram/aka, and shrinks back to the preview size after.
@@ -113,8 +160,12 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     final progress = _withSound && value != null && value.duration.inMilliseconds > 0
         ? value.position.inMilliseconds / value.duration.inMilliseconds
         : null;
-    final downloading = !file.local.isDownloadingCompleted;
+    final downloading = !file.local.isDownloadingCompleted && (fetch || file.local.isDownloadingActive);
     final size = file.size == 0 ? file.expectedSize : file.size;
+    final lengthShape = VideoNoteShape.fromLength(note.length);
+    final shape = _fileShape ??
+        (lengthShape == VideoNoteShape.circle && !file.local.isDownloadingCompleted ? ref.watch(_remoteShapeProvider(note.video.id)).value : null) ??
+        lengthShape;
 
     return GestureDetector(
       onTap: _tap,
@@ -125,7 +176,8 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
         height: diameter,
         child: Stack(
           children: [
-            ClipOval(
+            ClipPath(
+              clipper: VideoNoteShapeClipper(shape),
               child: SizedBox.expand(
                 child: controller != null && controller.value.isInitialized
                     ? FittedBox(
@@ -151,12 +203,43 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
                   ),
                 ),
               ),
-            if (progress != null)
+            // Shaped notes get a thin outline (as in the shapes design); a progress line runs along it while playing.
+            if (progress != null || shape != VideoNoteShape.circle)
               Positioned.fill(
-                child: CircularProgressIndicator(value: progress, strokeWidth: 3, color: Colors.white.withValues(alpha: 0.9)),
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: VideoNoteShapeOutline(
+                      shape: shape,
+                      progress: progress,
+                      color: Colors.white.withValues(alpha: 0.9),
+                      strokeWidth: progress != null ? 3 : 1.5,
+                      track: progress != null ? 0 : 0.55,
+                    ),
+                  ),
+                ),
+              ),
+            if (!fetch && !file.local.isDownloadingCompleted && !file.local.isDownloadingActive)
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                  child: const Icon(Icons.download_rounded, color: Colors.white, size: 28),
+                ),
               ),
             if (_withSound && value != null && !value.isPlaying)
               const Center(child: Icon(Icons.play_arrow_rounded, size: 54, color: Colors.white)),
+            // While enlarged (playing or paused) a ✕ shrinks it back without waiting for the end.
+            if (_withSound && controller != null)
+              Positioned(
+                top: 0,
+                right: 0,
+                child: IconButton(
+                  onPressed: () => _backToPreview(controller),
+                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+                  style: IconButton.styleFrom(backgroundColor: Colors.black54, foregroundColor: Colors.white),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                ),
+              ),
             Positioned(
               left: diameter * 0.06,
               bottom: diameter * 0.04,

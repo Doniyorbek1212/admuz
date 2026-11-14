@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/api/sado_api.dart';
 import '../../core/app_lock.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
@@ -424,6 +425,17 @@ Future<void> _deleteAccountNow(BuildContext context, TelegramAccount account) as
   }
   if (!await confirm(context, title: s.t('delete_account_final'), confirmLabel: s.t('delete'), destructive: true)) return;
   if (!context.mounted) return;
+  // The UZARO data goes too (Play and App Store require it): profile, shops, links. Done first, while this
+  // device is still signed in to the UZARO server; payment records stay, holding only an anonymous id.
+  final api = ProviderScope.containerOf(context, listen: false).read(sadoApiProvider);
+  if (api.configured) {
+    try {
+      await api.deleteMyData();
+    } on ApiException catch (error) {
+      debugPrint('UZARO data not deleted: $error');
+    }
+  }
+  if (!context.mounted) return;
   // On success TDLib closes the session itself; the auth flow then shows the login screen.
   await guard(context, () => account.send<td.Ok>(td.DeleteAccount(reason: 'Deleted from UZARO', password: password)));
 }
@@ -441,7 +453,7 @@ Future<String?> promptText(BuildContext context, {required String title, require
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),
       ],
     ),
-  ).whenComplete(controller.dispose);
+  ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
 }
 
 final _blockedProvider = FutureProvider.autoDispose<List<td.MessageSender>>((ref) async {

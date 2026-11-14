@@ -1,3 +1,4 @@
+import ipaddress
 from functools import lru_cache
 from typing import Literal
 
@@ -6,6 +7,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://sado:sado@localhost:5432/sado_billing"
 DEFAULT_REDIS_URL = "redis://localhost:6379/2"
+# sado.voxo.uz stays while installs built before the move to uzaromessenger.uz are still in use.
+DEFAULT_ALLOWED_HOSTS = (
+    "uzaromessenger.uz",
+    "www.uzaromessenger.uz",
+    "api.uzaromessenger.uz",
+    "sado.voxo.uz",
+    "localhost",
+    "127.0.0.1",
+)
 
 
 class Settings(BaseSettings):
@@ -21,9 +31,15 @@ class Settings(BaseSettings):
     # FORWARDED_ALLOW_IPS so the app can refuse to start when it is missing in staging/production.
     forwarded_allow_ips: str = Field(default="", validation_alias=AliasChoices("FORWARDED_ALLOW_IPS", "forwarded_allow_ips"))
 
-    # Permanent X-Admin-Key keys (CLI-created) alongside login sessions. Set false once every admin
-    # signs in with login/password: then logout and session expiry end all panel access.
-    admin_permanent_keys: bool = True
+    # Permanent X-Admin-Key keys (CLI-created) alongside login sessions. Off by default: then only login/password
+    # sessions reach the admin API, and logout or the 12-hour expiry end all access. Turn on only for a legacy key.
+    admin_permanent_keys: bool = False
+    # Networks (CIDR) the admin API answers, e.g. ["203.0.113.7/32", "10.8.0.0/24"] for an office and a VPN.
+    # Empty = any address (the login rate limits still apply).
+    admin_allowed_ips: list[str] = Field(default_factory=list)
+
+    # Host names answered in staging/production; any other Host header gets 400 (stray or spoofed domains).
+    allowed_hosts: list[str] = Field(default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS))
 
     # Whole request body cap, checked before multipart parsing; above the biggest upload plus form overhead.
     max_request_bytes: int = 32 * 1024 * 1024
@@ -44,8 +60,15 @@ class Settings(BaseSettings):
     # Google Play (phase B): service account JSON path and package name.
     google_package_name: str = ""
     google_service_account_file: str = ""
+    # Play license-tester and App Store sandbox/TestFlight purchases are free; they credit the wallet only while this
+    # is on (testing only).
+    store_test_purchases: bool = False
+    # Default of the admin-editable new-user bonus (MarketSettings.welcome_bonus_uzs), in so'm.
+    welcome_bonus_uzs: int = 100_000
     # App Store (phase B): App Store Server API credentials.
     apple_bundle_id: str = ""
+    # App Store Connect "Apple ID" of the app (a number); with apple_bundle_id it switches the App Store top-up on.
+    apple_app_id: int = 0
     apple_issuer_id: str = ""
     apple_key_id: str = ""
     apple_private_key_file: str = ""
@@ -65,10 +88,58 @@ class Settings(BaseSettings):
     media_dir: str = "media"
     max_image_bytes: int = 5 * 1024 * 1024
     max_video_bytes: int = 30 * 1024 * 1024
+    # Hub music: songs the admin uploads (MP3/M4A), kept on the server and served at /media/<name>.
+    max_audio_bytes: int = 25 * 1024 * 1024
+    # UZARO gifts: animated WebP/GIF files, and the bot that proves a customer's Telegram id (/start <code>).
+    # Telegram calls POST /v1/telegram/webhook; register it once with setWebhook (see deploy/README.md).
+    max_gift_bytes: int = 2 * 1024 * 1024
+    max_gift_video_bytes: int = 10 * 1024 * 1024
+    gifts_bot_token: str = ""
+    gifts_bot_username: str = ""  # without @
+
+    # Hub movies: an admin uploads a film in chunks, the worker compresses it with ffmpeg and a bot posts it to a
+    # public Telegram channel; the app streams it from there, so the server keeps no video once it is published.
+    tg_api_id: int = 0
+    tg_api_hash: str = ""
+    movies_bot_token: str = ""  # the bot must be an admin of the channel with "post messages"
+    movies_channel: str = ""  # public channel username without @
+    movie_max_upload_bytes: int = 8 * 1024 * 1024 * 1024
+    movie_chunk_bytes: int = 16 * 1024 * 1024
+    # Uploads are refused when they would leave less free disk than this (the compressed copy needs room too).
+    movie_disk_reserve_bytes: int = 10 * 1024 * 1024 * 1024
+    movie_max_height: int = 720
+    movie_crf: int = 26  # x264 quality: higher = smaller file; 23 near-transparent, 28 visibly soft
+    movie_ffmpeg_threads: int = 3  # the VPS is shared with other services
+
+    # Payme (Merchant API): balance top-ups paid in Payme and credited automatically. Payme calls
+    # POST /v1/payments/payme with Basic auth "Paycom:<key>". Sandbox: the cashbox's test key and
+    # https://test.paycom.uz; live: the real key and https://checkout.paycom.uz. Empty = Payme off.
+    payme_merchant_id: str = ""
+    payme_key: str = ""
+    payme_checkout_url: str = "https://checkout.paycom.uz"
+    payme_return_url: str = "https://uzaromessenger.uz"
+
+    # The pay bot (@UzaroPay_bot): balance top-ups in Telegram (Payme, Telegram Stars, TON, card via an admin) and the
+    # website's wallet sign-in. Telegram calls POST /v1/telegram/pay-webhook; register it with
+    # `python -m app.cli set-pay-webhook <https://host>`. Empty token = the bot and the website wallet are off.
+    pay_bot_token: str = ""
+    pay_bot_username: str = ""  # without @
+    # TON payments are checked on toncenter.com; the key only raises its rate limit (optional).
+    toncenter_url: str = "https://toncenter.com/api/v2"
+    toncenter_api_key: str = ""
 
     # Online shops: the first ones are free, every further shop costs a one-time fee (manual transfer + admin check).
     shop_free_limit: int = 2
     extra_shop_price_uzs: int = 150_000
+
+    @model_validator(mode="after")
+    def _admin_networks_parse(self) -> "Settings":
+        for value in self.admin_allowed_ips:
+            try:
+                ipaddress.ip_network(value, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"SADO_BILLING_ADMIN_ALLOWED_IPS: {value!r} is not an IP address or CIDR network") from exc
+        return self
 
     @model_validator(mode="after")
     def _mock_only_outside_production(self) -> "Settings":
@@ -91,15 +162,29 @@ class Settings(BaseSettings):
             problems.append("FORWARDED_ALLOW_IPS must list the reverse proxy addresses, or per-IP rate limits see only the proxy")
         elif "*" in proxies:
             problems.append("FORWARDED_ALLOW_IPS='*' lets any client forge X-Forwarded-For")
-        if self.max_request_bytes < max(self.max_image_bytes, self.max_video_bytes):
+        if self.max_request_bytes < max(self.max_image_bytes, self.max_video_bytes, self.max_audio_bytes, self.movie_chunk_bytes):
             problems.append("SADO_BILLING_MAX_REQUEST_BYTES is smaller than the biggest allowed upload")
+        if not self.allowed_hosts or "*" in self.allowed_hosts:
+            problems.append("SADO_BILLING_ALLOWED_HOSTS must list the real domains, not '*'")
         if problems:
             raise ValueError("unsafe staging/production configuration: " + "; ".join(problems))
         return self
 
     @property
+    def admin_networks(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        return [ipaddress.ip_network(value, strict=False) for value in self.admin_allowed_ips]
+
+    @property
+    def deployed(self) -> bool:
+        return self.environment in ("staging", "production")
+
+    @property
     def docs_enabled(self) -> bool:
         return self.environment in ("development", "test")
+
+    @property
+    def movies_configured(self) -> bool:
+        return bool(self.tg_api_id and self.tg_api_hash and self.movies_bot_token and self.movies_channel)
 
     @property
     def mock_allowed(self) -> bool:

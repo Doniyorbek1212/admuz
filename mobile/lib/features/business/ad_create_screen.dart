@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
+import '../../core/interests.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/settings_group.dart';
 import '../hub/ad_banner_card.dart';
@@ -27,6 +28,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
   final _link = TextEditingController();
   late final Future<AdsConfig> _config = ref.read(sadoApiProvider).adsConfig();
   late final Set<String> _regions = {ref.read(hubRegionProvider)};
+  final Set<String> _topics = {};
   bool _isVideo = false;
   int _days = 7;
   bool _saving = false;
@@ -80,6 +82,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
       linkUrl: _link.text.trim(),
       regions: [for (final r in uzRegions) if (_regions.contains(r)) r],
       days: _days,
+      topics: [for (final t in adTopicLabelKeys.keys) if (_topics.contains(t)) t],
     );
     final ad = await apiGuard(context, () => ref.read(sadoApiProvider).createAd(draft));
     if (!mounted) return;
@@ -95,7 +98,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
         InputDecoration(labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: icon == null ? null : Icon(icon), border: const OutlineInputBorder());
     final preview = Ad(
       id: 'preview',
-      title: _title.text.trim().isEmpty ? s.t('ad_title') : _title.text.trim(),
+      title: _title.text.trim(),
       text: _text.text.trim(),
       isVideo: _isVideo,
       mediaUrl: _media.text.trim(),
@@ -123,7 +126,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextFormField(controller: _title, maxLength: 60, decoration: field(s.t('ad_title'), icon: Icons.title_rounded), validator: (v) => validateRequired(context, v)),
+                    TextFormField(controller: _title, maxLength: 60, decoration: field(s.t('ad_title'), icon: Icons.title_rounded)),
                     const SizedBox(height: 6),
                     TextFormField(controller: _text, maxLength: 160, maxLines: 2, decoration: field(s.t('ad_text'), icon: Icons.notes_rounded)),
                     const SizedBox(height: 6),
@@ -164,6 +167,7 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
               ),
             ]),
             _regionsCard(context),
+            _topicsCard(context),
             _priceCard(context),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -200,6 +204,39 @@ class _AdCreateScreenState extends ConsumerState<AdCreateScreen> {
                 label: Text(region),
                 selected: _regions.contains(region),
                 onSelected: (on) => setState(() => on ? _regions.add(region) : _regions.remove(region)),
+              ),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  /// Who the ad is aimed at: it is shown more to people interested in these topics (optional, at most 3).
+  /// Hidden while the admin panel turns the picker off; the server then guesses topics from the text.
+  Widget _topicsCard(BuildContext context) => FutureBuilder<AdsConfig>(
+        future: _config,
+        builder: (context, snapshot) => snapshot.data?.topicsEnabled ?? false ? _topicChips(context) : const SizedBox.shrink(),
+      );
+
+  Widget _topicChips(BuildContext context) {
+    final s = context.s;
+    final full = _topics.length >= maxAdTopics;
+    return SettingsGroup(title: s.t('ad_topics'), children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+        child: Text(s.t('ad_topics_hint', {'n': '$maxAdTopics'}), style: TextStyle(color: Theme.of(context).hintColor, fontSize: 13, height: 1.3)),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final MapEntry(key: topic, value: labelKey) in adTopicLabelKeys.entries)
+              FilterChip(
+                label: Text(s.t(labelKey)),
+                selected: _topics.contains(topic),
+                onSelected: full && !_topics.contains(topic) ? null : (on) => setState(() => on ? _topics.add(topic) : _topics.remove(topic)),
               ),
           ],
         ),

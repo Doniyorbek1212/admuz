@@ -155,6 +155,30 @@ class GoldRing extends StatelessWidget {
   );
 }
 
+/// Gold gradient frame with a soft glow around a rounded card (hub banners and sections).
+class GoldFrame extends StatelessWidget {
+  const GoldFrame({super.key, required this.child, this.radius = 18, this.width = 1.6});
+
+  final Widget child;
+
+  /// Corner radius of [child]; the frame's outer radius adds [width].
+  final double radius;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: brandGoldGradient,
+      borderRadius: BorderRadius.circular(radius + width),
+      boxShadow: [BoxShadow(color: brandGold.withValues(alpha: 0.3), blurRadius: 10, spreadRadius: 0.5)],
+    ),
+    child: Padding(
+      padding: EdgeInsets.all(width),
+      child: ClipRRect(borderRadius: BorderRadius.circular(radius), child: child),
+    ),
+  );
+}
+
 /// "UZARO" wordmark: a deep-to-accent sweep on light backgrounds, plain white on dark ones.
 class BrandWordmark extends StatelessWidget {
   const BrandWordmark({super.key, this.size = 30, this.onDark = false});

@@ -14,8 +14,11 @@ import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../../widgets/custom_emoji.dart';
+import '../gifts/gift_showcase.dart' show giftRecipientOf;
+import '../gifts/uzaro_badge.dart' show UzaroBadge;
 import '../profile/chat_info_screen.dart';
 import '../settings/folders_screen.dart';
+import 'chat_look.dart';
 
 /// Mini thumbnails of the album the chat's last message belongs to (newest first, at most three).
 /// TDLib's local cache is tried first; only when it lacks the rest of the album is the server asked once.
@@ -114,6 +117,10 @@ class ChatTile extends ConsumerWidget {
 
     final unreadCount = account.unreadFor(chat);
     final unread = unreadCount > 0 || chat.isMarkedAsUnread;
+    final tint = switch (localChatColor(chat)) {
+      final int argb => Color(argb),
+      _ => null,
+    };
     final trailingBadges = <Widget>[
       if (chat.unreadMentionCount > 0) _Badge(text: '@', color: theme.colorScheme.primary),
       if (chat.unreadReactionCount > 0) _Badge(text: '❤', color: Colors.redAccent),
@@ -121,20 +128,24 @@ class ChatTile extends ConsumerWidget {
       if (unread)
         _Badge(
           text: unreadCount > 0 ? formatCount(unreadCount) : '',
-          color: muted ? colors.mutedBadge : colors.unreadBadge,
+          color: muted ? colors.mutedBadge : tint ?? colors.unreadBadge,
         )
       else if (position?.isPinned ?? false)
         Icon(Icons.push_pin_rounded, size: 18, color: hint),
     ];
 
     return Material(
-      color: selected ? theme.colorScheme.primary.withValues(alpha: 0.12) : Colors.transparent,
+      color: selected
+          ? theme.colorScheme.primary.withValues(alpha: 0.12)
+          : tint?.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.10) ?? Colors.transparent,
       child: InkWell(
         onTap: onTap,
         onLongPress: () => showChatActions(context, ref, chat, list),
         onSecondaryTap: () => showChatActions(context, ref, chat, list),
+        child: Stack(children: [
+        Positioned.fill(child: ChatTileBackdrop(chat: chat, giftsOf: giftRecipientOf(account, chat))),
         // Hairline separator starting under the title, like Telegram.
-        child: DecoratedBox(
+        DecoratedBox(
           position: DecorationPosition.foreground,
           decoration: _DividerDecoration(color: theme.dividerColor, indent: isDesktop ? 70 : 78),
           child: Padding(
@@ -179,6 +190,7 @@ class ChatTile extends ConsumerWidget {
                                   child: Icon(Icons.verified_rounded, size: 16, color: theme.colorScheme.primary),
                                 ),
                               EmojiStatusBadge(status: chat.emojiStatus, size: 17),
+                              if (account.privateUser(chat) case final user? when !account.isSavedMessages(chat)) UzaroBadge(userId: user.id, size: 17),
                               if (muted)
                                 Padding(padding: const EdgeInsets.only(left: 4), child: Icon(Icons.volume_off_rounded, size: 15, color: hint)),
                             ],
@@ -212,6 +224,7 @@ class ChatTile extends ConsumerWidget {
           ),
         ),
         ),
+        ]),
       ),
     );
   }
@@ -272,11 +285,16 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
   final unread = account.unreadFor(chat) > 0 || chat.isMarkedAsUnread;
   final isPrivate = account.privateUser(chat) != null;
   final hidden = ref.read(settingsProvider).hiddenChatIds.contains(chat.id);
+  final ghostMode = ref.read(settingsProvider).ghostMode;
+  final settings = ref.read(settingsProvider.notifier);
+  final host = Navigator.of(context).context;
   final action = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
+    isScrollControlled: true,
     builder: (context) => SafeArea(
-      child: Column(
+      child: SingleChildScrollView(
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
@@ -297,6 +315,11 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
           if (account.folders.isNotEmpty)
             ListTile(leading: const Icon(Icons.create_new_folder_outlined), title: Text(s.t('add_to_folder')), onTap: () => Navigator.pop(context, 'folder')),
           ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: Text(s.t('chat_color')),
+            onTap: () => Navigator.pop(context, 'color'),
+          ),
+          ListTile(
             leading: Icon(hidden ? Icons.visibility_rounded : Icons.visibility_off_rounded),
             title: Text(s.t(hidden ? 'unhide_chat' : 'hide_chat')),
             onTap: () => Navigator.pop(context, 'hide'),
@@ -316,35 +339,44 @@ Future<void> showChatActions(BuildContext context, WidgetRef ref, td.Chat chat, 
           ),
         ],
       ),
+      ),
     ),
   );
-  if (action == null || !context.mounted) return;
+  // The row may have been rebuilt (the list re-sorted) while the sheet was open: carry on with the navigator.
+  final ctx = context.mounted ? context : host;
+  if (action == null || !ctx.mounted) return;
   switch (action) {
     case 'pin':
-      await guard(context, () => account.togglePinned(chat, list));
+      await guard(ctx, () => account.togglePinned(chat, list));
     case 'mute':
-      await guard(context, () => account.setMuted(chat, muted ? 0 : muteForever));
+      await guard(ctx, () => account.setMuted(chat, muted ? 0 : muteForever));
     case 'archive':
-      await guard(context, () => account.setArchived(chat, !archived));
+      await guard(ctx, () => account.setArchived(chat, !archived));
     case 'folder':
-      await addChatToFolder(context, account, chat);
-    case 'read' when unread && ref.read(settingsProvider).ghostMode && !chat.isMarkedAsUnread:
+      await addChatToFolder(ctx, account, chat);
+    case 'color':
+      await pickChatLook(ctx, chat.id);
+    case 'read' when unread && ghostMode:
       // Ghost mode: read on this phone only, so the sender still sees the message as unread.
       account.markReadLocally(chat.id);
+      // The "marked as unread" flag is private to the user, so clearing it tells no one.
+      if (chat.isMarkedAsUnread) {
+        await guard(ctx, () => account.send<td.Ok>(td.ToggleChatIsMarkedAsUnread(chatId: chat.id, isMarkedAsUnread: false)));
+      }
     case 'read':
-      await guard(context, () => unread ? account.markRead(chat) : account.markUnread(chat));
+      await guard(ctx, () => unread ? account.markRead(chat) : account.markUnread(chat));
     case 'hide':
-      ref.read(settingsProvider.notifier).setHidden(chat.id, !hidden);
-      showToast(context, s.t(hidden ? 'chat_unhidden' : 'chat_hidden'));
+      settings.setHidden(chat.id, !hidden);
+      showToast(ctx, s.t(hidden ? 'chat_unhidden' : 'chat_hidden'));
     case 'delete':
       final ok = await confirm(
-        context,
+        ctx,
         title: s.t('delete_chat_confirm_title'),
         message: s.t('delete_chat_confirm', {'name': chatTitle(chat, account, s)}),
         confirmLabel: s.t('delete'),
         destructive: true,
       );
-      if (ok && context.mounted) await guard(context, () => account.deleteChat(chat));
+      if (ok && ctx.mounted) await guard(ctx, () => account.deleteChat(chat));
   }
 }
 

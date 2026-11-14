@@ -71,8 +71,9 @@ class _CallScreenState extends ConsumerState<CallScreen> {
     final incomingRinging = !session.isOutgoing && session.phase == CallPhase.ringing;
     final user = session.account.users[session.call.userId];
     final name = user == null ? '' : '${user.firstName} ${user.lastName}'.trim();
+    // Back hides the screen without ending the call: the "return to call" bar brings it back (call_overlay.dart).
     return PopScope(
-      canPop: session.phase == CallPhase.ended,
+      canPop: true,
       child: Scaffold(
         backgroundColor: const Color(0xFF0E1A24),
         body: Stack(
@@ -89,14 +90,22 @@ class _CallScreenState extends ConsumerState<CallScreen> {
             SafeArea(
               child: Column(
                 children: [
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: session.emojis.isEmpty
-                        ? const SizedBox(height: 48)
-                        : TextButton(
-                            onPressed: () => setState(() => _showKey = !_showKey),
-                            child: Text(session.emojis.join(' '), style: const TextStyle(fontSize: 22)),
-                          ),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: s.t('call_minimize'),
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 32),
+                        onPressed: () => Navigator.maybePop(context),
+                      ),
+                      const Spacer(),
+                      if (session.emojis.isEmpty)
+                        const SizedBox(height: 48)
+                      else
+                        TextButton(
+                          onPressed: () => setState(() => _showKey = !_showKey),
+                          child: Text(session.emojis.join(' '), style: const TextStyle(fontSize: 22)),
+                        ),
+                    ],
                   ),
                   if (_showKey)
                     Padding(
@@ -166,7 +175,7 @@ class _CallScreenState extends ConsumerState<CallScreen> {
                         children: [
                           _RoundButton(icon: session.speaker ? Icons.volume_up_rounded : Icons.volume_down_rounded, active: session.speaker, label: s.t('call_speaker'), onTap: session.toggleSpeaker),
                           _RoundButton(icon: session.videoOn ? Icons.videocam_rounded : Icons.videocam_off_rounded, active: session.videoOn, label: s.t('call_video_short'), onTap: session.toggleVideo),
-                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: () async => session.toggleMute()),
+                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: session.toggleMute),
                           _RoundButton(icon: Icons.call_end_rounded, color: const Color(0xFFE5484D), label: s.t('call_end'), onTap: session.hangUp),
                         ],
                       ),

@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
+import '../../state/banned_channels.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
@@ -32,8 +33,10 @@ class _HubResultsScreenState extends ConsumerState<HubResultsScreen> {
 
   Future<List<int>> _search() async {
     try {
-      final chats = await ref.read(accountProvider).send<td.Chats>(td.SearchPublicChats(query: widget.query, typeFilter: null));
-      return chats.chatIds;
+      final account = ref.read(accountProvider);
+      final chats = await account.send<td.Chats>(td.SearchPublicChats(query: widget.query, typeFilter: null));
+      final banned = ref.read(bannedChannelsProvider);
+      return chats.chatIds.where((id) => !banned.hidesId(account, id)).toList();
     } on TdException catch (error) {
       debugPrint('hub search failed: $error');
       return const [];

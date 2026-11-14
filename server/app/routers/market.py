@@ -10,9 +10,10 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import like_pattern
 from app.deps import CustomerDep, DbDep, rate_limit
 from app.errors import bad_request, conflict, not_found
-from app.market import Category, MediaItem, OptionalMediaUrl, Phone, Region, Telegram, movement_out, product_out, shop_out
+from app.market import Category, MediaItem, OptionalUploadUrl, Phone, Region, Telegram, movement_out, product_out, shop_out
 from app.models import ListingStatus, MediaUpload, Product, Shop, StockKind, StockMovement
 from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
@@ -33,7 +34,7 @@ class ShopIn(BaseModel):
     region: Region
     phone: Phone = ""
     telegram: Telegram = ""
-    logo_url: OptionalMediaUrl = ""
+    logo_url: OptionalUploadUrl = ""
 
 
 class ProductIn(BaseModel):
@@ -130,7 +131,7 @@ async def list_shops(
         .where(Shop.status == ListingStatus.APPROVED, Shop.region == region)
     )
     if q:
-        stmt = stmt.where(Shop.name.ilike(f"%{q.replace('%', '').replace('_', '')}%"))
+        stmt = stmt.where(Shop.name.ilike(like_pattern(q)))
     rows = await db.execute(stmt.order_by(Shop.updated_at.desc()).offset(offset).limit(PAGE_SIZE))
     return [shop_out(shop, product_count=n) for shop, n in rows.all()]
 

@@ -97,7 +97,11 @@ class _AttachSheetState extends State<_AttachSheet> {
       return;
     }
     // The first path is "Recent" (all media); the rest are the device's folders.
-    final albums = await PhotoManager.getAssetPathList(type: RequestType.common);
+    // Newest first: without an explicit order some ROMs (MIUI) list the oldest photos first.
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.common,
+      filterOption: FilterOptionGroup(orders: const [OrderOption(type: OrderOptionType.createDate, asc: false)]),
+    );
     if (!mounted) return;
     setState(() {
       _hasAccess = true;
@@ -273,7 +277,7 @@ class _AttachSheetState extends State<_AttachSheet> {
       child: GridView.builder(
         controller: scroll,
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2),
         itemCount: _assets.length + 1,
         itemBuilder: (context, index) => index == 0 ? _cameraTile() : _assetTile(_assets[index - 1]),
       ),

@@ -5,6 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../l10n/strings.dart';
 import '../state/telegram.dart';
+import 'time_capsule.dart';
 
 DateTime fromUnix(int seconds) => DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
 
@@ -121,11 +122,28 @@ String chatTitle(td.Chat chat, TelegramAccount account, Strings s) {
 
 /// Name the user gave this chat on this device only (kept in TDLib's chat client_data), or null.
 String? localChatName(td.Chat chat) {
+  final name = _clientData(chat)?['name'];
+  return name is String && name.trim().isNotEmpty ? name.trim() : null;
+}
+
+/// Row tint the user picked for this chat on this device (ARGB, in client_data), or null.
+int? localChatColor(td.Chat chat) => switch (_clientData(chat)?['color']) {
+      final int argb => argb,
+      _ => null,
+    };
+
+/// What the user scattered over this chat's row on this device, or null: a custom emoji id (digits; kept as a string
+/// since ids use all 64 bits) or a plain emoji.
+String? localChatPattern(td.Chat chat) => switch (_clientData(chat)?['sticker']) {
+      final String value when value.isNotEmpty => value,
+      _ => null,
+    };
+
+Map<dynamic, dynamic>? _clientData(td.Chat chat) {
   if (chat.clientData.isEmpty) return null;
   try {
     final data = jsonDecode(chat.clientData);
-    final name = data is Map ? data['name'] : null;
-    return name is String && name.trim().isNotEmpty ? name.trim() : null;
+    return data is Map ? data : null;
   } on FormatException {
     return null;
   }
@@ -143,7 +161,8 @@ td.FormattedText? captionOf(td.MessageContent content) => switch (content) {
 
 /// Plain text of a message (text or caption), used for copy, search, translation.
 String messageText(td.Message message) => switch (message.content) {
-      td.MessageText(:final text) => text.text,
+      td.MessageText(:final text) when isSealedCapsule(text) => '',
+      td.MessageText(:final text) => capsuleBody(text).text,
       final content => captionOf(content)?.text ?? '',
     };
 
@@ -152,25 +171,39 @@ String _withCaption(String icon, String label, td.FormattedText? caption) {
   return text.isEmpty ? '$icon $label' : '$icon $text';
 }
 
+/// What this user sees of a message: a bot's ephemeral reply (Bot API 10.4), visible only to the user who
+/// pressed its button, replaces the regular content and keyboard until the bot clears it.
+extension ShownMessage on td.Message {
+  td.Message get shown => switch (ephemeralContent) {
+        final ephemeral? => (toJson()
+              ..['content'] = ephemeral.content.toJson()
+              ..['reply_markup'] = ephemeral.replyMarkup?.toJson())
+            .toTdObject()! as td.Message,
+        null => this,
+      };
+}
+
 /// One-line preview for chat lists, reply bars and notifications.
 String messagePreview(td.Message message, TelegramAccount account, Strings s) =>
-    contentPreview(message.content, s) ?? serviceMessageText(message, account, s) ?? s.t('unsupported_message');
+    contentPreview(message.shown.content, s) ?? serviceMessageText(message, account, s) ?? s.t('unsupported_message');
 
 /// Preview of message content alone (also used for replies whose original message is not loaded).
+// Symbols carry U+FE0F (or are emoji by default): without it MIUI and Windows draw a boxed or monochrome glyph.
 String? contentPreview(td.MessageContent content, Strings s) {
   switch (content) {
     case td.MessageText(:final text):
-      return text.text;
+      if (isSealedCapsule(text)) return '⏳ ${s.t('time_capsule')}';
+      return capsuleUnlockAt(text) == null ? text.text : capsuleBody(text).text;
     case td.MessagePhoto(:final caption):
-      return _withCaption('🖼', s.t('photo'), caption);
+      return _withCaption('🖼️', s.t('photo'), caption);
     case td.MessageVideo(:final caption):
       return _withCaption('🎬', s.t('video'), caption);
     case td.MessageAnimation(:final caption):
-      return _withCaption('🎞', 'GIF', caption);
+      return _withCaption('🎞️', 'GIF', caption);
     case td.MessageVoiceNote(:final voiceNote):
       return '🎤 ${s.t('voice_message')} ${formatDuration(Duration(seconds: voiceNote.duration))}';
     case td.MessageVideoNote():
-      return '⏺ ${s.t('video_message')}';
+      return '📹 ${s.t('video_message')}';
     case td.MessageAudio(:final audio, :final caption):
       final title = [audio.performer, audio.title].where((p) => p.isNotEmpty).join(' — ');
       return _withCaption('🎵', title.isEmpty ? s.t('audio') : title, caption);

@@ -31,7 +31,7 @@ Future<String?> askRejectReason(BuildContext context) {
         ),
       ],
     ),
-  ).whenComplete(controller.dispose);
+  ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
 }
 
 /// Shows a receipt image fetched with the admin key, zoomable.
@@ -67,7 +67,9 @@ class _AdminShopsQueueState extends ConsumerState<AdminShopsQueue> with Automati
         _ShopTab.live => 'approved',
       });
 
-  void _reload() => setState(() => _shops = _load());
+  void _reload() => setState(() {
+        _shops = _load();
+      });
 
   Future<void> _act(Future<void> Function() action, String doneKey) async {
     final done = await apiGuard(context, () async {

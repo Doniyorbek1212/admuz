@@ -10,6 +10,7 @@ import '../chat/message_content.dart';
 import '../profile/statistics_screen.dart';
 import '../settings/privacy_screen.dart';
 import 'stories.dart';
+import 'story_actions.dart' show StoryStats, showStoryViewers;
 import 'story_extras.dart' show openChatActiveStories;
 
 /// A chat's stories outside the 24-hour feed: posted to its page, the archive (owner/admins) and albums.
@@ -298,12 +299,15 @@ class _AlbumScreenState extends ConsumerState<_AlbumScreen> {
 
 /// Three-column grid of story covers; tapping plays from that story on.
 class StoryGrid extends StatelessWidget {
-  const StoryGrid({super.key, required this.chatId, required this.stories, this.pinned = const [], this.onLongPress});
+  const StoryGrid({super.key, required this.chatId, required this.stories, this.pinned = const [], this.onLongPress, this.embedded = false});
 
   final int chatId;
   final List<td.Story> stories;
   final List<int> pinned;
   final void Function(td.Story story)? onLongPress;
+
+  /// Inside another scrolling page (the profile): sized to its content, scrolled by the page.
+  final bool embedded;
 
   void _play(BuildContext context, int index) {
     final rest = stories.sublist(index);
@@ -321,10 +325,17 @@ class StoryGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (stories.isEmpty) return Center(child: Text(context.t('nothing_here')));
+    if (stories.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.all(embedded ? 24 : 0),
+        child: Center(child: Text(context.t('nothing_here'), style: TextStyle(color: Theme.of(context).hintColor))),
+      );
+    }
     return GridView.builder(
+      shrinkWrap: embedded,
+      physics: embedded ? const NeverScrollableScrollPhysics() : null,
       padding: const EdgeInsets.all(2),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2, childAspectRatio: 9 / 16),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2, childAspectRatio: 9 / 16),
       itemCount: stories.length,
       itemBuilder: (context, index) {
         final story = stories[index];
@@ -333,14 +344,32 @@ class StoryGrid extends StatelessWidget {
           td.StoryContentVideo(:final video) => video.thumbnail?.file,
           _ => null,
         };
+        final interaction = story.canGetInteractions ? story.interactionInfo : null;
+        void viewers() => showStoryViewers(context, ProviderScope.containerOf(context, listen: false).read(accountProvider), story);
         return GestureDetector(
           onTap: () => _play(context, index),
-          onLongPress: onLongPress == null ? null : () => onLongPress!(story),
+          onLongPress: onLongPress != null ? () => onLongPress!(story) : (interaction != null ? viewers : null),
           child: Stack(fit: StackFit.expand, children: [
             file == null ? const ColoredBox(color: Colors.black26) : TdImage(file: file, fit: BoxFit.cover),
             if (pinned.contains(story.id)) const Positioned(right: 4, top: 4, child: Icon(Icons.push_pin_rounded, color: Colors.white, size: 18)),
             if (story.content is td.StoryContentVideo)
               const Positioned(left: 4, bottom: 4, child: Icon(Icons.play_circle_outline_rounded, color: Colors.white, size: 20)),
+            // Only the poster (or channel admins) get these; tapping lists who viewed and who reacted.
+            if (interaction != null)
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: GestureDetector(
+                  onTap: viewers,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(10)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      child: StoryStats(interaction: interaction, color: Colors.white, size: 14),
+                    ),
+                  ),
+                ),
+              ),
           ]),
         );
       },

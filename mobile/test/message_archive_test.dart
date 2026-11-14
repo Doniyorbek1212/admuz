@@ -9,14 +9,14 @@ Map<String, dynamic> _text(String text) => {
       'text': {'@type': 'formattedText', 'text': text, 'entities': <Object>[]},
     };
 
-td.Message _message(int id, String text, {bool outgoing = false, int chatId = 7}) => td.Message.fromJson({
+td.Message _message(int id, String text, {bool outgoing = false, int chatId = 7, int editDate = 0}) => td.Message.fromJson({
       '@type': 'message',
       'id': id,
       'sender_id': {'@type': 'messageSenderUser', 'user_id': outgoing ? 1 : 2},
       'chat_id': chatId,
       'is_outgoing': outgoing,
       'date': 1000,
-      'edit_date': 0,
+      'edit_date': editDate,
       'content': _text(text),
     })!;
 
@@ -63,6 +63,32 @@ void main() {
     archive.markChatCleared(7);
     archive.onDeleted(7, [2]);
     expect(archive.deletedIn(7), isEmpty);
+  });
+
+  test('notices an edit made while the app was closed, once', () async {
+    archive.remember(_message(1, 'before'));
+    await archive.save();
+    final restarted = MessageArchive('${dir.path}/archive.json');
+    await restarted.load();
+    restarted.rememberAll([_message(1, 'after', editDate: 3000)]);
+    restarted.rememberAll([_message(1, 'after', editDate: 3000)]);
+    expect(restarted.versionsOf(7, 1).map((v) => (v.content as td.MessageText).text.text), ['before']);
+    expect(restarted.versionsOf(7, 1).single.date, 1000);
+  });
+
+  test('an edit update for a message not loaded this run uses the text seen earlier', () async {
+    archive.remember(_message(1, 'old'));
+    await archive.save();
+    final restarted = MessageArchive('${dir.path}/archive.json');
+    await restarted.load();
+    restarted.onContentChanged(7, 1, _content('new'));
+    expect(restarted.versionsOf(7, 1).map((v) => (v.content as td.MessageText).text.text), ['old']);
+  });
+
+  test('a never-edited message reloaded with the same text adds no version', () {
+    archive.remember(_message(1, 'same'));
+    archive.rememberAll([_message(1, 'same')]);
+    expect(archive.versionsOf(7, 1), isEmpty);
   });
 
   test('survives a save and reload', () async {

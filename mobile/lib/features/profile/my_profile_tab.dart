@@ -3,25 +3,56 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
+import '../../core/theme.dart' show brandGold, brandGoldGradient, brandGradient;
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
+import '../../widgets/custom_emoji.dart' show EmojiStatusBadge;
+import '../../widgets/emoji_pattern.dart';
 import '../../widgets/settings_group.dart';
+import '../business/business_widgets.dart' show apiGuard, formatUzs;
+import '../chat/message_content.dart' show FormattedTextView;
 import '../chat/marked_messages_screen.dart';
-import '../chat/media_viewers.dart';
+import '../gifts/gift_showcase.dart' show giftShowcaseProvider;
+import '../gifts/gift_widgets.dart';
+import '../gifts/gifts_screen.dart';
+import '../gifts/my_gifts_screen.dart';
+import '../gifts/profile_background.dart';
+import '../gifts/uzaro_badge.dart' show UzaroBadge;
+import '../gifts/wallet_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/downloads_screen.dart';
 import '../settings/settings_screen.dart';
 import '../stories/story_archive.dart';
+import 'chat_info_screen.dart';
+import 'uzaro_username.dart';
 
 /// Bio and birthday of the signed-in user; refreshed after editing the profile.
 final _myFullInfoProvider = FutureProvider.autoDispose<td.UserFullInfo?>((ref) async {
   final me = ref.watch(meProvider);
   if (me == null) return null;
   return ref.watch(accountProvider).send<td.UserFullInfo>(td.GetUserFullInfo(userId: me.id));
+});
+
+/// How many of the user's stories the profile shows inline; the rest are one tap away.
+const _storiesShown = 30;
+
+/// Every story the user has posted, newest first (the owner's archive holds the active ones too).
+final _myStoriesProvider = FutureProvider.autoDispose<List<td.Story>>((ref) async {
+  final account = ref.watch(accountProvider);
+  final stories = await account.send<td.Stories>(td.GetChatArchivedStories(chatId: account.myId, fromStoryId: 0, limit: _storiesShown));
+  return stories.stories;
+});
+
+/// Whether profile visitors see none of the user's UZARO gifts; null when gifts are off or the account is not linked.
+final _giftsHiddenProvider = FutureProvider.autoDispose<bool?>((ref) async {
+  final api = ref.watch(sadoApiProvider);
+  if (!api.configured || await api.telegramId() != ref.watch(accountProvider).myId) return null;
+  return (await api.receivedGifts()).$2;
 });
 
 /// "Profile" tab of the bottom bar: the signed-in user's card, quick actions and personal spaces.
@@ -34,49 +65,110 @@ class MyProfileTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final me = ref.watch(meProvider);
+    // No title bar: the header itself runs up under the status bar.
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: BrandTabBar(title: context.t('tab_profile')),
       body: me == null
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              // Clears the shell's floating bottom bar (reported as bottom padding).
-              padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
-              children: [
-                _header(context, me),
-                _actions(context, ref),
-                _infoCard(context, ref, me),
-                _spaces(context, ref),
-              ],
+          : _StatusBarShield(
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  ref.invalidate(walletProvider);
+                  ref.invalidate(_myStoriesProvider);
+                  ref.invalidate(_myFullInfoProvider);
+                  await ref.read(_myStoriesProvider.future).catchError((Object _) => const <td.Story>[]);
+                },
+                child: ListView(
+                  // Clears the shell's floating bottom bar (reported as bottom padding).
+                  padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 12),
+                  children: [
+                    _header(context, ref, me),
+                    const SizedBox(height: 12),
+                    _actions(context, ref),
+                    if (ref.watch(sadoApiProvider).configured) const _WalletCard(),
+                    _infoCard(context, ref, me),
+                    _stories(context, ref),
+                  ],
+                ),
+              ),
             ),
     );
   }
 
-  Widget _header(BuildContext context, td.User me) {
+  /// Full-bleed header in the colors and pattern UZARO users see on this profile (the brand colors until one is picked).
+  Widget _header(BuildContext context, WidgetRef ref, td.User me) {
     final theme = Theme.of(context);
-    final online = isOnline(me);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: me.profilePhoto == null ? null : () => openPhotoViewer(context, me.profilePhoto!.big, me.profilePhoto!.minithumbnail),
-            // The profile photo is the one avatar that keeps the brand's gold ring.
-            child: GoldRing(width: 2.2, child: UserAvatar(userId: me.id, size: 104, showOnline: false)),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            '${me.firstName} ${me.lastName}'.trim(),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.2),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            formatUserStatus(me, context.s),
-            style: TextStyle(color: online ? theme.colorScheme.primary : theme.hintColor, fontSize: 14.5),
-          ),
-        ],
+    final style = ref.watch(userGiftsProvider(me.id)).value;
+    final colors = style?.background;
+    final pattern = style?.pattern;
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
+        gradient: colors == null
+            ? brandGradient(theme.colorScheme.primary, vertical: true)
+            : LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(colors.first), Color(colors.length > 1 ? colors[1] : colors.first)],
+              ),
+        border: Border(bottom: BorderSide(color: brandGold.withValues(alpha: 0.8), width: 1.5)),
       ),
+      // passthrough: the column takes the full width, so the avatar and name sit in the middle of the screen.
+      child: Stack(fit: StackFit.passthrough, children: [
+        if (pattern != null) Positioned.fill(child: EmojiPattern(pattern: pattern, spots: headerPatternSpots)),
+        Positioned(top: MediaQuery.paddingOf(context).top + 2, right: 4, child: _menu(context, ref, me)),
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, MediaQuery.paddingOf(context).top + 18, 16, 14),
+          child: Column(children: [
+            GiftOrbit(
+              telegramId: me.id,
+              avatarSize: 104,
+              playDearest: true,
+              child: GestureDetector(
+                // All photos ever set (swipe, delete), not just the current one.
+                onTap: me.profilePhoto == null
+                    ? null
+                    : () => Navigator.of(context, rootNavigator: true).push(MaterialPageRoute<void>(builder: (_) => ProfilePhotosScreen(userId: me.id, chatId: me.id))),
+                // The profile photo is the one avatar that keeps the brand's gold ring.
+                child: GoldRing(width: 2.2, child: UserAvatar(userId: me.id, size: 104, showOnline: false)),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    '${me.firstName} ${me.lastName}'.trim(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: Colors.white),
+                  ),
+                ),
+                // Same marks others see after the name: Premium emoji status, then the paid UZARO badge.
+                EmojiStatusBadge(status: me.emojiStatus, size: 22),
+                UzaroBadge(userId: me.id, size: 22),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(formatUserStatus(me, context.s), style: const TextStyle(color: Colors.white70, fontSize: 14.5)),
+            if (ref.watch(sadoApiProvider).configured)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.tonalIcon(
+                  onPressed: () => showProfileBackgroundPicker(context, ref),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.18),
+                    foregroundColor: Colors.white,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.palette_rounded, size: 18),
+                  label: Text(context.t('gifts_background')),
+                ),
+              ),
+          ]),
+        ),
+      ]),
     );
   }
 
@@ -127,10 +219,12 @@ class MyProfileTab extends ConsumerWidget {
     final birthdate = info?.birthdate;
     final username = me.usernames?.activeUsernames.firstOrNull;
     final hint = Theme.of(context).hintColor;
-    Widget row(IconData icon, String value, String label) => ListTile(
+    const valueStyle = TextStyle(fontSize: 16, height: 1.25);
+    Widget row(IconData icon, String value, String label, {bool links = false}) => ListTile(
           visualDensity: const VisualDensity(vertical: -2),
           leading: Icon(icon, color: Theme.of(context).colorScheme.primary, size: 22),
-          title: Text(value, style: const TextStyle(fontSize: 16, height: 1.25)),
+          // The bio's links and @mentions open on tap, as in Telegram.
+          title: links ? FormattedTextView(text: linkified(value), style: DefaultTextStyle.of(context).style.merge(valueStyle)) : Text(value, style: valueStyle),
           subtitle: Text(label, style: TextStyle(fontSize: 13, color: hint)),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: value));
@@ -139,44 +233,232 @@ class MyProfileTab extends ConsumerWidget {
         );
     return SettingsGroup(children: [
       row(Icons.phone_outlined, '+${me.phoneNumber}', s.t('mobile')),
-      if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio')),
+      if (bio.isNotEmpty) row(Icons.info_outline_rounded, bio, s.t('bio'), links: true),
       if (username != null) row(Icons.alternate_email_rounded, '@$username', s.t('username')),
+      _uzaroNameRow(context, ref, hint),
       if (birthdate != null) row(Icons.cake_outlined, _formatBirthdate(birthdate, s), s.t('birthday')),
     ]);
   }
 
-  Widget _spaces(BuildContext context, WidgetRef ref) {
+  /// The UZARO @name, next to the Telegram username; tap to choose or change it.
+  Widget _uzaroNameRow(BuildContext context, WidgetRef ref, Color hint) {
     final s = context.s;
+    final name = ref.watch(myUzaroNameProvider).value;
+    return ListTile(
+      visualDensity: const VisualDensity(vertical: -2),
+      leading: Icon(Icons.verified_rounded, color: Theme.of(context).colorScheme.primary, size: 22),
+      title: Text(name == null ? s.t('uzaro_username_none') : '@$name', style: const TextStyle(fontSize: 16, height: 1.25)),
+      subtitle: Text(s.t('uzaro_username'), style: TextStyle(fontSize: 13, color: hint)),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () => _push(context, UzaroUsernameScreen(current: name)),
+      onLongPress: name == null
+          ? null
+          : () {
+              Clipboard.setData(ClipboardData(text: '@$name'));
+              showToast(context, s.t('copied'));
+            },
+    );
+  }
+
+  /// The user's stories right on the profile; the row above opens archive, pinning and albums.
+  Widget _stories(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final myId = ref.read(accountProvider).myId;
+    final stories = ref.watch(_myStoriesProvider);
     return SettingsGroup(children: [
       ListTile(
-        leading: const TileIcon(Icons.bookmark_rounded, Color(0xFF2E9BF0)),
-        title: Text(s.t('saved_messages')),
+        leading: const TileIcon(Icons.motion_photos_on_rounded, Color(0xFFE5486A)),
+        title: Text(s.t('my_stories'), style: const TextStyle(fontWeight: FontWeight.w600)),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(s.t('see_all'), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+          const Icon(Icons.chevron_right_rounded),
+        ]),
         onTap: () async {
-          final chat = await guard(context, ref.read(accountProvider).savedMessages);
-          if (chat != null && context.mounted) openChat(context, chat.id);
+          await _push(context, ChatStoriesScreen(chatId: myId, canManage: true));
+          ref.invalidate(_myStoriesProvider);
         },
       ),
-      ListTile(
-        leading: const TileIcon(Icons.motion_photos_on_rounded, Color(0xFFE5486A)),
-        title: Text(s.t('my_stories')),
-        onTap: () => _push(context, ChatStoriesScreen(chatId: ref.read(accountProvider).myId, canManage: true)),
-      ),
-      ListTile(
-        leading: const TileIcon(Icons.star_rounded, Color(0xFFF5A623)),
-        title: Text(s.t('marked_messages')),
-        onTap: () => _push(context, const MarkedMessagesScreen()),
-      ),
-      ListTile(
-        leading: const TileIcon(Icons.archive_rounded, Color(0xFF8E8E93)),
-        title: Text(s.t('archive')),
-        onTap: () => _push(context, const ArchiveScreen()),
-      ),
-      ListTile(
-        leading: const TileIcon(Icons.download_rounded, Color(0xFF2EAD5B)),
-        title: Text(s.t('downloads')),
-        onTap: () => _push(context, const DownloadsScreen()),
-      ),
+      switch (stories) {
+        AsyncData(:final value) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: StoryGrid(chatId: myId, stories: value, embedded: true),
+          ),
+        AsyncError() => Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(child: TextButton(onPressed: () => ref.invalidate(_myStoriesProvider), child: Text(s.t('retry')))),
+          ),
+        _ => const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+      },
     ]);
+  }
+
+  /// ⋮ in the header's corner: the personal spaces and the UZARO gift switches.
+  Widget _menu(BuildContext context, WidgetRef ref, td.User me) {
+    final s = context.s;
+    final giftsOn = ref.watch(sadoApiProvider).configured;
+    final giftsHidden = ref.watch(_giftsHiddenProvider).value;
+    PopupMenuItem<VoidCallback> item(IconData icon, Color color, String label, VoidCallback action) => PopupMenuItem(
+          value: action,
+          child: Row(children: [TileIcon(icon, color), const SizedBox(width: 14), Expanded(child: Text(label))]),
+        );
+    return PopupMenuButton<VoidCallback>(
+      tooltip: s.t('more'),
+      icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+      onSelected: (action) => action(),
+      itemBuilder: (_) => [
+        item(Icons.bookmark_rounded, const Color(0xFF2E9BF0), s.t('saved_messages'), () async {
+          final chat = await guard(context, ref.read(accountProvider).savedMessages);
+          if (chat != null && context.mounted) openChat(context, chat.id);
+        }),
+        item(Icons.star_rounded, const Color(0xFFF5A623), s.t('marked_messages'), () => _push(context, const MarkedMessagesScreen())),
+        item(Icons.archive_rounded, const Color(0xFF8E8E93), s.t('archive'), () => _push(context, const ArchiveScreen())),
+        item(Icons.download_rounded, const Color(0xFF2EAD5B), s.t('downloads'), () => _push(context, const DownloadsScreen())),
+        if (giftsOn && giftsHidden != null)
+          item(
+            giftsHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+            const Color(0xFF7E57C2),
+            s.t(giftsHidden ? 'gifts_show_all' : 'gifts_hide_all'),
+            () => _setGiftsHidden(context, ref, me.id, !giftsHidden),
+          ),
+        if (giftsOn)
+          item(Icons.redeem_rounded, const Color(0xFFD4A94E), s.t('gifts_mine'), () async {
+            await _push(context, const MyGiftsScreen());
+            ref.invalidate(_giftsHiddenProvider);
+          }),
+        if (giftsOn && giftsHidden != null)
+          item(Icons.auto_awesome_rounded, const Color(0xFFE5486A), s.t('gifts_animation'), () => _playAllShows(context, ref)),
+        if (giftsOn)
+          item(Icons.card_giftcard_rounded, brandGold, s.t('gifts_title'), () async {
+            await _push(context, const GiftsScreen());
+            ref.invalidate(_giftsHiddenProvider);
+          }),
+      ],
+    );
+  }
+
+  /// Every premium gift the user owns (hidden ones too), one show per kind, dearest first.
+  Future<void> _playAllShows(BuildContext context, WidgetRef ref) async {
+    final received = await apiGuard(context, () async => (await ref.read(sadoApiProvider).receivedGifts()).$1);
+    if (received == null || !context.mounted) return;
+    final shows = premiumShowOrder(received);
+    if (shows.isEmpty) return showToast(context, context.t('gifts_animation_none'));
+    await playGiftShows(context, shows);
+  }
+
+  Future<void> _setGiftsHidden(BuildContext context, WidgetRef ref, int myId, bool hide) async {
+    final done = await apiGuard(context, () async {
+      await ref.read(sadoApiProvider).setAllGiftsHidden(hide);
+      return true;
+    });
+    if (done != true) return;
+    ref
+      ..invalidate(_giftsHiddenProvider)
+      ..invalidate(userGiftsProvider(myId))
+      ..invalidate(giftShowcaseProvider(myId));
+    if (context.mounted) showToast(context, context.t(hide ? 'gifts_hidden_done' : 'gifts_shown_done'));
+  }
+}
+
+/// Gold-framed wallet entry under the profile actions: the UZARO balance at a glance, tap for top-up and purchases.
+class _WalletCard extends ConsumerWidget {
+  const _WalletCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final wallet = ref.watch(walletProvider);
+    // Offline: the card still opens the wallet, which shows the error and a retry.
+    final balance = switch (wallet) {
+      AsyncValue(:final value?) => formatUzs(context, value.balanceUzs),
+      AsyncError() => '—',
+      _ => '…',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+      child: GoldFrame(
+        child: Material(
+          color: groupCardColor(context),
+          child: InkWell(
+            onTap: () async {
+              await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const WalletScreen()));
+              ref.invalidate(walletProvider);
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+              child: Row(children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), gradient: brandGoldGradient),
+                  child: const Icon(Icons.account_balance_wallet_rounded, color: Colors.white, size: 26),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(s.t('wallet'), style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(s.t('wallet_card_sub'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor, fontSize: 13)),
+                  ]),
+                ),
+                const SizedBox(width: 8),
+                Text(balance, style: TextStyle(color: theme.colorScheme.primary, fontSize: 16, fontWeight: FontWeight.w800)),
+                Icon(Icons.chevron_right_rounded, color: theme.hintColor),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps the status bar readable without an AppBar: white icons over the header; once the header has scrolled
+/// away, a strip in the page color slides in behind the icons, which switch to the theme's contrast.
+class _StatusBarShield extends StatefulWidget {
+  const _StatusBarShield({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_StatusBarShield> createState() => _StatusBarShieldState();
+}
+
+class _StatusBarShieldState extends State<_StatusBarShield> {
+  /// Scroll offset at which the header's bottom edge has left the status bar (the header is about this tall).
+  static const _headerScrolledAway = 220.0;
+  bool _covered = false;
+
+  bool _onScroll(ScrollNotification n) {
+    final covered = n.depth == 0 && n.metrics.pixels > _headerScrolledAway;
+    if (n.depth == 0 && covered != _covered) setState(() => _covered = covered);
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final light = Theme.of(context).brightness == Brightness.light;
+    // Transparent: Android otherwise keeps its dark scrim over the header's top strip.
+    final style = (_covered && light ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light).copyWith(statusBarColor: Colors.transparent);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: style,
+      child: Stack(children: [
+        NotificationListener<ScrollNotification>(onNotification: _onScroll, child: widget.child),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: MediaQuery.paddingOf(context).top,
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _covered ? 1 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: ColoredBox(color: groupedBackground(context)),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 }
 

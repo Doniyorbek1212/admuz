@@ -186,7 +186,7 @@ Future<String?> _askReportDetails(BuildContext context, {required bool optional}
         ),
       ],
     ),
-  ).whenComplete(controller.dispose);
+  ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
 }
 
 /// Who has seen an outgoing message: viewer list in groups, read time in private chats.

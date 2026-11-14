@@ -28,7 +28,7 @@ OVERPASS_URLS = (
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 )
-USER_AGENT = "UZARO-places-import/1.0 (https://sado.voxo.uz)"
+USER_AGENT = "UZARO-places-import/1.0 (https://uzaromessenger.uz)"
 
 # OSM tag value -> (category, Uzbek label shown under the name).
 _TAGS: dict[tuple[str, str], tuple[PlaceCategory, str]] = {

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
@@ -51,8 +52,6 @@ class _MessageContextMenu extends StatelessWidget {
     final menuHeight = min(items.length * _rowHeight + 8, bottom - top - reactionsHeight);
     // Start the card at the touch, then pull it back on screen; the reactions sit right above it.
     final cardTop = (anchor.dy - 24).clamp(top + reactionsHeight, bottom - menuHeight);
-    final scheme = Theme.of(context).colorScheme;
-    final surface = Color.alphaBlend(scheme.primary.withValues(alpha: 0.06), scheme.surfaceContainerHigh);
     final horizontal = alignEnd ? (right: _side, left: null) : (right: null, left: _side);
     return Stack(
       children: [
@@ -65,11 +64,8 @@ class _MessageContextMenu extends StatelessWidget {
             height: _reactionHeight,
             child: _Popped(
               alignEnd: alignEnd,
-              child: Material(
-                color: surface,
-                elevation: 6,
-                borderRadius: BorderRadius.circular(_reactionHeight / 2),
-                clipBehavior: Clip.antiAlias,
+              child: GlassSurface(
+                radius: _reactionHeight / 2,
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -96,11 +92,8 @@ class _MessageContextMenu extends StatelessWidget {
           height: menuHeight,
           child: _Popped(
             alignEnd: alignEnd,
-            child: Material(
-              color: surface,
-              elevation: 8,
-              borderRadius: BorderRadius.circular(16),
-              clipBehavior: Clip.antiAlias,
+            child: GlassSurface(
+              radius: 16,
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 children: [for (final entry in items) _row(context, entry)],
@@ -127,6 +120,39 @@ class _MessageContextMenu extends StatelessWidget {
             const SizedBox(width: 18),
             Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, color: color))),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Frosted glass card: blurs what is behind it and lets it show through a light tint.
+class GlassSurface extends StatelessWidget {
+  const GlassSurface({super.key, required this.radius, required this.child});
+
+  final double radius;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tint = Color.alphaBlend(scheme.primary.withValues(alpha: 0.05), isDark ? const Color(0xFF1C232D) : Colors.white);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(radius),
+      side: BorderSide(color: Colors.white.withValues(alpha: isDark ? 0.10 : 0.55), width: 0.8),
+    );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        // Transparency type keeps InkWell splashes working on the see-through card.
+        child: Material(
+          type: MaterialType.transparency,
+          child: DecoratedBox(
+            decoration: ShapeDecoration(color: tint.withValues(alpha: isDark ? 0.72 : 0.66), shape: shape),
+            child: child,
+          ),
         ),
       ),
     );

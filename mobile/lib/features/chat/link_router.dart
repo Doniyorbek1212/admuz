@@ -7,6 +7,7 @@ import '../../core/link_safety.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/banned_channels.dart';
 import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
@@ -109,8 +110,12 @@ Future<void> openLink(BuildContext context, String url, {String? shownText}) asy
 
 /// Opens a public chat or user by @username.
 Future<void> openUsernameChat(BuildContext context, TelegramAccount account, String username, {String draft = ''}) async {
+  final banned = ProviderScope.containerOf(context, listen: false).read(bannedChannelsProvider);
+  if (banned.matches([username], '', person: true)) return showToast(context, context.t('channel_banned'));
   final chat = await guard(context, () => account.send<td.Chat>(td.SearchPublicChat(username: username)));
   if (chat == null || !context.mounted) return;
+  // Also catches a banned channel reached through another of its usernames, or known only by title.
+  if (banned.hides(account, chat)) return showToast(context, context.t('channel_banned'));
   if (draft.isNotEmpty) await _setDraft(account, chat.id, draft);
   if (context.mounted) openChat(context, chat.id);
 }
@@ -125,7 +130,9 @@ Future<bool> _openInternal(BuildContext context, TelegramAccount account, td.Int
     case td.InternalLinkTypeMessage(:final url):
       final info = await guard(context, () => account.send<td.MessageLinkInfo>(td.GetMessageLinkInfo(url: url)));
       if (info == null || !context.mounted) return true;
-      if (info.chatId == 0) {
+      if (ProviderScope.containerOf(context, listen: false).read(bannedChannelsProvider).hidesId(account, info.chatId)) {
+        showToast(context, context.t('channel_banned'));
+      } else if (info.chatId == 0) {
         showToast(context, context.t('link_not_found'));
       } else {
         openChat(context, info.chatId, messageId: info.message?.id);
@@ -240,8 +247,11 @@ Future<void> _setDraft(TelegramAccount account, int chatId, String text) async {
 
 /// Shows the chat behind an invite link and joins it (or sends a join request) on confirmation.
 Future<void> _joinByInvite(BuildContext context, TelegramAccount account, String inviteLink) async {
+  final banned = ProviderScope.containerOf(context, listen: false).read(bannedChannelsProvider);
+  if (banned.hidesInvite(inviteLink)) return showToast(context, context.t('channel_banned'));
   final info = await guard(context, () => account.send<td.ChatInviteLinkInfo>(td.CheckChatInviteLink(inviteLink: inviteLink)));
   if (info == null || !context.mounted) return;
+  if (banned.matches(const [], info.title, person: false)) return showToast(context, context.t('channel_banned'));
   // Already a member, or a preview is available: just open it.
   if (info.chatId != 0 && account.chats[info.chatId]?.positions.isNotEmpty == true) {
     openChat(context, info.chatId);

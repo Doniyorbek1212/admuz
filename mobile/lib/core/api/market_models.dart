@@ -353,11 +353,18 @@ class Ad {
     this.priceUzs = 0,
     this.status = AdStatus.approved,
     this.hasReceipt = false,
+    this.paidFromWallet = false,
     this.rejectReason,
     this.endsAt,
+    this.topics = const [],
+    this.views = 0,
+    this.clicks = 0,
   });
 
   factory Ad.fromJson(Map<String, dynamic> json) => Ad(
+        topics: [for (final t in json['topics'] as List? ?? const []) t as String],
+        views: json['views'] as int? ?? 0,
+        clicks: json['clicks'] as int? ?? 0,
         id: json['id'] as String,
         title: json['title'] as String,
         text: json['text'] as String? ?? '',
@@ -369,6 +376,7 @@ class Ad {
         priceUzs: json['price_uzs'] as int? ?? 0,
         status: json.containsKey('status') ? _adStatus(json['status']) : AdStatus.approved,
         hasReceipt: json['has_receipt'] as bool? ?? false,
+        paidFromWallet: json['paid_from_wallet'] as bool? ?? false,
         rejectReason: json['reject_reason'] as String?,
         endsAt: _date(json['ends_at']),
       );
@@ -384,12 +392,37 @@ class Ad {
   final int priceUzs;
   final AdStatus status;
   final bool hasReceipt;
+
+  /// Paid from the UZARO balance (cancelling it before approval gives the money back).
+  final bool paidFromWallet;
   final String? rejectReason;
   final DateTime? endsAt;
+
+  /// Interest topics the ad is matched against (see core/interests.dart).
+  final List<String> topics;
+
+  /// Distinct viewers who saw / tapped the banner (own ads only).
+  final int views;
+  final int clicks;
+
+  /// Name for lists: the headline is optional, so the short text stands in, then [fallback].
+  String label(String fallback) => title.isNotEmpty ? title : (text.isNotEmpty ? text : fallback);
 }
 
 class AdDraft {
-  const AdDraft({required this.title, required this.text, required this.isVideo, required this.mediaUrl, required this.linkUrl, required this.regions, required this.days});
+  const AdDraft({
+    required this.title,
+    required this.text,
+    required this.isVideo,
+    required this.mediaUrl,
+    required this.linkUrl,
+    required this.regions,
+    required this.days,
+    this.topics = const [],
+  });
+
+  /// Empty: the server guesses them from the title and text.
+  final List<String> topics;
 
   final String title;
   final String text;
@@ -407,11 +440,19 @@ class AdDraft {
         'link_url': linkUrl,
         'regions': regions,
         'days': days,
+        'topics': topics,
       };
 }
 
 class AdsConfig {
-  const AdsConfig({required this.pricePerRegionDay, required this.maxDays, required this.cardNumber, required this.cardHolder, required this.extraShopPrice});
+  const AdsConfig({
+    required this.pricePerRegionDay,
+    required this.maxDays,
+    required this.cardNumber,
+    required this.cardHolder,
+    required this.extraShopPrice,
+    this.topicsEnabled = true,
+  });
 
   factory AdsConfig.fromJson(Map<String, dynamic> json) => AdsConfig(
         pricePerRegionDay: json['price_per_region_day_uzs'] as int,
@@ -419,6 +460,7 @@ class AdsConfig {
         cardNumber: json['card_number'] as String? ?? '',
         cardHolder: json['card_holder'] as String? ?? '',
         extraShopPrice: json['extra_shop_price_uzs'] as int? ?? 0,
+        topicsEnabled: json['topics_enabled'] as bool? ?? true,
       );
 
   final int pricePerRegionDay;
@@ -426,6 +468,9 @@ class AdsConfig {
   final String cardNumber;
   final String cardHolder;
   final int extraShopPrice;
+
+  /// The admin panel's switch for the "who to show it to" topic picker in the new-ad form.
+  final bool topicsEnabled;
 }
 
 /// A row of the admin's customer list.

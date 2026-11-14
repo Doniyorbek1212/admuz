@@ -8,6 +8,15 @@ const AD_STATUS = {
   pending_review: ['Tekshiruvda', 'warn'], awaiting_payment: ["To'lov kutilmoqda", 'info'],
   approved: ['Tasdiqlangan', 'ok'], rejected: ['Rad etilgan', 'bad'],
 };
+// Interest topics of hub ads (server: app.services.interests.TOPICS).
+const TOPIC_LABEL = {
+  taxi: 'Taksi', pharmacy: 'Dorixona', hotel: 'Mehmonxona', doctor: 'Shifokor', car_service: 'Avtoservis', bank: 'Bank',
+  travel: 'Sayohat', food: 'Taom', shops: "Do'konlar", movies: 'Kino', music: 'Musiqa', games: "O'yinlar", gifts: "Sovg'alar",
+  tech: 'Texnika', fashion: 'Kiyim', beauty: "Go'zallik", education: "Ta'lim", real_estate: "Ko'chmas mulk", sport: 'Sport', kids: 'Bolalar',
+};
+const MAX_AD_TOPICS = 3;
+const topicPills = (topics) => (topics?.length ? topics.map((t) => `<span class="pill info">${esc(TOPIC_LABEL[t] || t)}</span>`).join(' ') : '<span class="muted">Mavzu yo\'q</span>');
+const ctr = (views, clicks) => (views ? `${((100 * clicks) / views).toFixed(1)}%` : '—');
 const SHOP_STATUS = {
   pending: ['Tekshiruvda', 'warn'], awaiting_payment: ["To'lov kutilmoqda", 'info'], approved: ['Faol', 'ok'],
   rejected: ['Rad etilgan', 'bad'], closed: ['Yopilgan', 'bad'], close_requested: ['Yopish so\'ralgan', 'gold'],
@@ -129,6 +138,11 @@ const PAGES = {
   dashboard: { title: 'Bosh sahifa', role: 'viewer', render: renderDashboard },
   ads: { title: 'Reklamalar', role: 'viewer', render: renderAds, count: 'ads_pending' },
   shops: { title: 'Biznes profillar', role: 'viewer', render: renderShops, count: 'shops_pending' },
+  movies: { title: 'Kinolar', role: 'viewer', render: (el, arg) => renderMovies(el, arg) }, // admin_movies.js
+  music: { title: 'Musiqa', role: 'viewer', render: (el, arg) => renderMusic(el, arg) }, // admin_music.js
+  gifts: { title: "Sovg'alar", role: 'viewer', render: (el, arg) => renderGifts(el, arg) }, // admin_gifts.js
+  banned: { title: 'Taqiqlangan kanallar', role: 'viewer', render: (el) => renderBanned(el) }, // admin_banned.js
+  quick: { title: 'Tezkor havolalar', role: 'viewer', render: (el) => renderQuickLinks(el) }, // admin_quick_links.js
   users: { title: 'Foydalanuvchilar', role: 'support', render: renderUsers },
   settings: { title: 'Sozlamalar', role: 'viewer', render: renderSettings },
   admins: { title: 'Adminlar', role: 'owner', render: renderAdmins },
@@ -171,8 +185,20 @@ function barChart(points, key, gold, format) {
     <text x="0" y="12">${esc(format(max))}</text>${bars}${labels}</svg>`;
 }
 
+const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+
+/** Server disk card: free space, with a bar that turns amber at 85% and red at 95% full. */
+function diskKpi(disk) {
+  if (!disk) return '';
+  const pct = Math.round((disk.used_bytes / disk.total_bytes) * 100);
+  const level = pct >= 95 ? 'bad' : pct >= 85 ? 'warn' : 'ok';
+  return `<div class="kpi disk ${level}"><span class="label">Serverda bo'sh joy</span><span class="value">${gb(disk.free_bytes)}</span>
+    <progress class="disk-bar" max="100" value="${pct}" aria-label="Disk band: ${pct}%"></progress>
+    <span class="sub">${pct}% band · ${gb(disk.used_bytes)} / ${gb(disk.total_bytes)}</span></div>`;
+}
+
 async function renderDashboard(el) {
-  const s = await api('/v1/admin/stats');
+  const [s, activity, interests] = await Promise.all([api('/v1/admin/stats'), api('/v1/admin/activity'), api('/v1/admin/interests')]);
   const sum = state.summary;
   const shopsActive = s.shops.approved || 0;
   el.innerHTML = `
@@ -181,6 +207,7 @@ async function renderDashboard(el) {
       <div class="kpi"><span class="label">Faol biznes profillar</span><span class="value">${shopsActive}</span><span class="sub">${s.products_active} ta mahsulot sotuvda</span></div>
       <div class="kpi"><span class="label">Hozir ko'rsatilayotgan reklama</span><span class="value">${s.ads_live}</span><span class="sub">${s.ads.approved || 0} ta tasdiqlangan jami</span></div>
       <div class="kpi money"><span class="label">Tushum (tasdiqlangan)</span><span class="value">${esc(som(s.revenue_uzs.total))}</span><span class="sub">Reklama ${esc(som(s.revenue_uzs.ads))} · Do'kon ${esc(som(s.revenue_uzs.shops))}</span></div>
+      ${diskKpi(s.disk)}
     </div>
     <div class="queues">
       ${queue('#ads', 'Reklama tekshiruvi', sum.ads_pending)}
@@ -191,6 +218,35 @@ async function renderDashboard(el) {
     <div class="charts">
       <div class="card chart"><h3>Yangi foydalanuvchilar — 30 kun</h3>${barChart(s.daily, 'new_users', false, (v) => `${v} ta`)}</div>
       <div class="card chart"><h3>Reklama tushumi — 30 kun</h3>${barChart(s.daily, 'ad_income_uzs', true, som)}</div>
+    </div>
+    ${activityHtml(activity)}
+    ${interestsHtml(interests)}`;
+}
+
+// What the audience is interested in (learnt by the AI ads engine) and how ads on each topic perform.
+function interestsHtml(data) {
+  const max = Math.max(1, ...data.topics.map((t) => t.users));
+  const rows = data.topics.map((t) => `<tr><td>${esc(TOPIC_LABEL[t.topic] || t.topic)}</td>
+      <td><progress class="meter" max="${max}" value="${t.users}" aria-label="${t.users} kishi"></progress></td>
+      <td class="num"><b>${t.users}</b></td><td class="num">${t.ads}</td><td class="num">${t.views}</td><td class="num">${t.clicks}</td><td class="num">${t.ctr ? `${t.ctr}%` : '—'}</td></tr>`).join('');
+  return `<div class="card"><h3>AI reklama: foydalanuvchilar qiziqishlari</h3>
+    <p class="muted">${data.profiled_users} kishining qiziqishi aniqlangan. Faqat Töplam bo'limidagi harakatlar va reklama bosishlari hisobga olinadi, chatlar o'qilmaydi.</p>
+    <div class="table-wrap"><table><thead><tr><th>Mavzu</th><th></th><th class="num">Qiziqqanlar</th><th class="num">Faol reklama</th><th class="num">Ko'rish</th><th class="num">Bosish</th><th class="num">CTR</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+
+const ACTIVITY_LABEL = { app_open: 'Ilovani ochganlar', hub_open: "Töplam bo'limini ko'rganlar", movies_open: "Kino bo'limini ko'rganlar" };
+
+function activityHtml(a) {
+  const rows = Object.entries(ACTIVITY_LABEL).map(([k, label]) => {
+    const t = a.totals[k];
+    return `<tr><td>${esc(label)}</td><td class="num"><b>${t.day}</b></td><td class="num">${t.week}</td><td class="num">${t.month}</td><td class="num">${t.year}</td></tr>`;
+  }).join('');
+  return `<div class="card"><h3>Faol foydalanuvchilar (har biri bir marta sanaladi)</h3><div class="table-wrap"><table>
+      <thead><tr><th></th><th class="num">Bugun</th><th class="num">7 kun</th><th class="num">30 kun</th><th class="num">1 yil</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="charts">
+      <div class="card chart"><h3>Kunlik faol foydalanuvchilar — 30 kun</h3>${barChart(a.daily, 'app_open', false, (v) => `${v} kishi`)}</div>
+      <div class="card chart"><h3>Töplam bo'limini kunlik ko'rganlar — 30 kun</h3>${barChart(a.daily, 'hub_open', true, (v) => `${v} kishi`)}</div>
     </div>`;
 }
 
@@ -205,7 +261,26 @@ async function renderAds(el, status = 'pending_review') {
   const tabs = Object.entries(AD_STATUS).map(([k, [label]]) => `<button class="tab" data-status="${k}" aria-pressed="${k === status}">${esc(label)}</button>`).join('');
   el.innerHTML = `<div class="tabs">${tabs}</div>` + (ads.length ? `<div class="grid-cards">${ads.map(adCard).join('')}</div>` : '<div class="empty">Bu holatda reklama yo\'q</div>');
   el.querySelectorAll('.tab').forEach((b) => { b.onclick = () => { location.hash = `ads/${b.dataset.status}`; }; });
-  el.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => adAction(b.dataset.act, b.dataset.id, status); });
+  el.querySelectorAll('[data-act]').forEach((b) => {
+    b.onclick = () => (b.dataset.act === 'topics' ? editAdTopics(b.dataset.id, b.dataset.topics, status) : adAction(b.dataset.act, b.dataset.id, status));
+  });
+}
+
+// Which interests an ad is shown to: the advertiser's pick or the automatic guess, corrected here.
+function editAdTopics(id, current, status) {
+  const chosen = new Set((current || '').split(',').filter(Boolean));
+  const boxes = Object.entries(TOPIC_LABEL).map(([k, label]) =>
+    `<label class="check"><input type="checkbox" value="${k}" ${chosen.has(k) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
+  const body = openModal('Reklama qiziqishlari', `<p class="muted">Reklama shu mavzularga qiziqqan foydalanuvchilarga ko'proq ko'rsatiladi. Ko'pi bilan ${MAX_AD_TOPICS} ta.</p>
+    <div class="checks">${boxes}</div>
+    <div class="toolbar"><button class="btn primary" id="t-ok" type="button">Saqlash</button><button class="btn" id="t-no" type="button">Bekor qilish</button></div>`);
+  body.querySelector('#t-no').onclick = closeModal;
+  body.querySelector('#t-ok').onclick = async () => {
+    const topics = [...body.querySelectorAll('input:checked')].map((i) => i.value);
+    if (topics.length > MAX_AD_TOPICS) { toast(`Ko'pi bilan ${MAX_AD_TOPICS} ta mavzu`, true); return; }
+    const ok = await run(() => api(`/v1/admin/ads/${id}/topics`, { method: 'PUT', body: { topics } }), 'Qiziqishlar saqlandi');
+    if (ok) { closeModal(); location.hash = `ads/${status}`; route(); }
+  };
 }
 
 function adCard(ad) {
@@ -214,11 +289,14 @@ function adCard(ad) {
     <div class="media">${mediaHtml(ad.media_type, ad.media_url)}</div>
     <div class="body">
       <div class="toolbar">${pill(AD_STATUS, ad.status)}<span class="pill gold">${esc(som(ad.price_uzs))}</span></div>
-      <h4>${esc(ad.title)}</h4>
+      <h4>${ad.title ? esc(ad.title) : '<span class="muted">Sarlavhasiz</span>'}</h4>
       ${ad.text ? `<p class="text">${esc(ad.text)}</p>` : ''}
       <dl class="facts">
         <dt>Hududlar</dt><dd>${esc(ad.regions.join(', '))}</dd>
+        <dt>Qiziqishlar</dt><dd>${topicPills(ad.topics)}</dd>
+        ${ad.status === 'approved' ? `<dt>Natija</dt><dd>${ad.views} ko'rish · ${ad.clicks} bosish · CTR ${esc(ctr(ad.views, ad.clicks))}</dd>` : ''}
         <dt>Muddat</dt><dd>${ad.days} kun</dd>
+        ${ad.paid_from_wallet ? `<dt>To'lov</dt><dd>UZARO balansidan to'langan</dd>` : ''}
         ${ad.link_url ? `<dt>Havola</dt><dd><a href="${esc(ad.link_url)}" target="_blank" rel="noopener">${esc(ad.link_url)}</a></dd>` : ''}
         <dt>Yuborilgan</dt><dd>${esc(date(ad.created_at))}</dd>
         ${ad.ends_at ? `<dt>Tugaydi</dt><dd>${esc(date(ad.ends_at))}</dd>` : ''}
@@ -227,6 +305,7 @@ function adCard(ad) {
     </div>
     <div class="actions">
       ${ad.has_receipt && support ? `<button class="btn" data-act="receipt" data-id="${esc(ad.id)}">Chekni ko'rish</button>` : ''}
+      ${support ? `<button class="btn" data-act="topics" data-id="${esc(ad.id)}" data-topics="${esc((ad.topics || []).join(','))}">Qiziqishlar</button>` : ''}
       ${ad.status === 'pending_review' && support ? `<button class="btn ok" data-act="approve" data-id="${esc(ad.id)}">Tasdiqlash</button><button class="btn bad" data-act="reject" data-id="${esc(ad.id)}">Rad etish</button>` : ''}
       ${ad.status === 'approved' && support ? `<button class="btn bad" data-act="stop" data-id="${esc(ad.id)}">To'xtatish</button>` : ''}
     </div>
@@ -337,6 +416,17 @@ async function productVisibility(id, active, shopId) {
 
 // users
 
+// Server codes shown in Uzbek; an unknown code is shown as it came.
+const PLATFORM = { android: 'Android', ios: 'iPhone (iOS)', web: 'Veb' };
+const TIER = { free: 'Bepul', pro: 'Pro', business: 'Biznes' };
+const ENTITLEMENT = { pro: "Pro (mavzular, ko'rinish)", ai_writer: 'AI yozuvchi', business: 'Biznes' };
+const ENTITLEMENT_SOURCE = { subscription: 'obuna orqali', override: 'admin bergan' };
+const SUB_STATUS = {
+  active: 'Faol', cancelled: "Bekor qilingan (muddati tugaguncha ishlaydi)", in_grace: "To'lov kutilmoqda (ishlaydi)",
+  billing_retry: "To'lov o'tmadi", paused: "To'xtatilgan", expired: 'Muddati tugagan', refunded: 'Pul qaytarilgan', revoked: 'Bekor qilingan',
+};
+const uz = (map, code) => esc(map[code] || code || '—');
+
 async function renderUsers(el, arg = '') {
   const [q, pageRaw] = decodeURIComponent(arg).split('|');
   const page = Number(pageRaw || 0);
@@ -345,8 +435,8 @@ async function renderUsers(el, arg = '') {
   el.innerHTML = `
     <form class="toolbar" id="user-search"><input id="user-q" type="search" placeholder="Ism, @username yoki telefon" value="${esc(q || '')}"><button class="btn primary" type="submit">Qidirish</button>
       <span class="muted">Jami: ${data.total}</span></form>
-    ${data.users.length ? `<div class="table-wrap"><table><thead><tr><th>Foydalanuvchi</th><th>Platforma</th><th>Do'kon</th><th>Reklama</th><th>Ro'yxatdan o'tgan</th></tr></thead><tbody>
-      ${data.users.map((u) => `<tr class="clickable" data-id="${esc(u.id)}"><td>${person(u.profile)}</td><td>${esc(u.platform || '—')}</td><td class="num">${u.shops}</td><td class="num">${u.ads}</td><td class="muted">${esc(date(u.created_at))}</td></tr>`).join('')}
+    ${data.users.length ? `<div class="table-wrap"><table><thead><tr><th class="num">№</th><th>Foydalanuvchi</th><th>Platforma</th><th>Hamyon</th><th>Do'kon</th><th>Reklama</th><th>Ro'yxatdan o'tgan</th></tr></thead><tbody>
+      ${data.users.map((u) => `<tr class="clickable" data-id="${esc(u.id)}"><td class="num muted">${Number(u.number) || ''}</td><td>${person(u.profile)}</td><td>${uz(PLATFORM, u.platform)}</td><td class="num">${som(u.wallet_uzs)}</td><td class="num">${u.shops}</td><td class="num">${u.ads}</td><td class="muted">${esc(date(u.created_at))}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">Foydalanuvchi topilmadi</div>'}
     <div class="pager">${page > 0 ? '<button class="btn" id="prev">← Oldingi</button>' : ''}<span class="muted">${page + 1}-sahifa</span>${(page + 1) * limit < data.total ? '<button class="btn" id="next">Keyingi →</button>' : ''}</div>`;
   el.querySelector('#user-search').onsubmit = (e) => { e.preventDefault(); location.hash = `users/${encodeURIComponent(`${$('#user-q').value.trim()}|0`)}`; };
@@ -359,18 +449,23 @@ async function customerDetail(id) {
   const c = await run(() => api(`/v1/admin/customers/${id}`));
   if (!c) return;
   const body = openModal('Foydalanuvchi', `
-    <dl class="facts"><dt>ID</dt><dd class="mono">${esc(c.customer_id)}</dd><dt>Tarif</dt><dd>${esc(c.tier)}</dd><dt>Hudud</dt><dd>${esc(c.region || '—')}</dd>
-      <dt>Ro'yxatdan o'tgan</dt><dd>${esc(date(c.created_at))}</dd><dt>Kreditlar</dt><dd class="num">${c.credits.allowance} limit · ${c.credits.purchased} sotib olingan · ${c.credits.reserved} band</dd></dl>
+    <dl class="facts"><dt>ID</dt><dd class="mono">${esc(c.customer_id)}</dd><dt>Tarif</dt><dd>${uz(TIER, c.tier)}</dd><dt>Hudud</dt><dd>${esc(c.region || '—')}</dd>
+      <dt>Ro'yxatdan o'tgan</dt><dd>${esc(date(c.created_at))}</dd><dt>Hamyon</dt><dd class="num">${som(c.wallet_uzs)}</dd>
+      <dt>AI kreditlar</dt><dd class="num">${c.credits.allowance} limit · ${c.credits.purchased} sotib olingan · ${c.credits.reserved} band</dd></dl>
+    ${can('finance') ? `<form id="bonus" class="card stack"><b>Hamyonga bonus (keshbek)</b>
+      <div class="form-grid"><div class="field"><label for="bn-amount">Summa (so'm)</label><input id="bn-amount" type="number" min="100" max="5000000" step="100" required></div>
+      <div class="field"><label for="bn-reason">Sabab</label><input id="bn-reason" required minlength="3" maxlength="256" placeholder="Keshbek: noyabr aksiyasi"></div></div>
+      <button class="btn primary" type="submit">Hamyonga qo'shish</button></form>` : ''}
     <h4>Imkoniyatlar</h4>
-    ${c.entitlements.length ? `<ul>${c.entitlements.map((e) => `<li>${esc(e.entitlement)} · ${esc(e.source)} · ${esc(date(e.expires_at))} gacha</li>`).join('')}</ul>` : '<p class="muted">Pullik imkoniyat yo\'q</p>'}
+    ${c.entitlements.length ? `<ul>${c.entitlements.map((e) => `<li>${uz(ENTITLEMENT, e.entitlement)} · ${uz(ENTITLEMENT_SOURCE, e.source)} · ${esc(date(e.expires_at))} gacha</li>`).join('')}</ul>` : '<p class="muted">Pullik imkoniyat yo\'q</p>'}
     <h4>Obunalar</h4>
-    ${c.subscriptions.length ? `<ul>${c.subscriptions.map((s) => `<li>${esc(s.product_id)} · ${esc(s.status)} · ${esc(date(s.expires_at))}</li>`).join('')}</ul>` : '<p class="muted">Obuna yo\'q</p>'}
+    ${c.subscriptions.length ? `<ul>${c.subscriptions.map((s) => `<li>${esc(s.product_id)} · ${uz(SUB_STATUS, s.status)} · ${esc(date(s.expires_at))} gacha</li>`).join('')}</ul>` : '<p class="muted">Obuna yo\'q</p>'}
     <form id="grant" class="card stack"><b>Imkoniyat berish</b>
-      <div class="form-grid"><div class="field"><label for="g-ent">Imkoniyat</label><input id="g-ent" required placeholder="masalan: premium"></div>
+      <div class="form-grid"><div class="field"><label for="g-ent">Imkoniyat</label><select id="g-ent" required><option value="pro">Pro (mavzular, ko'rinish)</option><option value="ai_writer">AI yozuvchi</option><option value="business">Biznes</option></select></div>
       <div class="field"><label for="g-exp">Qachongacha</label><input id="g-exp" type="date" required></div></div>
       <div class="field"><label for="g-reason">Sabab</label><input id="g-reason" required minlength="5"></div>
       <button class="btn primary" type="submit">Berish</button></form>
-    ${can('finance') ? `<form id="credits" class="card stack"><b>Kreditlarni o'zgartirish</b>
+    ${can('finance') ? `<form id="credits" class="card stack"><b>AI kreditlarni o'zgartirish</b>
       <div class="form-grid"><div class="field"><label for="cr-amount">Miqdor (+/−)</label><input id="cr-amount" type="number" required></div>
       <div class="field"><label for="cr-ref">Hujjat raqami</label><input id="cr-ref" required pattern="[A-Za-z0-9._:-]+"></div></div>
       <div class="field"><label for="cr-reason">Sabab</label><input id="cr-reason" required minlength="5"></div>
@@ -381,6 +476,15 @@ async function customerDetail(id) {
     const ok = await run(() => api(`/v1/admin/customers/${id}/overrides`, { method: 'POST', body: { entitlement: body.querySelector('#g-ent').value.trim(), expires_at: expires, reason: body.querySelector('#g-reason').value.trim() } }), 'Imkoniyat berildi');
     if (ok) { closeModal(); customerDetail(id); }
   };
+  body.querySelector('#bonus')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = { customer_id: id, amount_uzs: Number(body.querySelector('#bn-amount').value), reason: body.querySelector('#bn-reason').value.trim() };
+    // The confirmation replaces this modal, so the detail is reopened afterwards either way.
+    const yes = await confirmBox('Bonusni tasdiqlang', `${som(payload.amount_uzs)} shu foydalanuvchi hamyoniga qo'shiladi. Qaytarib bo'lmaydi.`, "Qo'shish");
+    const done = yes && await run(() => api('/v1/admin/gifts/credit', { method: 'POST', body: payload }));
+    if (done) toast(`Qo'shildi. Yangi balans: ${som(done.balance_uzs)}`);
+    customerDetail(id);
+  });
   body.querySelector('#credits')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const ok = await run(() => api(`/v1/admin/customers/${id}/credits`, { method: 'POST', body: { amount: Number(body.querySelector('#cr-amount').value), reference: body.querySelector('#cr-ref').value.trim(), reason: body.querySelector('#cr-reason').value.trim() } }), 'Kreditlar yangilandi');
@@ -404,10 +508,39 @@ async function renderSettings(el) {
         ${field('extra_shop_price_uzs', "Qo'shimcha do'kon narxi (so'm)", s.extra_shop_price_uzs, 'number')}
         ${field('shop_free_limit', "Bepul do'konlar soni", s.shop_free_limit, 'number')}
       </div>
+      <h3>Qisqa UZARO username</h3>
+      <div class="form-grid">
+        ${field('username_price_2_uzs', "2 harfli nom (so'm)", s.username_price_2_uzs, 'number', '0 — sotilmaydi')}
+        ${field('username_price_3_uzs', "3 harfli nom (so'm)", s.username_price_3_uzs, 'number', '0 — sotilmaydi')}
+        ${field('username_price_4_uzs', "4 harfli nom (so'm)", s.username_price_4_uzs, 'number', "0 — sotilmaydi. 5+ harfli nomlar bepul. Sotib olish: ilova, uzaromessenger.uz/nom va bot.")}
+        ${field('badge_price_uzs', "Ism yonidagi belgi, 30 kun (so'm)", s.badge_price_uzs, 'number', "Galochka yoki istalgan emoji. 0 — sotilmaydi.")}
+        ${field('welcome_bonus_uzs', "Yangi foydalanuvchiga bonus (so'm)", s.welcome_bonus_uzs, 'number', "Har bir Telegram hisobiga bir marta, hisob tasdiqlanganda. Sovg'a, reklama, belgi, nomga ishlatiladi. 0 — berilmaydi.")}
+        ${field('topup_bonus_percent', "Balans to'ldirganda bonus (%)", s.topup_bonus_percent, 'number', "Har bir to'lovga shu foiz qo'shib beriladi: 20 — 100 000 so'm to'lasa, yana 20 000 so'm bonus. Karta, Payme, bot, Google Play, App Store — hammasiga. 0 — o'chiq.")}
+      </div>
       <h3>To'lov kartasi</h3>
       <div class="form-grid">
         ${field('ad_payment_card', 'Karta raqami', s.ad_payment_card, 'text', 'Reklama va do\'kon egalari shu kartaga pul o\'tkazadi')}
         ${field('ad_payment_card_holder', 'Karta egasi', s.ad_payment_card_holder)}
+      </div>
+      <h3>To'lov boti (@UzaroPay_bot)</h3>
+      <div class="form-grid">
+        ${field('stars_uzs_per_star', "1 Telegram Star = ? so'm", s.stars_uzs_per_star, 'number', "0 — Stars orqali to'lov o'chiq. Summa yuqoriga yaxlitlanadi.")}
+        ${field('ton_uzs_per_ton', "1 TON = ? so'm", s.ton_uzs_per_ton, 'number', "0 — TON o'chiq. Kursni vaqti-vaqti bilan yangilab turing.")}
+        ${field('ton_wallet', 'TON hamyon manzili', s.ton_wallet, 'text', "To'lovlar shu manzilga keladi. Bo'sh — TON o'chiq.")}
+      </div>
+      <p class="muted">Karta orqali to'lov yuqoridagi kartadan foydalanadi: foydalanuvchi botga chek yuboradi, «Hamyon» bo'limida tasdiqlaysiz.</p>
+      <h3>AI reklama (qiziqishga qarab)</h3>
+      <div class="form-grid">
+        <div class="field"><label for="ads_personalization">Holati</label><select id="ads_personalization" ${owner ? '' : 'disabled'}>
+          <option value="1" ${s.ads_personalization ? 'selected' : ''}>Yoqilgan: har kimga qiziqishiga mos reklama</option>
+          <option value="0" ${s.ads_personalization ? '' : 'selected'}>O'chirilgan: hammaga navbat bilan</option></select>
+          <small>O'chirilganda yangi qiziqishlar yig'ilmaydi.</small></div>
+        <div class="field"><label for="ads_topic_picker">"Kimlarga ko'rsatilsin" bo'limi</label><select id="ads_topic_picker" ${owner ? '' : 'disabled'}>
+          <option value="1" ${s.ads_topic_picker ? 'selected' : ''}>Yoqilgan: reklama beruvchi o'zi tanlaydi</option>
+          <option value="0" ${s.ads_topic_picker ? '' : 'selected'}>O'chirilgan: ilovada ko'rinmaydi</option></select>
+          <small>O'chirilganda mavzular reklama matnidan avtomatik aniqlanadi.</small></div>
+        ${field('ads_interest_weight', "Qiziqish ta'siri (%)", s.ads_interest_weight, 'number', "0 — oddiy navbat, 100 — faqat qiziqish. Tavsiya: 70. Mos kelmagan reklama ham baribir ko'rinadi.")}
+        ${field('ads_interest_half_life_days', 'Qiziqish eskirishi (kun)', s.ads_interest_half_life_days, 'number', "Shuncha kundan keyin eski qiziqish ikki baravar kuchsizlanadi. Tavsiya: 14.")}
       </div>
       <h3>Ilova versiyasi</h3>
       <div class="form-grid">
@@ -421,8 +554,10 @@ async function renderSettings(el) {
   el.querySelector('#settings-form').onsubmit = async (e) => {
     e.preventDefault();
     const body = {};
-    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
-    ['ad_payment_card', 'ad_payment_card_holder', 'app_version', 'app_release_notes'].forEach((k) => { body[k] = el.querySelector(`#${k}`).value.trim(); });
+    ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build', 'ads_personalization', 'ads_topic_picker', 'ads_interest_weight',
+      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs', 'badge_price_uzs', 'welcome_bonus_uzs', 'topup_bonus_percent', 'stars_uzs_per_star', 'ton_uzs_per_ton'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
+    ['ad_payment_card', 'ad_payment_card_holder', 'app_version', 'app_release_notes', 'ton_wallet'].forEach((k) => { body[k] = el.querySelector(`#${k}`).value.trim(); });
+    body.ads_interest_half_life_days = Math.max(1, Number(el.querySelector('#ads_interest_half_life_days').value || 14));
     await run(() => api('/v1/admin/settings', { method: 'PUT', body }), 'Sozlamalar saqlandi');
   };
 }
@@ -449,19 +584,23 @@ async function renderAdmins(el) {
     e.preventDefault();
     const created = await run(() => api('/v1/admin/admins', { method: 'POST', body: { name: $('#na-name').value.trim(), role: $('#na-role').value } }));
     if (!created) return;
+    renderAdmins(el);
+    if (!created.key) {
+      toast(`${created.name} yaratildi: endi «Login/parol» tugmasi bilan kirish ma'lumotini bering`);
+      return;
+    }
     const body = openModal('Admin yaratildi', `<p><b>${esc(created.name)}</b> uchun kalit. U faqat hozir ko'rsatiladi — nusxa olib, xavfsiz yo'l bilan bering.</p>
       <div class="keybox" id="new-key">${esc(created.key)}</div><button class="btn primary" id="copy-key" type="button">Nusxa olish</button>`);
     body.querySelector('#copy-key').onclick = async () => {
       try { await navigator.clipboard.writeText(created.key); toast('Nusxa olindi'); } catch (_) { getSelection().selectAllChildren(body.querySelector('#new-key')); }
     };
-    renderAdmins(el);
   };
   el.querySelectorAll('[data-role]').forEach((s) => { s.onchange = () => run(() => api(`/v1/admin/admins/${s.dataset.role}`, { method: 'PATCH', body: { role: s.value } }), 'Rol o\'zgartirildi'); });
   el.querySelectorAll('[data-creds]').forEach((b) => {
     b.onclick = () => {
       const body = openModal('Panelga kirish uchun login va parol', `
         <div class="field"><label for="cr-login">Login</label><input id="cr-login" value="${esc(b.dataset.login)}" pattern="[A-Za-z0-9._@+-]+" minlength="3"></div>
-        <div class="field"><label for="cr-pass">Yangi parol</label><input id="cr-pass" type="password" minlength="6"><small>Kamida 6 belgi. Uzun va tasodifiy parol xavfsizroq.</small></div>
+        <div class="field"><label for="cr-pass">Yangi parol</label><input id="cr-pass" type="password" minlength="10"><small>Kamida 10 belgi, logindan (telefon raqamidan) farqli. Uzun va tasodifiy parol xavfsizroq.</small></div>
         <button class="btn primary" id="cr-save" type="button">Saqlash</button>`);
       body.querySelector('#cr-save').onclick = async () => {
         const ok = await run(() => api(`/v1/admin/admins/${b.dataset.creds}/credentials`, { method: 'PUT', body: { login: body.querySelector('#cr-login').value.trim(), password: body.querySelector('#cr-pass').value } }), 'Login va parol saqlandi');
@@ -485,6 +624,7 @@ const ACTION_LABEL = {
   ad_approved: 'Reklama tasdiqlandi', ad_rejected: 'Reklama rad etildi', shop_approved: "Do'kon tasdiqlandi", shop_rejected: "Do'kon rad etildi",
   shop_closed: "Do'kon yopildi", shop_close_declined: "Yopish so'rovi rad etildi", shop_viewed: "Do'kon ko'rildi", users_listed: "Foydalanuvchilar ko'rildi",
   customer_viewed: "Foydalanuvchi ko'rildi", override_granted: 'Imkoniyat berildi', override_revoked: 'Imkoniyat olib qo\'yildi', credits_adjusted: "Kreditlar o'zgartirildi",
+  movie_created: "Kino qo'shildi", movie_updated: 'Kino tahrirlandi', movie_deleted: "Kino o'chirildi", movie_video_started: 'Video yuklash boshlandi', movie_video_deleted: "Video o'chirildi",
   settings_updated: "Sozlamalar o'zgartirildi", admin_login: 'Panelga kirdi', admin_credentials_set: 'Login/parol berildi', admin_created: 'Admin yaratildi', admin_updated: "Admin o'zgartirildi", product_hidden: 'Mahsulot yashirildi', product_shown: "Mahsulot qayta ko'rsatildi",
 };
 

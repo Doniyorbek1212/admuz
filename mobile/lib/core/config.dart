@@ -14,11 +14,12 @@ class AppConfig {
   static const String appName = 'UZARO';
   /// Shown in Telegram's device list next to the app name; keep in step with `version:` in pubspec.yaml.
   // Keep in sync with `version:` in pubspec.yaml.
-  static const String appVersion = '1.1.3';
+  static const String appVersion = '1.1.6';
 
-  /// UZARO server (shops, hub ads, admin review): --dart-define=SADO_API_URL=https://api.example.uz
-  /// Empty disables those features. Plain http is allowed only for the emulator host (network_security_config).
-  static const String apiUrl = String.fromEnvironment('SADO_API_URL');
+  /// UZARO server (shops, hub ads, admin review). Defaults to production so every build (CI APKs included)
+  /// reaches it; override with --dart-define=SADO_API_URL=..., or pass an empty value to disable those features.
+  /// Plain http is allowed only for the emulator host (network_security_config).
+  static const String apiUrl = String.fromEnvironment('SADO_API_URL', defaultValue: 'https://uzaromessenger.uz');
 
   // Prefer baking credentials into release builds:
   //   flutter build apk --dart-define=TG_API_ID=12345 --dart-define=TG_API_HASH=0123abcd...

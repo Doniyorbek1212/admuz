@@ -101,7 +101,7 @@ jobs:
           # Signing happens in the archive step with the API key; config-only must not look for local certificates.
           flutter build ios --release --config-only --no-codesign \
             --build-name="$version" --build-number="$GITHUB_RUN_NUMBER" \
-            --dart-define=SADO_API_URL=https://sado.voxo.uz \
+            --dart-define=SADO_API_URL=https://uzaromessenger.uz \
             --dart-define=TG_API_ID="$TG_API_ID" \
             --dart-define=TG_API_HASH="$TG_API_HASH"
 

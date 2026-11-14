@@ -561,7 +561,7 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> with _Submittin
           TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),
         ],
       ),
-    ).whenComplete(controller.dispose);
+    ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
   }
 
   @override

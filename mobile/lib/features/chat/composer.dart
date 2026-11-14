@@ -18,6 +18,8 @@ import '../../core/live_location.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../core/video_note_crop.dart';
+import '../../core/video_thumbnail.dart';
+import 'video_note_shapes.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/providers.dart';
@@ -38,8 +40,10 @@ import 'composer_panels.dart';
 import 'composer_suggestions.dart';
 import 'contact_picker.dart';
 import 'location_picker.dart';
+import 'message_content.dart' show replyThumb, withoutMediaEmoji;
 import 'message_tools.dart';
 import 'poll_creator.dart';
+import 'time_capsule_view.dart';
 
 
 final _canMessageUserProvider = FutureProvider.autoDispose.family<td.CanSendMessageToUserResult?, int>((ref, userId) async {
@@ -123,6 +127,10 @@ class ComposerState extends ConsumerState<Composer> {
   bool _recordingVideo = false;
   CameraController? _camera;
 
+  /// Finished clips of the round video being recorded (each camera flip closes one).
+  final List<String> _videoClips = [];
+  bool _switchingCamera = false;
+
   /// Recording overlay (round camera preview, camera/flash buttons, lock pill) and the mic tooltip.
   OverlayEntry? _cameraOverlay;
   OverlayEntry? _tip;
@@ -130,6 +138,10 @@ class ComposerState extends ConsumerState<Composer> {
 
   /// Front camera: the overlay turns white to light the face; back camera: torch.
   bool _flash = false;
+
+  /// Shape of the next round video message, remembered across chats and launches.
+  late VideoNoteShape _videoShape = VideoNoteShape.byName(ref.read(sharedPreferencesProvider).getString(_videoShapeKey));
+  static const _videoShapeKey = 'videoNote.shape';
   static const _videoNoteLimit = Duration(seconds: 60);
 
   @override
@@ -419,6 +431,79 @@ class ComposerState extends ConsumerState<Composer> {
     await guard(context, () => _account.sendAnimation(widget.chat.id, animation, replyToId: replyId));
   }
 
+  /// Formatting panel for the selected text: a link field with Paste, and the style buttons.
+  Future<void> _formatSheet() async {
+    final selection = _controller.selection;
+    if (!selection.isValid || selection.isCollapsed) return;
+    final s = context.s;
+    final urlController = TextEditingController();
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _FormatPanel(urlController: urlController),
+    );
+    // Not disposed: the sheet's TextField still uses it while the sheet animates out.
+    final url = urlController.text.trim();
+    if (action == null || !mounted) return;
+    _controller.selection = selection;
+    switch (action) {
+      case 'link':
+        final uri = Uri.tryParse(url.contains('://') ? url : 'https://$url');
+        if (uri == null || uri.host.isEmpty) {
+          showToast(context, s.t('invalid_link'));
+          return;
+        }
+        _wrapSelection('[', ']($uri)');
+      case 'bold':
+        _wrapSelection('**');
+      case 'italic':
+        _wrapSelection('__');
+      case 'underline':
+        _wrapSelection(underlineTags.$1, underlineTags.$2);
+      case 'strike':
+        _wrapSelection('~~');
+      case 'mono':
+        _wrapSelection('`');
+      case 'spoiler':
+        _wrapSelection('||');
+      case 'collapse':
+        await _collapseSelection();
+    }
+  }
+
+  /// "Collapse": the selection becomes a section that opens on tap, under a headline the user writes.
+  Future<void> _collapseSelection() async {
+    final selection = _controller.selection;
+    if (!selection.isValid || selection.isCollapsed) return;
+    final s = context.s;
+    final headlineController = TextEditingController();
+    final headline = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(s.t('collapse_headline')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(s.t('collapse_headline_hint'), style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            TextField(controller: headlineController, autofocus: true, maxLength: 80, textCapitalization: TextCapitalization.sentences),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('cancel'))),
+          TextButton(onPressed: () => Navigator.pop(context, headlineController.text.trim()), child: Text(s.t('done'))),
+        ],
+      ),
+    );
+    // No dispose here: the dialog's TextField still uses the controller during the closing animation.
+    if (headline == null || headline.isEmpty || !mounted) return;
+    _controller.selection = selection;
+    // The headline is the quote's first line: UZARO shows only it while collapsed, other apps show a few lines.
+    _wrapSelection('${collapsedTags.$1}**$headline**\n', collapsedTags.$2);
+  }
+
   /// Wraps the selection in Telegram markdown markers (parsed into entities on send).
   void _wrapSelection(String left, [String? right]) {
     final value = _controller.value;
@@ -447,7 +532,7 @@ class ComposerState extends ConsumerState<Composer> {
         ],
       ),
     );
-    urlController.dispose();
+    // Not disposed: the dialog's TextField still uses it while the dialog animates out.
     final uri = url == null ? null : Uri.tryParse(url);
     if (uri == null || !uri.hasScheme || !mounted) return;
     _controller.selection = selection;
@@ -472,9 +557,11 @@ class ComposerState extends ConsumerState<Composer> {
           format('format_bold', () => _wrapSelection('**')),
           format('format_italic', () => _wrapSelection('__')),
           format('format_strike', () => _wrapSelection('~~')),
+          format('format_underline', () => _wrapSelection(underlineTags.$1, underlineTags.$2)),
           format('format_spoiler', () => _wrapSelection('||')),
           format('format_code', () => _wrapSelection('`')),
           format('format_link', () => unawaited(_insertLink())),
+          format('format_collapse', () => unawaited(_collapseSelection())),
         ],
       ],
     );
@@ -489,7 +576,7 @@ class ComposerState extends ConsumerState<Composer> {
     return KeyEventResult.handled;
   }
 
-  Future<void> _send({bool silent = false, int? scheduleAt}) async {
+  Future<void> _send({bool silent = false, int? scheduleAt, DateTime? capsuleUntil}) async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
     final account = ref.read(accountProvider);
@@ -505,6 +592,7 @@ class ComposerState extends ConsumerState<Composer> {
       return;
     }
     final disablePreview = _previewClosed;
+    final capsule = capsuleUntil == null ? null : (until: capsuleUntil, label: context.s.t('time_capsule'));
     _controller.clear();
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
@@ -521,6 +609,7 @@ class ComposerState extends ConsumerState<Composer> {
           silent: silent,
           scheduleAt: scheduleAt,
           disablePreview: disablePreview,
+          capsule: capsule,
         ),
       );
       if (sent == null) {
@@ -550,6 +639,12 @@ class ComposerState extends ConsumerState<Composer> {
               title: Text(s.t('send_scheduled')),
               onTap: () => Navigator.pop(context, 'schedule'),
             ),
+            ListTile(
+              leading: const Icon(Icons.ac_unit_rounded),
+              title: Text(s.t('time_capsule_seal')),
+              subtitle: Text(s.t('time_capsule_hint')),
+              onTap: () => Navigator.pop(context, 'capsule'),
+            ),
           ],
         ),
       ),
@@ -557,6 +652,11 @@ class ComposerState extends ConsumerState<Composer> {
     if (!mounted || choice == null) return;
     if (choice == 'silent') {
       await _send(silent: true);
+      return;
+    }
+    if (choice == 'capsule') {
+      final until = await pickCapsuleTime(context);
+      if (until != null && mounted) await _send(capsuleUntil: until);
       return;
     }
     final at = await pickScheduleTime(context);
@@ -717,13 +817,15 @@ class ComposerState extends ConsumerState<Composer> {
     }
     for (var start = 0; start < pick.media.length; start += 10) {
       final batch = pick.media.sublist(start, min(pick.media.length, start + 10));
+      final covers = await Future.wait([for (final m in batch) m.isVideo ? videoThumbnail(m.path) : Future<td.InputThumbnail?>.value()]);
       if (!mounted) return;
       await guard(context, () => account.sendAlbum(
             chatId,
             [
               for (final (i, m) in batch.indexed)
                 m.isVideo
-                    ? videoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height, duration: m.duration)
+                    ? videoContent(m.path,
+                        caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height, duration: m.duration, thumbnail: covers[i])
                     : photoContent(m.path, caption: start + i == 0 ? pick.caption : '', width: m.width, height: m.height),
             ],
             replyToId: start == 0 ? replyId : null,
@@ -833,6 +935,8 @@ class ComposerState extends ConsumerState<Composer> {
         flashOn: () => _flash,
         onSwitchCamera: camera == null ? null : _switchCamera,
         onFlash: camera == null ? null : _toggleFlash,
+        shape: () => _videoShape,
+        onShape: camera == null ? null : _setVideoShape,
       ),
     );
     Overlay.of(context).insert(_cameraOverlay!);
@@ -849,13 +953,43 @@ class ComposerState extends ConsumerState<Composer> {
     try {
       final current = camera.description.lensDirection;
       final next = (await availableCameras()).where((c) => c.lensDirection != current).firstOrNull;
-      if (next == null) return;
-      // Continues the same recording with the other camera.
-      await camera.setDescription(next);
-      if (_flash) await _applyTorch(camera);
+      if (next == null || _switchingCamera) return;
+      _switchingCamera = true;
+      // Android (CameraX) keeps a persistent recording running across the swap: one file, no gap.
+      if (Platform.isAndroid && camera.value.isRecordingVideo && await _swapWhileRecording(camera, next)) return;
+      // Swapping under a running recording crashes iOS (AVAssetWriter): close this clip, record the next
+      // one, and join them when sending. Stopping and restarting leaves a ~1 s gap.
+      if (camera.value.isRecordingVideo) _videoClips.add((await camera.stopVideoRecording()).path);
+      if (camera.description != next) await camera.setDescription(next);
+      if (_camera == camera) {
+        await camera.startVideoRecording();
+        if (_flash) await _applyTorch(camera);
+      }
     } on CameraException catch (error) {
       debugPrint('camera switch failed: $error');
+    } finally {
+      _switchingCamera = false;
+      _cameraOverlay?.markNeedsBuild();
     }
+  }
+
+  /// Seamless swap on Android; false (recording still running or cleanly stopped) when the phone refuses.
+  Future<bool> _swapWhileRecording(CameraController camera, CameraDescription next) async {
+    try {
+      await camera.setDescription(next);
+    } on CameraException catch (error) {
+      debugPrint('camera swap while recording failed, falling back to clips: $error');
+      return false;
+    }
+    if (!camera.value.isRecordingVideo) return false;
+    if (_flash) await _applyTorch(camera);
+    return true;
+  }
+
+  void _setVideoShape(VideoNoteShape shape) {
+    HapticFeedback.selectionClick();
+    setState(() => _videoShape = shape);
+    unawaited(ref.read(sharedPreferencesProvider).setString(_videoShapeKey, shape.name));
     _cameraOverlay?.markNeedsBuild();
   }
 
@@ -983,6 +1117,7 @@ class ComposerState extends ConsumerState<Composer> {
       return;
     }
     _camera = controller;
+    _videoClips.clear();
     HapticFeedback.mediumImpact();
     final startedAt = DateTime.now();
     _flash = false;
@@ -1022,33 +1157,53 @@ class ComposerState extends ConsumerState<Composer> {
       });
     }
     if (controller == null) return;
-    XFile? file;
+    // A camera flip may still be closing its clip; let it finish before stopping.
+    while (_switchingCamera) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    final clips = [..._videoClips];
+    _videoClips.clear();
     try {
-      file = await controller.stopVideoRecording();
+      if (controller.value.isRecordingVideo) clips.add((await controller.stopVideoRecording()).path);
     } on CameraException catch (error) {
       debugPrint('video note stop failed: $error');
     } finally {
       await controller.dispose();
     }
-    if (file == null) return;
-    if (!send || duration < const Duration(seconds: 1) || !mounted) {
-      unawaited(File(file.path).delete().catchError((Object _) => File(file!.path)));
-      return;
+    void deleteClips() {
+      for (final path in clips) {
+        unawaited(File(path).delete().catchError((Object _) => File(path)));
+      }
     }
+
+    if (clips.isEmpty) return;
+    if (!send || duration < const Duration(seconds: 1) || !mounted) return deleteClips();
     final replyId = widget.replyTo?.id;
     widget.onCancelReply();
     widget.onSent();
-    // Square or Telegram delivers it as an ordinary video; without a crop it is still sent (as a video).
-    final square = await cropVideoNoteSquare(file.path);
-    if (square != null) unawaited(File(file.path).delete().catchError((Object _) => File(file!.path)));
+    // Square or Telegram delivers it as an ordinary video; without a crop the first clip is still sent (as a video).
+    final square = await cropVideoNoteSquare(clips);
+    final path = square ?? clips.first;
+    if (square != null) {
+      deleteClips();
+      try {
+        await _videoShape.writeMarker(square);
+      } on FileSystemException catch (error) {
+        debugPrint('video note shape marker failed: $error');
+      }
+    } else {
+      clips.removeAt(0);
+      deleteClips();
+    }
     if (!mounted) return;
     await guard(
       context,
       () => ref.read(accountProvider).sendVideoNote(
             widget.chat.id,
-            square ?? file!.path,
+            path,
             durationSeconds: max(1, duration.inSeconds),
-            length: videoNoteSize,
+            // The shape travels in the length (see VideoNoteShape); circle is the plain size.
+            length: _videoShape.length,
             replyToId: replyId,
           ),
     );
@@ -1279,15 +1434,24 @@ class ComposerState extends ConsumerState<Composer> {
         Expanded(
           child: isDesktop
               ? fields
-              : Container(
-                  constraints: const BoxConstraints(minHeight: 52),
+              // White pill in a polished gold frame (the UZARO look).
+              : DecoratedBox(
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(color: theme.dividerColor),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 10, offset: const Offset(0, 3))],
+                    gradient: _goldMetal,
+                    borderRadius: BorderRadius.circular(26 + _goldRim),
+                    boxShadow: [
+                      BoxShadow(color: brandGold.withValues(alpha: 0.35), blurRadius: 10),
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 3)),
+                    ],
                   ),
-                  child: fields,
+                  child: Padding(
+                    padding: const EdgeInsets.all(_goldRim),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      decoration: BoxDecoration(color: theme.colorScheme.surface, borderRadius: BorderRadius.circular(26)),
+                      child: fields,
+                    ),
+                  ),
                 ),
         ),
         if (!isDesktop) const SizedBox(width: 6),
@@ -1378,6 +1542,16 @@ class ComposerState extends ConsumerState<Composer> {
             ),
           ),
         ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _controller,
+          builder: (context, value, _) => value.selection.isValid && !value.selection.isCollapsed
+              ? IconButton(
+                  tooltip: s.t('format_text'),
+                  icon: Icon(Icons.text_format_rounded, color: theme.colorScheme.primary),
+                  onPressed: () => unawaited(_formatSheet()),
+                )
+              : const SizedBox.shrink(),
+        ),
         if (_hasText && widget.editing == null)
           IconButton(
             tooltip: 'Telegram AI',
@@ -1435,26 +1609,32 @@ class ComposerState extends ConsumerState<Composer> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
-        width: _recording ? 60 : (isDesktop ? 48 : 52),
-        height: _recording ? 60 : (isDesktop ? 48 : 52),
+        width: _recording ? 60 : (isDesktop ? 48 : 54),
+        height: _recording ? 60 : (isDesktop ? 48 : 54),
+        padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.all(_goldRim),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: _recording || !isDesktop ? brandGradient(primary, vertical: true) : null,
+          gradient: isDesktop ? (_recording ? brandGradient(primary, vertical: true) : null) : _goldMetal,
           boxShadow: [
             if (_recording) BoxShadow(color: primary.withValues(alpha: 0.28), spreadRadius: 6 + 14 * pulse),
             if (_recording || !isDesktop)
               BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4)),
           ],
         ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 160),
-          transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-          child: Icon(
-            _recording && _locked
-                ? Icons.send_rounded
-                : (_videoMode ? Icons.photo_camera_outlined : Icons.mic_rounded),
-            key: ValueKey('$_videoMode$_locked$_recording'),
-            color: _recording || !isDesktop ? Colors.white : theme.hintColor,
+        child: DecoratedBox(
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: isDesktop ? null : brandGradient(primary, vertical: true)),
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 160),
+              transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+              child: Icon(
+                _recording && _locked
+                    ? Icons.send_rounded
+                    : (_videoMode ? Icons.photo_camera_outlined : Icons.mic_rounded),
+                key: ValueKey('$_videoMode$_locked$_recording'),
+                color: _recording || !isDesktop ? Colors.white : theme.hintColor,
+              ),
+            ),
           ),
         ),
       ),
@@ -1467,7 +1647,7 @@ class ComposerState extends ConsumerState<Composer> {
     final elapsed = DateTime.now().difference(_recordStart ?? DateTime.now());
     final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
     return SizedBox(
-      height: 52,
+      height: 48,
       child: Row(
         children: [
           const SizedBox(width: 14),
@@ -1514,6 +1694,17 @@ class ComposerState extends ConsumerState<Composer> {
 }
 
 /// Round accent send button beside the floating field, matching the mic button.
+/// Width of the gold rim around the phone composer's field and its send/mic button.
+const _goldRim = 3.0;
+
+/// Polished gold: a bright highlight on top, deeper toward the bottom edge.
+const _goldMetal = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [Color(0xFFFFF0C2), Color(0xFFE2BC62), Color(0xFFA9792A), Color(0xFFE8C877)],
+  stops: [0, 0.4, 0.75, 1],
+);
+
 class _RoundButton extends StatelessWidget {
   const _RoundButton({required this.onTap, required this.child});
 
@@ -1524,18 +1715,22 @@ class _RoundButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
-      width: 52,
-      height: 52,
+      width: 54,
+      height: 54,
+      padding: const EdgeInsets.all(_goldRim),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: brandGradient(primary, vertical: true),
+        gradient: _goldMetal,
         boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Material(
-        type: MaterialType.transparency,
+        color: Colors.transparent,
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
-        child: InkWell(onTap: onTap, child: Center(child: child)),
+        child: Ink(
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(primary, vertical: true)),
+          child: InkWell(onTap: onTap, child: Center(child: child)),
+        ),
       ),
     );
   }
@@ -1552,8 +1747,10 @@ class _RecordingOverlay extends StatefulWidget {
     required this.limit,
     required this.isLocked,
     required this.flashOn,
+    required this.shape,
     this.onSwitchCamera,
     this.onFlash,
+    this.onShape,
   });
 
   /// Null for voice recordings.
@@ -1564,6 +1761,10 @@ class _RecordingOverlay extends StatefulWidget {
   final bool Function() flashOn;
   final VoidCallback? onSwitchCamera;
   final VoidCallback? onFlash;
+
+  /// Shape of the round video being recorded; [onShape] switches it while recording.
+  final VideoNoteShape Function() shape;
+  final ValueChanged<VideoNoteShape>? onShape;
 
   @override
   State<_RecordingOverlay> createState() => _RecordingOverlayState();
@@ -1605,22 +1806,38 @@ class _RecordingOverlayState extends State<_RecordingOverlay> {
           Positioned.fill(child: IgnorePointer(child: _preview(context, controller))),
           Positioned(
             left: 12,
+            // Leaves room for the lock pill on the right while the button is still held.
+            right: widget.isLocked() ? 12 : 70,
             bottom: composerTop + 14,
-            child: Container(
-              decoration: BoxDecoration(color: const Color(0xCC1E2630), borderRadius: BorderRadius.circular(28)),
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.flip_camera_android_rounded, color: Colors.white),
-                    onPressed: widget.onSwitchCamera,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              // Material, not a decorated box: the overlay has no Material above it and the buttons need one for ink.
+              child: Material(
+                color: const Color(0xCC1E2630),
+                borderRadius: BorderRadius.circular(28),
+                child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.flip_camera_android_rounded, color: Colors.white),
+                        onPressed: widget.onSwitchCamera,
+                      ),
+                      IconButton(
+                        icon: Icon(flash ? Icons.flash_on_rounded : Icons.flash_off_rounded, color: flash ? const Color(0xFFFFC94D) : Colors.white),
+                        onPressed: widget.onFlash,
+                      ),
+                      if (widget.onShape != null) ...[
+                        Container(width: 1, height: 24, margin: const EdgeInsets.symmetric(horizontal: 4), color: Colors.white24),
+                        for (final shape in VideoNoteShape.values) _shapeButton(context, shape),
+                      ],
+                    ],
                   ),
-                  IconButton(
-                    icon: Icon(flash ? Icons.flash_on_rounded : Icons.flash_off_rounded, color: flash ? const Color(0xFFFFC94D) : Colors.white),
-                    onPressed: widget.onFlash,
-                  ),
-                ],
+                ),
+                ),
               ),
             ),
           ),
@@ -1653,6 +1870,29 @@ class _RecordingOverlayState extends State<_RecordingOverlay> {
     );
   }
 
+  /// One shape in the picker: its outline, filled when selected.
+  Widget _shapeButton(BuildContext context, VideoNoteShape shape) {
+    final selected = shape == widget.shape();
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: context.t('video_shape_${shape.name}'),
+      child: InkResponse(
+        onTap: () => widget.onShape?.call(shape),
+        radius: 22,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: SizedBox.square(
+            dimension: 22,
+            child: selected
+                ? ClipPath(clipper: VideoNoteShapeClipper(shape), child: const ColoredBox(color: Color(0xFF3D9BFF)))
+                : CustomPaint(painter: VideoNoteShapeOutline(shape: shape, strokeWidth: 1.8, track: 0.9)),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _preview(BuildContext context, CameraController controller) {
     final screen = MediaQuery.sizeOf(context);
     final diameter = min(screen.width * 0.9, 420.0);
@@ -1660,6 +1900,7 @@ class _RecordingOverlayState extends State<_RecordingOverlay> {
     final progress = (elapsed.inMilliseconds / widget.limit.inMilliseconds).clamp(0.0, 1.0);
     // Reported in sensor (landscape) orientation; swapped for the portrait preview.
     final preview = controller.value.previewSize;
+    final shape = widget.shape();
     return Align(
       alignment: const Alignment(0, -0.25),
       child: SizedBox.square(
@@ -1667,10 +1908,11 @@ class _RecordingOverlayState extends State<_RecordingOverlay> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            CircularProgressIndicator(value: progress, strokeWidth: 3, color: Colors.white, strokeCap: StrokeCap.round),
+            CustomPaint(painter: VideoNoteShapeOutline(shape: shape, progress: progress)),
             Padding(
               padding: const EdgeInsets.all(6),
-              child: ClipOval(
+              child: ClipPath(
+                clipper: VideoNoteShapeClipper(shape),
                 child: FittedBox(
                   fit: BoxFit.cover,
                   child: SizedBox(
@@ -1732,6 +1974,8 @@ class _ReferenceBar extends ConsumerWidget {
     final account = ref.watch(accountProvider);
     final s = context.s;
     final primary = Theme.of(context).colorScheme.primary;
+    final thumb = replyThumb(message.content);
+    final preview = messagePreview(message, account, s);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
       child: Row(
@@ -1740,6 +1984,7 @@ class _ReferenceBar extends ConsumerWidget {
           const SizedBox(width: 10),
           Container(width: 2, height: 36, color: primary),
           const SizedBox(width: 8),
+          if (thumb != null) ...[thumb, const SizedBox(width: 8)],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1749,7 +1994,7 @@ class _ReferenceBar extends ConsumerWidget {
                   style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 14),
                 ),
                 Text(
-                  messagePreview(message, account, s).replaceAll('\n', ' '),
+                  (thumb == null ? preview : withoutMediaEmoji(preview)).replaceAll('\n', ' '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 14),
@@ -1765,6 +2010,80 @@ class _ReferenceBar extends ConsumerWidget {
 }
 
 /// Date + time picker for scheduled messages; returns a unix timestamp in the future or null.
+/// Pops the chosen style ('bold', 'link'…) of the formatting panel.
+class _FormatPanel extends StatelessWidget {
+  const _FormatPanel({required this.urlController});
+
+  final TextEditingController urlController;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final label = theme.textTheme.labelSmall?.copyWith(color: theme.hintColor, letterSpacing: 0.8);
+    Widget button(String action, Widget child, String tooltip) => Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Tooltip(
+              message: tooltip,
+              child: FilledButton.tonal(
+                style: FilledButton.styleFrom(minimumSize: const Size(0, 48), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () => Navigator.pop(context, action),
+                child: child,
+              ),
+            ),
+          ),
+        );
+    const big = TextStyle(fontSize: 20);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(13, 0, 13, 16 + MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 6), child: Text(s.t('format_link').toUpperCase(), style: label)),
+          TextField(
+            controller: urlController,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => Navigator.pop(context, 'link'),
+            decoration: InputDecoration(
+              hintText: 'URL',
+              prefixIcon: const Icon(Icons.link_rounded),
+              filled: true,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              suffixIcon: TextButton(
+                onPressed: () async {
+                  final data = await Clipboard.getData(Clipboard.kTextPlain);
+                  final text = data?.text?.trim() ?? '';
+                  if (text.isNotEmpty) urlController.text = text;
+                },
+                child: Text(s.t('paste')),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(onPressed: () => Navigator.pop(context, 'link'), child: Text(s.t('format_link_apply'))),
+          ),
+          Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 6), child: Text(s.t('format_text').toUpperCase(), style: label)),
+          Row(children: [
+            button('bold', const Text('B', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)), s.t('format_bold')),
+            button('italic', const Text('I', style: TextStyle(fontSize: 20, fontStyle: FontStyle.italic, fontFamily: 'serif')), s.t('format_italic')),
+            button('underline', const Text('U', style: TextStyle(fontSize: 20, decoration: TextDecoration.underline)), s.t('format_underline')),
+            button('strike', const Text('S', style: TextStyle(fontSize: 20, decoration: TextDecoration.lineThrough)), s.t('format_strike')),
+          ]),
+          Row(children: [
+            button('mono', const Text('Mono', style: TextStyle(fontSize: 18, fontFamily: 'monospace')), s.t('format_code')),
+            button('spoiler', FittedBox(child: Text(s.t('format_spoiler'), maxLines: 1, style: big)), s.t('format_spoiler')),
+            button('collapse', const Icon(Icons.unfold_less_rounded), s.t('format_collapse')),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
 Future<int?> pickScheduleTime(BuildContext context) async {
   final now = DateTime.now();
   final date = await showDatePicker(context: context, firstDate: now, lastDate: now.add(const Duration(days: 365)), initialDate: now);

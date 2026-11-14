@@ -2,6 +2,8 @@ FROM python:3.13-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /srv
 RUN useradd --system --uid 10001 sado
+# ffmpeg/ffprobe compress the hub movies before they are posted to Telegram.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY alembic.ini .

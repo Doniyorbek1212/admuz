@@ -5,6 +5,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/telegram.dart';
@@ -64,6 +65,49 @@ class ProfileAudiosTile extends ConsumerWidget {
       title: Text(context.t('profile_audio')),
       trailing: Text('${audios.totalCount}'),
       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProfileAudiosScreen(userId: userId))),
+    );
+  }
+}
+
+/// Telegram-style chip under the profile buttons: "♫ title - performer ›" of the first profile track; opens the list.
+class ProfileMusicChip extends ConsumerWidget {
+  const ProfileMusicChip({super.key, required this.userId, this.color});
+
+  final int userId;
+
+  /// Text color on a coloured header; the theme's by default.
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final audio = ref.watch(_profileAudiosProvider(userId)).value?.audios.firstOrNull;
+    if (audio == null) return const SizedBox.shrink();
+    final label = [audio.title, audio.performer].where((p) => p.isNotEmpty).join(' - ');
+    final foreground = color ?? Theme.of(context).colorScheme.onSurface;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+        child: Material(
+          color: foreground.withValues(alpha: 0.1),
+          shape: const StadiumBorder(side: BorderSide(color: brandGold, width: 1.2)),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProfileAudiosScreen(userId: userId))),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.music_note_rounded, size: 16, color: foreground),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(label.isEmpty ? audio.fileName : label,
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: foreground, fontSize: 13.5, fontWeight: FontWeight.w600)),
+                ),
+                Icon(Icons.chevron_right_rounded, size: 18, color: foreground.withValues(alpha: 0.7)),
+              ]),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

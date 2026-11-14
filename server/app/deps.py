@@ -1,3 +1,4 @@
+import ipaddress
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -65,6 +66,7 @@ def require_admin(minimum: AdminRole) -> Callable[..., Coroutine[Any, Any, Admin
     """Admin auth via X-Admin-Key (stored hashed). Roles are hierarchical."""
 
     async def dependency(request: Request, db: DbDep, x_admin_key: Annotated[str | None, Header()] = None) -> AdminUser:
+        require_admin_address(request)
         if not x_admin_key:
             raise unauthorized("ADMIN_KEY_REQUIRED")
         admin = None
@@ -107,6 +109,19 @@ async def revoke_admin_sessions(admin_id: uuid.UUID) -> int:
         if await redis.get(key) == str(admin_id):
             removed += await redis.delete(key)
     return removed
+
+
+def require_admin_address(request: Request) -> None:
+    """With SADO_BILLING_ADMIN_ALLOWED_IPS set, the admin API answers only those networks (office, VPN)."""
+    networks = get_settings().admin_networks
+    if not networks:
+        return
+    try:
+        address = ipaddress.ip_address(client_ip(request))
+    except ValueError as exc:
+        raise forbidden("ADMIN_ADDRESS_FORBIDDEN") from exc
+    if not any(address in network for network in networks):
+        raise forbidden("ADMIN_ADDRESS_FORBIDDEN")
 
 
 def client_ip(request: Request) -> str:

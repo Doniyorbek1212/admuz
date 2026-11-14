@@ -8,6 +8,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../l10n/strings.dart';
 import '../state/telegram.dart';
 import 'formatters.dart';
+import 'message_tones.dart';
 
 /// Local notifications for messages that arrive while the app is running but the chat is not on screen.
 ///
@@ -23,13 +24,19 @@ class MessageNotifier {
   void Function(int chatId)? onOpenChat;
 
   Future<void> initialize() async {
-    if (_initialized || !(Platform.isAndroid || Platform.isIOS)) return;
+    if (_initialized || !(Platform.isAndroid || Platform.isIOS || Platform.isWindows)) return;
     _initialized = true;
     try {
       await _plugin.initialize(
         settings: const InitializationSettings(
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(),
+          // Windows toasts: the id and GUID must never change, or old toasts lose their app.
+          windows: WindowsInitializationSettings(
+            appName: 'UZARO',
+            appUserModelId: 'uz.uzaro.app',
+            guid: '6f1c2a4e-8b3d-4e5f-9a7c-2d1e0b4c8f63',
+          ),
         ),
         onDidReceiveNotificationResponse: (response) {
           final chatId = int.tryParse(response.payload ?? '');
@@ -49,6 +56,8 @@ class MessageNotifier {
     required td.Message message,
     required Strings strings,
     required bool showPreview,
+    required String tone,
+    bool silent = false,
   }) async {
     if (!_initialized) return;
     final chat = account.chats[message.chatId];
@@ -62,16 +71,10 @@ class MessageNotifier {
         title: title,
         body: body,
         payload: '${message.chatId}',
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'messages',
-            'Messages',
-            channelDescription: 'New messages',
-            importance: Importance.high,
-            priority: Priority.high,
-            category: AndroidNotificationCategory.message,
-          ),
-          iOS: DarwinNotificationDetails(),
+        notificationDetails: NotificationDetails(
+          android: MessageTones.android(tone, silent: silent),
+          // shortcut: iOS keeps the system sound; custom tones need .caf files in the app bundle.
+          iOS: DarwinNotificationDetails(presentSound: !silent && tone != 'none'),
         ),
       );
     } on Object catch (error) {
