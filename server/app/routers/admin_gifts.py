@@ -15,7 +15,7 @@ from app.errors import bad_request, conflict, not_found
 from app.models import AdminRole, AdminUser, Customer, GiftItem, SentGift, TelegramLink, TopupStatus, WalletTopup
 from app.routers.admin_market import ReasonIn
 from app.routers.gifts import gift_out, topup_out
-from app.services import wallet
+from app.services import pay_notify, wallet
 from app.services.audit import audit
 from app.uploads import private_file, save_gift_animation, save_gift_video
 
@@ -144,6 +144,7 @@ async def approve_topup(topup_id: uuid.UUID, admin: Support, db: DbDep) -> dict[
     await wallet.record(db, topup.customer_id, topup.amount_uzs, "topup", str(topup.id))
     audit(db, f"admin:{admin.name}", "topup_approved", str(topup.id), amount_uzs=topup.amount_uzs)
     await db.commit()
+    await pay_notify.credited(db, topup.customer_id, topup.amount_uzs, "karta")
     return topup_out(topup)
 
 
@@ -158,6 +159,7 @@ async def reject_topup(topup_id: uuid.UUID, body: ReasonIn, admin: Support, db: 
     topup.reviewed_at = datetime.now(UTC)
     audit(db, f"admin:{admin.name}", "topup_rejected", str(topup.id), reason=body.reason)
     await db.commit()
+    await pay_notify.rejected(db, topup.customer_id, topup.amount_uzs, body.reason)
     return topup_out(topup)
 
 

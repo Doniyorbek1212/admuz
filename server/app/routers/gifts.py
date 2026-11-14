@@ -15,6 +15,7 @@ from fastapi import APIRouter, File, Form, Header, Query, Request, UploadFile, s
 from fastapi.responses import JSONResponse
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.deps import CustomerDep, DbDep, get_redis, rate_limit
@@ -24,6 +25,7 @@ from app.routers.payme import payme_configured
 from app.security import constant_time_equals, sha256_hex
 from app.services import username_bot, wallet
 from app.services.audit import audit
+from app.services.carry_over import carry_over
 from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
 
@@ -165,12 +167,20 @@ async def telegram_webhook(
     if customer_id is None:
         return _reply(chat["id"], "Assalomu alaykum! Bu UZARO boti. Sovg'alar UZARO ilovasida: https://uzaromessenger.uz")
     customer = uuid.UUID(customer_id)
+    previous = await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.telegram_user_id == user_id))
+    if previous is not None and previous != customer:
+        # Same person on a fresh install: everything they own follows the Telegram account.
+        moved = await carry_over(db, previous, customer)
+        audit(db, f"customer:{customer}", "wallet_moved", str(customer), from_customer=str(previous), amount_uzs=moved)
     # The newest proof wins: this Telegram account moves to this customer, this customer to this account.
     await db.execute(delete(TelegramLink).where((TelegramLink.telegram_user_id == user_id) | (TelegramLink.customer_id == customer)))
     db.add(TelegramLink(customer_id=customer, telegram_user_id=user_id))
     audit(db, f"customer:{customer}", "telegram_linked", str(customer))
+    await db.flush()
+    bonus = await wallet.grant_welcome(db, customer, (await load_market_settings(db)).welcome_bonus_uzs)
     await db.commit()
-    return _reply(chat["id"], "✅ UZARO hisobingiz tasdiqlandi. Ilovaga qayting — endi sovg'a yubora olasiz.")
+    gift = f"\n🎁 Balansingizga {bonus:,} so'm bonus qo'shildi.".replace(",", " ") if bonus else ""
+    return _reply(chat["id"], f"✅ UZARO hisobingiz tasdiqlandi. Ilovaga qayting — endi sovg'a yubora olasiz.{gift}")
 
 
 # ---- catalog, sending, profiles ----
@@ -389,6 +399,12 @@ async def set_all_gifts_hidden(body: VisibilityIn, current: CustomerDep, db: DbD
 @router.get("/wallet")
 async def get_wallet(current: CustomerDep, db: DbDep) -> dict[str, Any]:
     settings = await load_market_settings(db)
+    # Users linked before the bonus existed get it here, the first time they open the wallet.
+    if await wallet.grant_welcome(db, current.id, settings.welcome_bonus_uzs):
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()  # the same request twice at once: the other one granted it
     topups = await db.scalars(
         select(WalletTopup).where(WalletTopup.customer_id == current.id).order_by(WalletTopup.created_at.desc()).limit(10)
     )
@@ -400,6 +416,9 @@ async def get_wallet(current: CustomerDep, db: DbDep) -> dict[str, Any]:
         "topups": [topup_out(t) for t in topups],
         # The app offers "Pay with Payme" only while the server has the cashbox keys.
         "payme": payme_configured(),
+        # Not linked yet: the bonus that linking the Telegram account would bring (granted above once linked).
+        "welcome_bonus_uzs": 0 if await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.customer_id == current.id))
+        else settings.welcome_bonus_uzs,
         # The wallet screen's latest history; the full list pages through /wallet/history.
         "entries": entries,
         "entries_more": more,

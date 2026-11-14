@@ -144,6 +144,10 @@ def profile_out(profile: CustomerProfile | None) -> dict[str, Any] | None:
     return {"first_name": profile.first_name, "last_name": profile.last_name, "username": profile.username, "phone": profile.phone}
 
 
+# AdCampaign.receipt_path of an ad paid from the UZARO balance: there is no receipt file.
+WALLET_PAID = "wallet"
+
+
 def ad_out(ad: AdCampaign, *, private: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": str(ad.id),
@@ -162,7 +166,8 @@ def ad_out(ad: AdCampaign, *, private: bool = False) -> dict[str, Any]:
             "days": ad.days,
             "price_uzs": ad.price_uzs,
             "status": ad.status.value,
-            "has_receipt": ad.receipt_path is not None,
+            "has_receipt": ad.receipt_path not in (None, WALLET_PAID),
+            "paid_from_wallet": ad.receipt_path == WALLET_PAID,
             "reject_reason": ad.reject_reason,
             "starts_at": ad.starts_at.isoformat() if ad.starts_at else None,
             "ends_at": ad.ends_at.isoformat() if ad.ends_at else None,

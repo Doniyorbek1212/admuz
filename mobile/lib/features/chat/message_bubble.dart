@@ -309,10 +309,13 @@ class MessageBubble extends ConsumerWidget {
     if (showSender && !outgoing && (account.isGroup(chat) || isChannel && message.authorSignature != null)) {
       final name = isChannel ? (message.authorSignature ?? '') : account.senderName(message.senderId);
       final seed = account.senderKey(message.senderId);
-      senderLabel = Text(
+      final label = Text(
         name,
         style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: _nameColors[seed.abs() % _nameColors.length]),
       );
+      senderLabel = isChannel
+          ? label
+          : GestureDetector(onTap: () => openSenderProfile(context, account, message.senderId), child: label);
     }
 
     final children = <Widget>[
@@ -467,7 +470,10 @@ class MessageBubble extends ConsumerWidget {
               SizedBox(
                 width: 40,
                 child: showTail && message.senderId is td.MessageSenderUser
-                    ? UserAvatar(userId: (message.senderId as td.MessageSenderUser).userId, size: 34, showOnline: false)
+                    ? GestureDetector(
+                        onTap: () => openSenderProfile(context, account, message.senderId),
+                        child: UserAvatar(userId: (message.senderId as td.MessageSenderUser).userId, size: 34, showOnline: false),
+                      )
                     : null,
               ),
             Flexible(

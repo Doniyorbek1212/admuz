@@ -32,6 +32,13 @@ class MarketSettings:
     username_price_4_uzs: int = 0
     # UZARO badge next to the name (checkmark or custom emoji), per 30 days, in so'm; 0 = not on sale.
     badge_price_uzs: int = 15_000
+    # Pay bot rates: so'm one Telegram Star buys, so'm one TON buys, and the TON wallet receiving payments;
+    # 0 or empty switches that method off.
+    stars_uzs_per_star: int = 0
+    ton_uzs_per_ton: int = 0
+    ton_wallet: str = ""
+    # So'm put on the balance once per Telegram account when it is first linked; 0 stops new grants.
+    welcome_bonus_uzs: int = 100_000
 
 
 EDITABLE = tuple(f.name for f in fields(MarketSettings))
@@ -45,6 +52,7 @@ def defaults() -> MarketSettings:
         ad_payment_card_holder=env.ad_payment_card_holder,
         extra_shop_price_uzs=env.extra_shop_price_uzs,
         shop_free_limit=env.shop_free_limit,
+        welcome_bonus_uzs=env.welcome_bonus_uzs,
     )
 
 

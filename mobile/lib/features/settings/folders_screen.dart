@@ -13,6 +13,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
 import '../../widgets/common.dart';
+import '../home/tab_order_screen.dart' show TabOrderScreen;
 import 'privacy_screen.dart' show promptText;
 
 final _recommendedProvider = FutureProvider.autoDispose<List<td.RecommendedChatFolder>>((ref) async {
@@ -149,17 +150,21 @@ Future<void> deleteChatFolder(BuildContext context, TelegramAccount account, int
 
 /// Long-press menu of a chat list tab: mark everything read; edit or delete a folder.
 Future<void> showFolderMenu(BuildContext context, TelegramAccount account, String listKey, String title) async {
-  if (listKey != 'main' && !listKey.startsWith('folder:')) return;
   final s = context.s;
-  final list = chatListFromKey(listKey);
+  // Type tabs ("Shaxsiy", "Guruhlar"...) are filters, not Telegram chat lists: only the tab order applies to them.
+  final isList = listKey == 'main' || listKey.startsWith('folder:');
+  final list = isList ? chatListFromKey(listKey) : null;
   final folderId = list is td.ChatListFolder ? list.chatFolderId : null;
   final action = await showModalBottomSheet<String>(
     context: context,
     showDragHandle: true,
     builder: (context) => SafeArea(
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        ListTile(leading: const Icon(Icons.mark_chat_read_rounded), title: Text(s.t('mark_all_read')), onTap: () => Navigator.pop(context, 'read')),
-        ListTile(leading: const Icon(Icons.push_pin_outlined), title: Text(s.t('pinned_reorder')), onTap: () => Navigator.pop(context, 'pinned')),
+        ListTile(leading: const Icon(Icons.swap_horiz_rounded), title: Text(s.t('tab_order')), onTap: () => Navigator.pop(context, 'order')),
+        if (isList) ...[
+          ListTile(leading: const Icon(Icons.mark_chat_read_rounded), title: Text(s.t('mark_all_read')), onTap: () => Navigator.pop(context, 'read')),
+          ListTile(leading: const Icon(Icons.push_pin_outlined), title: Text(s.t('pinned_reorder')), onTap: () => Navigator.pop(context, 'pinned')),
+        ],
         if (folderId != null) ...[
           ListTile(leading: const Icon(Icons.edit_rounded), title: Text(s.t('edit_folder')), onTap: () => Navigator.pop(context, 'edit')),
           ListTile(leading: const Icon(Icons.emoji_symbols_rounded), title: Text(s.t('folder_icon')), onTap: () => Navigator.pop(context, 'icon')),
@@ -175,12 +180,14 @@ Future<void> showFolderMenu(BuildContext context, TelegramAccount account, Strin
   );
   if (!context.mounted) return;
   switch (action) {
+    case 'order':
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TabOrderScreen()));
     case 'read' when ProviderScope.containerOf(context, listen: false).read(settingsProvider).ghostMode:
       // Ghost mode: read on this phone only, so no sender gets a read receipt.
       for (final chat in [...account.chats.values]) {
         if (chat.chatLists.any((l) => chatListKey(l) == listKey)) account.markReadLocally(chat.id);
       }
-    case 'read':
+    case 'read' when list != null:
       await guard(context, () => account.send<td.Ok>(td.ReadChatList(chatList: list)));
     case 'pinned':
       await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PinnedOrderScreen(listKey: listKey)));

@@ -371,6 +371,33 @@ class SadoApi {
     return Uri.parse(body['checkout_url'] as String);
   }
 
+  /// The store top-up packs (product id -> so'm credited), which stores the server takes, and the account tag
+  /// every purchase must carry.
+  Future<({bool googlePlay, bool appStore, String account, Map<String, int> amounts})> storePacks() async {
+    final body = await _get('/v1/wallet/store-packs') as Map<String, dynamic>;
+    final products = (body['products'] as List<dynamic>? ?? const []).cast<Map<String, dynamic>>();
+    return (
+      googlePlay: body['google_play'] as bool? ?? false,
+      appStore: body['app_store'] as bool? ?? false,
+      account: body['account'] as String? ?? '',
+      amounts: {for (final p in products) p['product_id'] as String: p['amount_uzs'] as int},
+    );
+  }
+
+  /// Hands a Play purchase to the server, which checks it with Google, credits the pack and consumes it.
+  /// [state] is credited, already_credited or pending.
+  Future<({String state, int amountUzs})> creditGooglePlay(String productId, String purchaseToken) async =>
+      _storeCredit(await _post('/v1/wallet/google-play', data: {'product_id': productId, 'purchase_token': purchaseToken}));
+
+  /// Hands a StoreKit 2 signed transaction to the server, which verifies Apple's signature and credits the pack.
+  Future<({String state, int amountUzs})> creditAppStore(String signedTransaction) async =>
+      _storeCredit(await _post('/v1/wallet/app-store', data: {'signed_transaction': signedTransaction}));
+
+  ({String state, int amountUzs}) _storeCredit(Object? response) {
+    final body = response as Map<String, dynamic>;
+    return (state: body['state'] as String, amountUzs: body['amount_uzs'] as int? ?? 0);
+  }
+
   // ------------------------------------------------------------------ usage statistics
 
   /// Reports [event] ("app_open", "hub_open", "movies_open") at most once per calendar day; never throws.
@@ -406,6 +433,10 @@ class SadoApi {
     final form = FormData.fromMap({'file': await MultipartFile.fromFile(filePath)});
     return Ad.fromJson(await _post('/v1/ads/$adId/receipt', data: form) as Map<String, dynamic>);
   }
+
+  /// Pays the ad from the UZARO balance; it then waits for an admin's content check.
+  Future<Ad> payAdFromWallet(String adId) async =>
+      Ad.fromJson(await _post('/v1/ads/$adId/pay-wallet') as Map<String, dynamic>);
 
   Future<void> cancelAd(String adId) => _delete('/v1/ads/$adId');
 

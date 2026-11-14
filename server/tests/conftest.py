@@ -17,6 +17,8 @@ os.environ.update({
     "SADO_BILLING_ENABLED_PROVIDERS": '["mock"]',
     "SADO_BILLING_MOCK_WEBHOOK_SECRET": "mock-secret-for-tests-only-0123456789",
     "SADO_BILLING_RATE_LIMIT_PER_MINUTE": "1000",
+    # Balances in tests start at 0; the bonus has its own test.
+    "SADO_BILLING_WELCOME_BONUS_UZS": "0",
     # The tests sign admins in with CLI-style keys.
     "SADO_BILLING_ADMIN_PERMANENT_KEYS": "true",
 })

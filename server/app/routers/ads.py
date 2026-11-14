@@ -12,8 +12,10 @@ from sqlalchemy import select, update
 
 from app.deps import CustomerDep, DbDep, get_redis, rate_limit
 from app.errors import bad_request, conflict, not_found
-from app.market import REGIONS, MediaUrl, OptionalHttpsUrl, Region, ad_out
-from app.models import AdCampaign, AdStatus, MediaUpload
+from app.market import REGIONS, WALLET_PAID, MediaUrl, OptionalHttpsUrl, Region, ad_out
+from app.models import AdCampaign, AdStatus, Customer, MediaUpload, TelegramLink, WalletEntry
+from app.services import wallet
+from app.services.audit import audit
 from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics, guess_topics, load_profile, rank_ads, record_signals
 from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
@@ -167,6 +169,8 @@ async def upload_receipt(ad_id: uuid.UUID, current: CustomerDep, db: DbDep, file
     ad = await _own_ad(db, current.id, ad_id)
     if ad.status not in (AdStatus.AWAITING_PAYMENT, AdStatus.PENDING_REVIEW, AdStatus.REJECTED):
         raise conflict("AD_ALREADY_REVIEWED")
+    if await _charged(db, ad):
+        raise conflict("AD_PAID_FROM_WALLET")
     ad.receipt_path = await save_receipt(file)
     ad.status = AdStatus.PENDING_REVIEW
     ad.reject_reason = None
@@ -174,10 +178,55 @@ async def upload_receipt(ad_id: uuid.UUID, current: CustomerDep, db: DbDep, file
     return ad_out(ad, private=True)
 
 
+async def _lock_spending(db: DbDep, customer_id: uuid.UUID) -> None:
+    """Serialises this customer's spending: the same rows gifts, badges and names lock."""
+    await db.scalar(select(Customer.id).where(Customer.id == customer_id).with_for_update())
+    await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.customer_id == customer_id).with_for_update())
+
+
+@router.post("/{ad_id}/pay-wallet")
+async def pay_from_wallet(ad_id: uuid.UUID, current: CustomerDep, db: DbDep) -> dict[str, Any]:
+    """Pays the ad from the UZARO balance (the store builds' only way to pay); an admin then checks the content.
+    A rejected ad that was already charged goes back to review without a second charge."""
+    await rate_limit(f"adpay:{current.id}", limit=20, window_seconds=3600)
+    await _lock_spending(db, current.id)
+    ad = await _own_ad(db, current.id, ad_id)
+    if ad.status not in (AdStatus.AWAITING_PAYMENT, AdStatus.REJECTED):
+        raise conflict("AD_ALREADY_REVIEWED")
+    if not await _charged(db, ad):
+        if await wallet.balance(db, current.id) < ad.price_uzs:
+            raise conflict("INSUFFICIENT_BALANCE")
+        await wallet.record(db, current.id, -ad.price_uzs, "ad", str(ad.id))
+        audit(db, f"customer:{current.id}", "ad_paid_wallet", str(ad.id), price_uzs=ad.price_uzs)
+    ad.receipt_path = WALLET_PAID
+    ad.status = AdStatus.PENDING_REVIEW
+    ad.reject_reason = None
+    await db.commit()
+    return ad_out(ad, private=True) | {"balance_uzs": await wallet.balance(db, current.id)}
+
+
+async def _charged(db: DbDep, ad: AdCampaign) -> bool:
+    """Paid from the balance and not refunded yet."""
+    rows = await db.scalars(
+        select(WalletEntry.kind).where(
+            WalletEntry.customer_id == ad.customer_id,
+            ((WalletEntry.kind == "ad") & (WalletEntry.reference == str(ad.id)))
+            | ((WalletEntry.kind == "refund") & (WalletEntry.reference == f"ad:{ad.id}")),
+        )
+    )
+    kinds = set(rows)
+    return "ad" in kinds and "refund" not in kinds
+
+
 @router.delete("/{ad_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_ad(ad_id: uuid.UUID, current: CustomerDep, db: DbDep) -> None:
+    await _lock_spending(db, current.id)
     ad = await _own_ad(db, current.id, ad_id)
     if ad.status == AdStatus.APPROVED:
         raise conflict("AD_ALREADY_APPROVED")
+    # Never shown: what it cost from the balance goes back.
+    if await _charged(db, ad):
+        await wallet.record(db, current.id, ad.price_uzs, "refund", f"ad:{ad.id}")
+        audit(db, f"customer:{current.id}", "ad_refund_wallet", str(ad.id), price_uzs=ad.price_uzs)
     await db.delete(ad)
     await db.commit()

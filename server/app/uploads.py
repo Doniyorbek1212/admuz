@@ -42,7 +42,11 @@ def _write(path: Path, data: bytes) -> None:
 
 async def save_receipt(file: UploadFile) -> str:
     """Stores a payment receipt image privately; returns its path relative to the media dir."""
-    data = await read_limited(file, get_settings().max_image_bytes)
+    return await save_receipt_bytes(await read_limited(file, get_settings().max_image_bytes))
+
+
+async def save_receipt_bytes(data: bytes) -> str:
+    """Like [save_receipt] for an image already in memory (a photo sent to the pay bot)."""
     kind = sniff(data)
     if kind is None or kind[0] != "image":
         raise bad_request("RECEIPT_NOT_AN_IMAGE")

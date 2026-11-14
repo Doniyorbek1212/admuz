@@ -10,6 +10,7 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_drawer.dart';
 import '../home/home_screen.dart';
+import '../home/tab_order_screen.dart';
 
 /// Font families every Android phone ships (fonts.xml), so no font files are bundled.
 const _fonts = ['', 'sans-serif-light', 'sans-serif-medium', 'sans-serif-condensed', 'serif', 'monospace', 'casual', 'cursive'];
@@ -109,6 +110,12 @@ class UzaroSettingsScreen extends ConsumerWidget {
             toggle('keep_deleted', settings.keepDeleted, notifier.setKeepDeleted, hint: 'keep_deleted_hint'),
             toggle('avatar_opens_profile', settings.avatarOpensProfile, notifier.setAvatarOpensProfile),
             toggle('chat_type_tabs', settings.chatTypeTabs, notifier.setChatTypeTabs, hint: 'chat_type_tabs_hint'),
+            ListTile(
+              title: Text(s.t('tab_order')),
+              subtitle: Text(s.t('tab_order_hint')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TabOrderScreen())),
+            ),
             toggle('send_by_enter', settings.sendByEnter, notifier.setSendByEnter),
           ]),
           SettingsGroup(title: s.t('reset_title'), children: [

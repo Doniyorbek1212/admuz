@@ -145,7 +145,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
           ]),
           SettingsGroup(children: [
             _row(Icons.work_rounded, const Color(0xFFFF7A59), s.t('hub_business'), () => _push(const BusinessScreen())),
-            if (!storeBlocksExternalPayments) _row(Icons.campaign_rounded, const Color(0xFFFF4D7A), s.t('hub_ads'), () => _push(const AdsScreen())),
+            if (!storeBlocksWalletSpending) _row(Icons.campaign_rounded, const Color(0xFFFF4D7A), s.t('hub_ads'), () => _push(const AdsScreen())),
             if (ref.watch(hasAdminKeyProvider).value ?? false)
               _row(Icons.admin_panel_settings_rounded, const Color(0xFF5A6B7F), s.t('admin_title'), () => _push(const AdminPanelScreen())),
             _row(Icons.settings_rounded, const Color(0xFF8E8E93), s.t('settings'), () => _openPanel(const SettingsScreen())),

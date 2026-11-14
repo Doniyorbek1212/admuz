@@ -173,12 +173,21 @@ class WalletEntryTile extends ConsumerWidget {
         'gift' => entry.titleFor(s.locale) ?? s.t('gifts_title'),
         'badge' => s.t('uzaro_badge'),
         'username' => entry.title == null ? s.t('uzaro_username') : '@${entry.title}',
+        'ad' => s.t('hub_ads'),
         _ => s.t('wallet_kind_adjust'),
       };
 
   /// What the line was about: how it was paid, or who got the gift.
   String? _detail(Strings s, WidgetRef ref) => switch (entry.kind) {
-        'topup' || 'refund' => entry.method == 'payme' ? 'Payme' : s.t('wallet_method_card'),
+        'topup' || 'refund' => switch (entry.method) {
+            'payme' => 'Payme',
+            'google_play' => 'Google Play',
+            'app_store' => 'App Store',
+            'telegram_stars' => 'Telegram Stars',
+            'ton' => 'TON',
+            'ad' => s.t('hub_ads'),
+            _ => s.t('wallet_method_card'),
+          },
         'gift' when entry.toSelf => s.t('wallet_gift_self'),
         'gift' => _recipientName(ref) ?? s.t('wallet_gift_sent'),
         'badge' => s.t('wallet_badge_bought'),
@@ -202,6 +211,7 @@ class WalletEntryTile extends ConsumerWidget {
         'gift' => entry.toSelf ? Icons.shopping_bag_rounded : Icons.card_giftcard_rounded,
         'badge' => Icons.verified_rounded,
         'username' => Icons.alternate_email_rounded,
+        'ad' => Icons.campaign_rounded,
         _ => Icons.tune_rounded,
       };
 
@@ -212,6 +222,7 @@ class WalletEntryTile extends ConsumerWidget {
         'gift' => const Color(0xFFE5486A),
         'badge' => const Color(0xFF2E9BF0),
         'username' => const Color(0xFF7E57C2),
+        'ad' => const Color(0xFFFF4D7A),
         _ => const Color(0xFF8E8E93),
       };
 }

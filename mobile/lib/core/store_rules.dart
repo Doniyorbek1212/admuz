@@ -10,4 +10,12 @@ import 'dart:io';
 bool get storeBlocksExternalPayments =>
     (Platform.isIOS || _store == 'play') && const String.fromEnvironment('STORE_PAYMENTS') != 'on';
 
+/// Store builds top the UZARO balance up through the store's own billing (Google Play Billing, App Store In-App
+/// Purchase) instead of Payme or a card transfer.
+bool get storeBillingTopUp => Platform.isIOS || (Platform.isAndroid && _store == 'play');
+
+/// Spending the balance on digital goods (gifts, the badge, names): blocked only where the balance cannot be bought
+/// through the store itself.
+bool get storeBlocksWalletSpending => storeBlocksExternalPayments && !storeBillingTopUp;
+
 const _store = String.fromEnvironment('STORE');

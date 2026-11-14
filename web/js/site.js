@@ -137,6 +137,120 @@
     });
   }
 
+  // Wallet page: sign in through the pay bot (one-time code), then show the balance and open Payme for a pack.
+  // The session token lives in sessionStorage only: it dies with the tab and the server expires it in 30 minutes.
+  function wireWallet() {
+    const box = document.getElementById("wallet");
+    if (!box) return;
+    const SESSION_KEY = "uzaro.wallet";
+    const POLL_MS = 2000;
+    const status = box.querySelector("#wallet-status");
+    const bot = box.querySelector("#wallet-bot");
+    let poll = 0;
+    const message = (key, name = "") => {
+      const template = box.querySelector(`#wallet-messages [data-msg="${key}"]`) || box.querySelector('#wallet-messages [data-msg="error"]');
+      return template.textContent.replace("{name}", name);
+    };
+    const say = (text = "") => { status.textContent = text; };
+    const step = (name) => box.querySelectorAll("[data-step]").forEach((el) => { el.hidden = el.dataset.step !== name; });
+    const token = {
+      get() { try { return sessionStorage.getItem(SESSION_KEY); } catch { return null; } },
+      set(value) { try { sessionStorage.setItem(SESSION_KEY, value); } catch { /* not remembered: sign in again next time */ } },
+      clear() { try { sessionStorage.removeItem(SESSION_KEY); } catch { /* nothing stored */ } },
+    };
+    const api = async (path, options = {}) => {
+      const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) };
+      const session = token.get();
+      if (session) headers["X-Wallet-Session"] = session;
+      const response = await fetch(path, { ...options, headers, cache: "no-store" });
+      const data = response.status === 204 ? null : await response.json().catch(() => null);
+      return { status: response.status, data };
+    };
+    const failure = (code) => (code === 429 ? "busy" : code === 503 ? "off" : "error");
+    const stopPolling = () => { clearTimeout(poll); poll = 0; };
+    const signOut = (text = "") => { stopPolling(); token.clear(); step("out"); say(text); };
+
+    async function showWallet() {
+      const { status: code, data } = await api("/v1/web/wallet");
+      if (code === 401) return signOut();
+      if (code !== 200 || !data) return say(message(failure(code)));
+      box.querySelector("#wallet-name").textContent = message("hello", String(data.name || "").slice(0, 64));
+      box.querySelector("#wallet-balance").textContent = String(data.balance_text || "");
+      const packs = box.querySelector("#wallet-packs");
+      packs.replaceChildren(...(Array.isArray(data.packs) ? data.packs : []).map((pack) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-main";
+        button.textContent = String(pack.text || "");
+        button.disabled = !data.payme;
+        button.addEventListener("click", () => openPayme(Number(pack.amount_uzs), button));
+        return button;
+      }));
+      step("in");
+      say(data.payme ? "" : message("payme_off"));
+    }
+
+    async function openPayme(amount, button) {
+      button.disabled = true;
+      try {
+        const { status: code, data } = await api("/v1/web/payme", { method: "POST", body: JSON.stringify({ amount_uzs: amount }) });
+        if (code === 401) return signOut(message("expired"));
+        const url = data && typeof data.checkout_url === "string" ? data.checkout_url : "";
+        // Only Payme's own checkout is followed, whatever the answer says.
+        if (code !== 201 || !/^https:\/\/(checkout|test)\.paycom\.uz\//.test(url)) return say(message(failure(code)));
+        location.href = url;
+      } catch {
+        say(message("error"));
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function waitForBot(code, deadline) {
+      if (Date.now() > deadline) return signOut(message("expired"));
+      try {
+        const { status: answer, data } = await api(`/v1/web/login/${encodeURIComponent(code)}`);
+        if (answer === 404) return signOut(message("expired"));
+        if (answer === 200 && data?.status === "ok" && typeof data.token === "string") {
+          stopPolling();
+          token.set(data.token);
+          say();
+          return showWallet();
+        }
+      } catch {
+        // A dropped request is retried on the next tick.
+      }
+      poll = setTimeout(() => waitForBot(code, deadline), POLL_MS);
+    }
+
+    box.querySelector("#wallet-login").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      say();
+      try {
+        const { status: code, data } = await api("/v1/web/login", { method: "POST" });
+        const link = data && typeof data.bot_url === "string" && /^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}\?start=web_[\w-]+$/.test(data.bot_url) ? data.bot_url : "";
+        if (code !== 200 || !link) return say(message(failure(code)));
+        bot.href = link;
+        step("wait");
+        bot.focus();
+        waitForBot(data.code, Date.now() + (Number(data.expires_in) || 600) * 1000);
+      } catch {
+        say(message("error"));
+      } finally {
+        button.disabled = false;
+      }
+    });
+    box.querySelector("[data-wallet-cancel]").addEventListener("click", () => signOut());
+    box.querySelector("#wallet-logout").addEventListener("click", async () => {
+      await api("/v1/web/logout", { method: "POST" }).catch(() => null);
+      signOut();
+    });
+
+    // Coming back from Payme or a new visit in the same tab: the session is still there.
+    if (token.get()) showWallet().catch(() => say(message("error")));
+  }
+
   function wireStores() {
     document.querySelectorAll("[data-store]").forEach((el) => {
       const url = STORE_LINKS[el.dataset.store];
@@ -176,5 +290,6 @@
   wireMenu();
   wireHeader();
   wireNameCheck();
+  wireWallet();
   loadRelease();
 })();

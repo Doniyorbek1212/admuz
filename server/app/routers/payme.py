@@ -16,13 +16,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.deps import CustomerDep, DbDep, rate_limit
 from app.errors import unavailable
 from app.models import PaymeOrder
 from app.security import constant_time_equals
-from app.services import wallet
+from app.services import pay_notify, wallet
 from app.services.audit import audit
 
 router = APIRouter(prefix="/v1", tags=["payme"])
@@ -79,21 +80,28 @@ class PaymeOrderIn(BaseModel):
     amount_uzs: Annotated[int, Field(ge=MIN_TOPUP_UZS, le=MAX_TOPUP_UZS)]
 
 
-def checkout_url(order: PaymeOrder) -> str:
+def checkout_url(order: PaymeOrder, return_url: str | None = None) -> str:
     settings = get_settings()
-    params = f"m={settings.payme_merchant_id};ac.order_id={order.id};a={order.amount_uzs * 100};l=uz;c={settings.payme_return_url}"
+    back = return_url or settings.payme_return_url
+    params = f"m={settings.payme_merchant_id};ac.order_id={order.id};a={order.amount_uzs * 100};l=uz;c={back}"
     return f"{settings.payme_checkout_url.rstrip('/')}/{base64.b64encode(params.encode()).decode()}"
+
+
+async def new_order(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int, channel: str) -> PaymeOrder:
+    """A Payme order for this customer (committed); [channel] (app, bot, web) only goes to the audit log."""
+    if not payme_configured():
+        raise unavailable("PAYME_NOT_CONFIGURED")
+    await rate_limit(f"payme:{customer_id}", limit=20, window_seconds=3600)
+    order = PaymeOrder(id=uuid.uuid4(), customer_id=customer_id, amount_uzs=amount_uzs)
+    db.add(order)
+    audit(db, f"customer:{customer_id}", "payme_order", str(order.id), amount_uzs=amount_uzs, channel=channel)
+    await db.commit()
+    return order
 
 
 @router.post("/wallet/payme", status_code=201)
 async def create_order(body: PaymeOrderIn, current: CustomerDep, db: DbDep) -> dict[str, Any]:
-    if not payme_configured():
-        raise unavailable("PAYME_NOT_CONFIGURED")
-    await rate_limit(f"payme:{current.id}", limit=20, window_seconds=3600)
-    order = PaymeOrder(id=uuid.uuid4(), customer_id=current.id, amount_uzs=body.amount_uzs)
-    db.add(order)
-    audit(db, f"customer:{current.id}", "payme_order", str(order.id), amount_uzs=body.amount_uzs)
-    await db.commit()
+    order = await new_order(db, current.id, body.amount_uzs, "app")
     return {"order_id": str(order.id), "amount_uzs": order.amount_uzs, "checkout_url": checkout_url(order)}
 
 
@@ -216,6 +224,8 @@ async def perform_transaction(db: DbDep, params: dict[str, Any]) -> dict[str, An
         await wallet.record(db, order.customer_id, order.amount_uzs, "topup", f"payme:{order.id}")
         audit(db, "payme", "payme_performed", str(order.id), amount_uzs=order.amount_uzs)
         await db.commit()
+        # Payme waits for this answer, so the pay bot's "money arrived" message goes out in the background.
+        await pay_notify.credited_later(db, order.customer_id, order.amount_uzs, "Payme")
     elif order.state != STATE_PERFORMED:
         raise PaymeError(ERR_CANNOT_PERFORM)
     return {"transaction": str(order.id), "perform_time": order.perform_time, "state": order.state}

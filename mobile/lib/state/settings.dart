@@ -36,6 +36,7 @@ class AppSettings {
     this.bubbleRadius = 18,
     this.showTranslateButton = true,
     this.chatTypeTabs = false,
+    this.chatTabOrder = const [],
     this.keepMediaDays = 0,
     this.autoDownloadPhotos = false,
     this.autoplayGifs = true,
@@ -84,6 +85,9 @@ class AppSettings {
 
   /// Extra tabs filtering chats by type (users, groups, channels, bots, unread).
   final bool chatTypeTabs;
+
+  /// Chat list tab keys in the user's order ('main', 'type:private', 'folder:3'...); empty = the default order.
+  final List<String> chatTabOrder;
 
   /// Cached media not opened for this many days is deleted (0 = keep forever).
   final int keepMediaDays;
@@ -160,6 +164,7 @@ class AppSettings {
     double? bubbleRadius,
     bool? showTranslateButton,
     bool? chatTypeTabs,
+    List<String>? chatTabOrder,
     int? keepMediaDays,
     bool? autoDownloadPhotos,
     bool? autoplayGifs,
@@ -202,6 +207,7 @@ class AppSettings {
         bubbleRadius: bubbleRadius ?? this.bubbleRadius,
         showTranslateButton: showTranslateButton ?? this.showTranslateButton,
         chatTypeTabs: chatTypeTabs ?? this.chatTypeTabs,
+        chatTabOrder: chatTabOrder ?? this.chatTabOrder,
         keepMediaDays: keepMediaDays ?? this.keepMediaDays,
         autoDownloadPhotos: autoDownloadPhotos ?? this.autoDownloadPhotos,
         autoplayGifs: autoplayGifs ?? this.autoplayGifs,
@@ -258,6 +264,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       bubbleRadius: _prefs.getDouble('bubbleRadius') ?? 18,
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
       chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,
+      chatTabOrder: _prefs.getStringList('chatTabOrder') ?? const [],
       keepMediaDays: _prefs.getInt('keepMediaDays') ?? 0,
       // Off until the user turns it on: saves traffic; photos load on tap.
       autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? false,
@@ -372,6 +379,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
     'ghostMode',
     'quickReaction',
     'chatTypeTabs',
+    'chatTabOrder',
     'sendByEnter',
     'fontFamily',
   ];
@@ -510,6 +518,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
   void setChatTypeTabs(bool value) {
     _prefs.setBool('chatTypeTabs', value);
     state = state.copyWith(chatTypeTabs: value);
+  }
+
+  void setChatTabOrder(List<String> keys) {
+    _prefs.setStringList('chatTabOrder', keys);
+    state = state.copyWith(chatTabOrder: List.unmodifiable(keys));
   }
 
   void setShowTranslateButton(bool value) {

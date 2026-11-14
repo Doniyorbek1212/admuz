@@ -10,6 +10,7 @@
     python -m app.cli seed-gifts                    (starter gift catalog, only while the catalog is empty)
     python -m app.cli seed-premium-gifts            (drawn gifts: Samolyot, Vertolyot, Sher; adds or upgrades)
     python -m app.cli set-gifts-webhook <https://host>   (points the gifts bot at <host>/v1/telegram/webhook)
+    python -m app.cli set-pay-webhook <https://host>     (points the pay bot at <host>/v1/telegram/pay-webhook)
     python -m app.cli import-gift-renders <folder>  (rendered gifts from <folder>/manifest.json; adds or upgrades, keeps prices)
 """
 
@@ -32,7 +33,7 @@ from app.market import REGIONS
 from app.models import AdminRole, AdminUser, GiftItem
 from app.routers.gifts import webhook_secret
 from app.security import hash_password, new_secret, sha256_hex
-from app.services import credits, gift_catalog, osm_import
+from app.services import credits, gift_catalog, osm_import, pay_bot
 from app.services.audit import audit
 from app.uploads import public_dir
 
@@ -230,22 +231,43 @@ async def import_gift_renders(folder: Path) -> None:
     print(f"rendered gifts: {added} added, {updated} updated")
 
 
+def _bot_call(token: str, method: str, params: dict[str, object]) -> str:
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/{method}", data=json.dumps(params).encode(), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return str(json.loads(response.read()).get("description", "done"))
+
+
 def set_gifts_webhook(host: str) -> None:
     token = get_settings().gifts_bot_token
     if not token or not host.startswith("https://"):
         print("needs SADO_BILLING_GIFTS_BOT_TOKEN and an https:// host")
         sys.exit(1)
-    body = json.dumps({
+    print(_bot_call(token, "setWebhook", {
         "url": f"{host.rstrip('/')}/v1/telegram/webhook",
         "secret_token": webhook_secret(),
         "allowed_updates": ["message"],
         "drop_pending_updates": True,
-    }).encode()
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/setWebhook", data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        print(json.loads(response.read()).get("description", "done"))
+    }))
+
+
+def set_pay_webhook(host: str) -> None:
+    """Points the pay bot at <host>/v1/telegram/pay-webhook and gives it its command menu."""
+    token = get_settings().pay_bot_token
+    if not token or not host.startswith("https://"):
+        print("needs SADO_BILLING_PAY_BOT_TOKEN and an https:// host")
+        sys.exit(1)
+    print(_bot_call(token, "setWebhook", {
+        "url": f"{host.rstrip('/')}/v1/telegram/pay-webhook",
+        "secret_token": pay_bot.webhook_secret(),
+        "allowed_updates": ["message", "callback_query", "pre_checkout_query"],
+        "drop_pending_updates": True,
+    }))
+    print(_bot_call(token, "setMyCommands", {"commands": [{"command": "start", "description": "Hamyonni to'ldirish"}]}))
+    print(_bot_call(token, "setMyDescription", {
+        "description": "UZARO hamyonini to'ldirish: Payme, Telegram Stars, TON yoki karta orqali. Pul darhol UZARO ilovasidagi balansga tushadi.",
+    }))
 
 
 def main() -> None:
@@ -256,6 +278,8 @@ def main() -> None:
             asyncio.run(seed_premium_gifts())
         case ["set-gifts-webhook", host]:
             set_gifts_webhook(host)
+        case ["set-pay-webhook", host]:
+            set_pay_webhook(host)
         case ["import-gift-renders", folder]:
             asyncio.run(import_gift_renders(Path(folder)))
         case ["create-admin", name, role]:

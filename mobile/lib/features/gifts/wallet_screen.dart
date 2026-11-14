@@ -41,6 +41,7 @@ class WalletScreen extends ConsumerWidget {
                   label: Text(s.t('gifts_topup_short')),
                 ),
               ),
+              WelcomeBonusBanner(bonusUzs: value.welcomeBonusUzs, onClaimed: () => ref.invalidate(walletProvider)),
               _shop(context, ref),
               _history(context, value),
             ]),

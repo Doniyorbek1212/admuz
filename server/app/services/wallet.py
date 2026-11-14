@@ -10,9 +10,12 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import GiftItem, SentGift, WalletEntry
+from app.models import GiftItem, SentGift, TelegramLink, WalletEntry
 
 Direction = Literal["all", "in", "out"]
+
+# The balance packs sold everywhere: the stores, the pay bot and the website.
+TOPUP_PACKS_UZS = (5_000, 50_000, 100_000, 250_000, 400_000, 1_000_000, 5_000_000, 12_000_000)
 
 
 async def balance(db: AsyncSession, customer_id: uuid.UUID) -> int:
@@ -31,6 +34,21 @@ async def record(db: AsyncSession, customer_id: uuid.UUID, delta_uzs: int, kind:
         return False
     db.add(WalletEntry(customer_id=customer_id, delta_uzs=delta_uzs, kind=kind, reference=reference))
     return True
+
+
+async def grant_welcome(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int) -> int:
+    """The new-user bonus, once per Telegram account (a reinstall or a second device gets nothing more). Needs a
+    linked Telegram account; returns the so'm added (0 when off, not linked or already given). The caller commits."""
+    if amount_uzs <= 0:
+        return 0
+    telegram_id = await db.scalar(select(TelegramLink.telegram_user_id).where(TelegramLink.customer_id == customer_id))
+    if telegram_id is None:
+        return 0
+    reference = f"welcome:{telegram_id}"
+    if await db.scalar(select(WalletEntry.id).where(WalletEntry.kind == "bonus", WalletEntry.reference == reference)) is not None:
+        return 0
+    db.add(WalletEntry(customer_id=customer_id, delta_uzs=amount_uzs, kind="bonus", reference=reference))
+    return amount_uzs
 
 
 async def history(
@@ -74,7 +92,12 @@ def _entry_out(entry: WalletEntry, gift: tuple[SentGift, GiftItem] | None) -> di
         "to_self": False,
     }
     if entry.kind in ("topup", "refund"):
-        out["method"] = "payme" if entry.reference.startswith("payme:") else "card"
+        prefix = entry.reference.split(":", 1)[0]
+        methods = {
+            "payme": "payme", "gplay": "google_play", "gplay-test": "google_play", "appstore": "app_store",
+            "appstore-test": "app_store", "stars": "telegram_stars", "ton": "ton", "ad": "ad",
+        }
+        out["method"] = methods.get(prefix, "card")
     elif entry.kind == "username":
         out["title"] = entry.reference.split(":", 1)[0]
     elif gift is not None:

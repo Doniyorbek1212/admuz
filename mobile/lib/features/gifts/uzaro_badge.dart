@@ -215,8 +215,8 @@ class _BadgeSheetState extends ConsumerState<_BadgeSheet> {
                 child: Text(s.t('uzaro_badge_change')),
               ),
             ),
-          // Store builds: the balance was bought outside the store, so it may not buy digital goods there.
-          if (offer.priceUzs > 0 && !storeBlocksExternalPayments)
+          // Not where the balance could only be bought outside the store: it may not buy digital goods there.
+          if (offer.priceUzs > 0 && !storeBlocksWalletSpending)
             FilledButton.icon(
               onPressed: _busy ? null : (enough ? () => _run(() => ref.read(sadoApiProvider).buyBadge(picked), 'uzaro_badge_bought') : _topUp),
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),

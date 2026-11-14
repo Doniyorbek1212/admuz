@@ -24,7 +24,7 @@ const _adminLinksCacheFor = Duration(minutes: 10);
 
 /// A service pinned to the hub: a web link, or the service's app when it is installed.
 class QuickLink {
-  const QuickLink(this.name, this.url, {this.logo, this.androidPackage, this.fromAdmin = false});
+  const QuickLink(this.name, this.url, {this.logo, this.androidPackage, this.appStoreUrl, this.fromAdmin = false});
 
   /// A paid link from the admin panel (`GET /v1/quick-links`).
   factory QuickLink.fromAdmin(Map<String, dynamic> j) {
@@ -48,12 +48,15 @@ class QuickLink {
   /// Android app opened instead of the site when installed.
   final String? androidPackage;
 
+  /// iOS: the app's App Store page, opened when the app does not answer [url] itself.
+  final String? appStoreUrl;
+
   /// Pinned for everyone from the admin panel: the user cannot remove it.
   final bool fromAdmin;
 
-  QuickLink withLogo(String logo) => QuickLink(name, url, logo: logo, androidPackage: androidPackage);
+  QuickLink withLogo(String logo) => QuickLink(name, url, logo: logo, androidPackage: androidPackage, appStoreUrl: appStoreUrl);
 
-  Map<String, String> toJson() => {'name': name, 'url': url, 'logo': ?logo, 'package': ?androidPackage};
+  Map<String, String> toJson() => {'name': name, 'url': url, 'logo': ?logo, 'package': ?androidPackage, 'appstore': ?appStoreUrl};
 }
 
 /// Popular Uzbek services offered first in the picker, with icons checked to load as PNG.
@@ -158,7 +161,8 @@ class QuickLinksNotifier extends Notifier<List<QuickLink>> {
       return [
         for (final entry in data)
           if (entry case {'name': final String name, 'url': final String url})
-            QuickLink(name, url, logo: entry['logo'] as String?, androidPackage: entry['package'] as String?),
+            QuickLink(name, url,
+                logo: entry['logo'] as String?, androidPackage: entry['package'] as String?, appStoreUrl: entry['appstore'] as String?),
       ];
     } on FormatException catch (error) {
       debugPrint('quick links unreadable: $error');
@@ -238,11 +242,19 @@ Future<void> openQuickLink(BuildContext context, QuickLink link) async {
   // Links pinned before packages were saved find theirs through the matching preset.
   final package = link.androidPackage ?? quickLinkPresets.where((p) => p.url == link.url).firstOrNull?.androidPackage;
   var opened = false;
+  final url = Uri.parse(link.url);
   try {
     if (package != null && Platform.isAndroid) {
       opened = await _nativeChannel.invokeMethod<bool>('openApp', {'package': package}) ?? false;
     }
-    if (!opened) opened = await launchUrl(Uri.parse(link.url), mode: LaunchMode.externalApplication);
+    // iOS: an installed app that claims the site's address (universal link) opens instead of Safari; else its App
+    // Store page, where "Open" or "Get" is one tap away.
+    if (!opened && Platform.isIOS && url.host != 'apps.apple.com') {
+      opened = await launchUrl(url, mode: LaunchMode.externalNonBrowserApplication);
+    }
+    final store = link.appStoreUrl;
+    if (!opened && store != null) opened = await launchUrl(Uri.parse(store), mode: LaunchMode.externalApplication);
+    if (!opened) opened = await launchUrl(url, mode: LaunchMode.externalApplication);
   } on PlatformException catch (error) {
     debugPrint('quick link failed: $error');
   }
@@ -320,7 +332,7 @@ class _AddQuickLinkSheetState extends ConsumerState<_AddQuickLinkSheet> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => const _PhoneAppsSheet(),
+      builder: (_) => Platform.isIOS ? const _AppStoreSheet() : const _PhoneAppsSheet(),
     );
     if (link != null && mounted) Navigator.pop(context, link);
   }
@@ -351,7 +363,8 @@ class _AddQuickLinkSheetState extends ConsumerState<_AddQuickLinkSheet> {
             children: [
               Text(s.t('quick_add'), textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              if (Platform.isAndroid)
+              // Android lists the phone's apps; iOS does not let apps see each other, so it searches the App Store.
+              if (Platform.isAndroid || Platform.isIOS)
                 ListTile(
                   leading: Container(
                     width: 42,
@@ -359,8 +372,8 @@ class _AddQuickLinkSheetState extends ConsumerState<_AddQuickLinkSheet> {
                     decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
                     child: Icon(Icons.apps_rounded, color: Theme.of(context).colorScheme.primary),
                   ),
-                  title: Text(s.t('quick_phone_apps')),
-                  subtitle: Text(s.t('quick_phone_apps_hint')),
+                  title: Text(s.t(Platform.isIOS ? 'quick_app_store' : 'quick_phone_apps')),
+                  subtitle: Text(s.t(Platform.isIOS ? 'quick_app_store_hint' : 'quick_phone_apps_hint')),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: _choosePhoneApp,
                 ),
@@ -515,6 +528,114 @@ class _PhoneAppsSheetState extends ConsumerState<_PhoneAppsSheet> {
                   );
                 },
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Apps in an iTunes Search API answer as quick links: the app's own site when it gives one (an installed app that
+/// claims it opens directly), else its App Store page.
+List<QuickLink> parseAppStoreResults(Object? json) {
+  final results = json is Map ? json['results'] : null;
+  if (results is! List) return const [];
+  String? https(Object? value) => value is String && value.startsWith('https://') ? value : null;
+  return [
+    for (final app in results)
+      if (app is Map && app['trackName'] is String && https(app['trackViewUrl']) != null)
+        QuickLink(
+          app['trackName'] as String,
+          https(app['sellerUrl']) ?? https(app['trackViewUrl'])!,
+          logo: https(app['artworkUrl512']) ?? https(app['artworkUrl100']),
+          appStoreUrl: https(app['trackViewUrl']),
+        ),
+  ];
+}
+
+/// iOS: searches the App Store (Uzbek storefront) by name; picking an app returns it as a quick link.
+class _AppStoreSheet extends ConsumerStatefulWidget {
+  const _AppStoreSheet();
+
+  @override
+  ConsumerState<_AppStoreSheet> createState() => _AppStoreSheetState();
+}
+
+class _AppStoreSheetState extends ConsumerState<_AppStoreSheet> {
+  static const _searchDelay = Duration(milliseconds: 400);
+  Timer? _debounce;
+  Future<List<QuickLink>>? _results;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onQuery(String text) {
+    _debounce?.cancel();
+    final query = text.trim();
+    _debounce = Timer(_searchDelay, () {
+      if (mounted) setState(() => _results = query.length < 2 ? null : _search(query));
+    });
+  }
+
+  Future<List<QuickLink>> _search(String query) async {
+    final response = await Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 10),
+      responseType: ResponseType.plain,
+    )).get<String>('https://itunes.apple.com/search',
+        queryParameters: {'term': query, 'entity': 'software', 'country': 'uz', 'limit': 25});
+    return parseAppStoreResults(jsonDecode(response.data ?? '{}'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final pinned = {for (final l in ref.watch(quickLinksProvider)) ?l.appStoreUrl};
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.75,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                autofocus: true,
+                onChanged: _onQuery,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  hintText: s.t('quick_app_search'),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            Expanded(
+              child: _results == null
+                  ? const SizedBox.shrink()
+                  : FutureBuilder<List<QuickLink>>(
+                      future: _results,
+                      builder: (context, snapshot) {
+                        if (snapshot.hasError) return Center(child: Text(s.t('quick_open_failed')));
+                        final all = snapshot.data;
+                        if (all == null) return const Center(child: CircularProgressIndicator());
+                        final apps = [for (final a in all) if (!pinned.contains(a.appStoreUrl)) a];
+                        if (apps.isEmpty) return Center(child: Text(s.t('quick_app_none')));
+                        return ListView.builder(
+                          itemCount: apps.length,
+                          itemBuilder: (context, i) => ListTile(
+                            leading: QuickLinkBadge(link: apps[i], size: 42),
+                            title: Text(apps[i].name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            onTap: () => Navigator.pop(context, apps[i]),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),

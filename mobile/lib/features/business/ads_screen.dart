@@ -60,8 +60,8 @@ class _AdsScreenState extends ConsumerState<AdsScreen> {
               // Clears the system navigation bar / iPhone home indicator.
               padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 16),
               children: [
-                // iOS: ads are paid outside the App Store, so only already placed ones are shown there.
-                if (!storeBlocksExternalPayments) _AdCta(onTap: () => _open(const AdCreateScreen())),
+                // Store builds pay from the balance (bought through the store); hidden only where it cannot be bought.
+                if (!storeBlocksWalletSpending) _AdCta(onTap: () => _open(const AdCreateScreen())),
                 _adsSection(context, ads),
               ],
             ),

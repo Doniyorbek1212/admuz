@@ -12,15 +12,16 @@ const WEB = path.resolve(__dirname, "../web");
 const BASE = "https://uzaromessenger.uz/";
 const LANGS = ["uz", "ru", "en"];
 const LOCALE = { uz: "uz_UZ", ru: "ru_RU", en: "en_US" };
-const PAGES = ["", "docs.html", "privacy.html", "nom.html", "terms.html"]; // "" is index.html
+const PAGES = ["", "docs.html", "privacy.html", "nom.html", "terms.html", "hamyon.html"]; // "" is index.html
 // Public path of each page; nginx serves privacy.html at /privacy (the address the app and stores link to).
-const PUBLIC = { "": "", "docs.html": "docs.html", "privacy.html": "privacy", "nom.html": "nom.html", "terms.html": "terms.html" };
+const PUBLIC = { "": "", "docs.html": "docs.html", "privacy.html": "privacy", "nom.html": "nom.html", "terms.html": "terms.html", "hamyon.html": "hamyon.html" };
 // Title, description and breadcrumb name of the inner pages.
 const META = {
   "docs.html": ["d_meta_title", "d_lead", "d_title"],
   "privacy.html": ["p_meta_title", "p_lead", "p_title"],
   "nom.html": ["n_meta_title", "n_lead", "n_title"],
   "terms.html": ["t_meta_title", "t_lead", "t_title"],
+  "hamyon.html": ["w_meta_title", "w_lead", "w_title"],
 };
 const ALT_NAMES = ["Uzaro", "UZARO Messenger", "Uzaro messenjer", "Узаро", "uzaromessenger"];
 // data-i18n-<suffix>="key" fills the attribute named here.
@@ -76,7 +77,7 @@ function localizeLinks(html, lang) {
   if (lang === "uz") return out;
   // Links to the home page, the guide and the policy stay in the reader's language; /download is shared.
   out = out.replace(/<a\b[^>]*>/g, (a) =>
-    /\shreflang=/.test(a) ? a : a.replace(/\shref="\/(#[^"]*|docs\.html[^"]*|nom\.html[^"]*|terms\.html[^"]*|privacy)?"/, (m, rest) => ` href="/${lang}/${rest || ""}"`),
+    /\shreflang=/.test(a) ? a : a.replace(/\shref="\/(#[^"]*|docs\.html[^"]*|nom\.html[^"]*|hamyon\.html[^"]*|terms\.html[^"]*|privacy)?"/, (m, rest) => ` href="/${lang}/${rest || ""}"`),
   );
   return out;
 }

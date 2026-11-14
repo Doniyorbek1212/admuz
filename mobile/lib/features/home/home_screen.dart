@@ -28,6 +28,7 @@ import 'chat_tile.dart';
 import 'ghost_mode_button.dart';
 import 'home_drawer.dart';
 import 'home_shell.dart';
+import 'tab_order_screen.dart';
 
 /// Right-hand pane of the tablet split view; null on phones.
 final chatPaneNavigatorKey = GlobalKey<NavigatorState>();
@@ -74,12 +75,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final folders = ref.watch(foldersProvider);
     final s = context.s;
-    final tabs = <(String, String)>[
-      ('main', s.t('all_chats')),
-      if (ref.watch(settingsProvider.select((st) => st.chatTypeTabs)))
-        for (final type in chatTypeTabs) (type, s.t('tab_${type.substring(5)}')),
-      for (final folder in folders) ('folder:${folder.id}', folder.name.text.text),
-    ];
+    final tabs = homeTabs(ref, s);
     final wide = MediaQuery.sizeOf(context).width >= splitViewMinWidth;
     final pages = TabBarView(
       children: [for (final tab in tabs) ChatListView(listKey: tab.$1, showArchive: tab.$1 == 'main')],

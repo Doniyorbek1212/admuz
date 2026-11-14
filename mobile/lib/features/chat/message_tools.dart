@@ -99,6 +99,17 @@ Future<void> showPollOptionMenu(BuildContext context, TelegramAccount account, t
   }
 }
 
+/// The sender's profile: a user (through their private chat, which creating sends nothing) or a chat posting as itself.
+Future<void> openSenderProfile(BuildContext context, TelegramAccount account, td.MessageSender sender) async {
+  final chatId = switch (sender) {
+    td.MessageSenderChat(:final chatId) => chatId,
+    td.MessageSenderUser(:final userId) => (await guard(context, () => account.openPrivateChat(userId)))?.id,
+    _ => null,
+  };
+  if (chatId == null || !context.mounted) return;
+  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chatId)));
+}
+
 /// The real person behind a channel post or anonymous admin message, when the chat reveals it.
 Future<void> showMessageAuthor(BuildContext context, TelegramAccount account, td.Message message) async {
   final user = await guard(context, () => account.send<td.User>(td.GetMessageAuthor(chatId: message.chatId, messageId: message.id)));

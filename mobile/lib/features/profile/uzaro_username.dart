@@ -137,8 +137,8 @@ class _UzaroUsernameScreenState extends ConsumerState<UzaroUsernameScreen> {
     final s = context.s;
     final (status, price) = await api.uzaroUsernameQuote(name);
     if (!mounted) return false;
-    // Store builds may not sell digital goods for a balance topped up outside the store.
-    if (status != 'for_sale' || storeBlocksExternalPayments) {
+    // A store build may not sell digital goods for a balance topped up outside the store.
+    if (status != 'for_sale' || storeBlocksWalletSpending) {
       final key = status == 'taken' ? 'api_USERNAME_TAKEN' : 'api_USERNAME_SALE_CLOSED';
       showToast(context, s.t(key));
       return false;

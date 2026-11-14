@@ -5,12 +5,12 @@ import 'package:tdlib_ex/td_api.dart' as td;
 import '../../core/api/gift_models.dart';
 import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
-import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart';
 import '../contacts/contacts_screen.dart';
 import 'gift_widgets.dart';
+import 'my_gifts_screen.dart';
 import 'topup_screen.dart';
 
 /// Hub → Gifts: the UZARO balance, the gift shop (send to any contact) and the gifts this user received.
@@ -24,8 +24,8 @@ class GiftsScreen extends ConsumerStatefulWidget {
 class _GiftsScreenState extends ConsumerState<GiftsScreen> {
   late Future<(List<GiftItem>, Wallet)> _shop = _loadShop();
 
-  /// Received gifts and the "hide all" switch once this account is linked; null = not linked yet.
-  late Future<(List<SentGift>, bool)?> _received = _loadReceived();
+  /// Bumped on every reload so the received list refetches too (a gift bought for oneself lands there).
+  int _generation = 0;
 
   Future<(List<GiftItem>, Wallet)> _loadShop() async {
     final api = ref.read(sadoApiProvider);
@@ -33,15 +33,9 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
     return (results[0] as List<GiftItem>, results[1] as Wallet);
   }
 
-  Future<(List<SentGift>, bool)?> _loadReceived() async {
-    final api = ref.read(sadoApiProvider);
-    if (await api.telegramId() != ref.read(accountProvider).myId) return null;
-    return api.receivedGifts();
-  }
-
   void _reload() => setState(() {
         _shop = _loadShop();
-        _received = _loadReceived();
+        _generation++;
       });
 
   Future<void> _send([GiftItem? gift]) async {
@@ -88,26 +82,6 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
     forMe ? await _buyForMe(gift) : await _send(gift);
   }
 
-  Future<void> _link() async {
-    if (await ensureGiftsLinked(context, ref) && mounted) _reload();
-  }
-
-  Future<void> _toggleHidden(SentGift gift) => _changeVisibility(() => ref.read(sadoApiProvider).setGiftHidden(gift.id, !gift.hidden));
-
-  Future<void> _toggleSenderHidden(SentGift gift) =>
-      _changeVisibility(() => ref.read(sadoApiProvider).setGiftSenderHidden(gift.id, !gift.senderHidden));
-
-  Future<void> _changeVisibility(Future<void> Function() change) async {
-    final done = await apiGuard(context, () async {
-      await change();
-      return true;
-    });
-    if (done == true && mounted) {
-      ref.invalidate(userGiftsProvider(ref.read(accountProvider).myId));
-      _reload();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final s = context.s;
@@ -145,6 +119,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
                   ),
                 ),
               ),
+              SliverToBoxAdapter(child: WelcomeBonusBanner(bonusUzs: wallet.welcomeBonusUzs, onClaimed: _reload)),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
@@ -183,7 +158,7 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
                   itemBuilder: (context, i) => _ShopTile(gift: gifts[i], onTap: () => _choose(gifts[i])),
                 ),
               ),
-              SliverToBoxAdapter(child: _receivedSection(context)),
+              SliverToBoxAdapter(child: ReceivedGifts(key: ValueKey(_generation))),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
@@ -194,60 +169,6 @@ class _GiftsScreenState extends ConsumerState<GiftsScreen> {
           );
         },
       ),
-    );
-  }
-
-  Widget _receivedSection(BuildContext context) {
-    final s = context.s;
-    return FutureBuilder<(List<SentGift>, bool)?>(
-      future: _received,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) return const SizedBox(height: 24);
-        final data = snapshot.data;
-        if (snapshot.hasError || data == null) {
-          return SettingsGroup(title: s.t('gifts_received'), children: [
-            ListTile(
-              leading: const Icon(Icons.verified_user_rounded),
-              title: Text(s.t('gifts_link_to_see')),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: _link,
-            ),
-          ]);
-        }
-        final (received, hideAll) = data;
-        return SettingsGroup(title: s.t('gifts_received'), children: [
-          SwitchListTile(
-            secondary: const Icon(Icons.visibility_off_rounded),
-            title: Text(s.t('gifts_hide_all')),
-            subtitle: Text(s.t('gifts_hide_all_hint')),
-            value: hideAll,
-            onChanged: (hide) => _changeVisibility(() => ref.read(sadoApiProvider).setAllGiftsHidden(hide)),
-          ),
-          if (received.isEmpty) ListTile(title: Text(s.t('gifts_received_empty'))),
-          for (final gift in received)
-            ListTile(
-              leading: GiftImage(gift.gift, size: 44),
-              title: Text(gift.gift.titleFor(context.s.locale), style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: gift.text.isEmpty ? null : Text(gift.text, maxLines: 2, overflow: TextOverflow.ellipsis),
-              onTap: () => showGiftDetails(context, gift),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                // Who sent it: hidden from profile visitors (an anonymous sender is hidden already).
-                if (!gift.anonymous)
-                  IconButton(
-                    tooltip: s.t(gift.senderHidden ? 'gifts_sender_show' : 'gifts_sender_hide'),
-                    icon: Icon(gift.senderHidden ? Icons.person_off_rounded : Icons.person_rounded),
-                    onPressed: () => _toggleSenderHidden(gift),
-                  ),
-                // While everything is hidden, single gifts have nothing to switch.
-                IconButton(
-                  tooltip: s.t(gift.hidden ? 'gifts_show' : 'gifts_hide'),
-                  icon: Icon(gift.hidden || hideAll ? Icons.visibility_off_rounded : Icons.visibility_rounded),
-                  onPressed: hideAll ? null : () => _toggleHidden(gift),
-                ),
-              ]),
-            ),
-        ]);
-      },
     );
   }
 }

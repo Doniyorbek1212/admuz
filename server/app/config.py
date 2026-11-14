@@ -60,8 +60,15 @@ class Settings(BaseSettings):
     # Google Play (phase B): service account JSON path and package name.
     google_package_name: str = ""
     google_service_account_file: str = ""
+    # Play license-tester and App Store sandbox/TestFlight purchases are free; they credit the wallet only while this
+    # is on (testing only).
+    store_test_purchases: bool = False
+    # Default of the admin-editable new-user bonus (MarketSettings.welcome_bonus_uzs), in so'm.
+    welcome_bonus_uzs: int = 100_000
     # App Store (phase B): App Store Server API credentials.
     apple_bundle_id: str = ""
+    # App Store Connect "Apple ID" of the app (a number); with apple_bundle_id it switches the App Store top-up on.
+    apple_app_id: int = 0
     apple_issuer_id: str = ""
     apple_key_id: str = ""
     apple_private_key_file: str = ""
@@ -111,6 +118,15 @@ class Settings(BaseSettings):
     payme_key: str = ""
     payme_checkout_url: str = "https://checkout.paycom.uz"
     payme_return_url: str = "https://uzaromessenger.uz"
+
+    # The pay bot (@UzaroPay_bot): balance top-ups in Telegram (Payme, Telegram Stars, TON, card via an admin) and the
+    # website's wallet sign-in. Telegram calls POST /v1/telegram/pay-webhook; register it with
+    # `python -m app.cli set-pay-webhook <https://host>`. Empty token = the bot and the website wallet are off.
+    pay_bot_token: str = ""
+    pay_bot_username: str = ""  # without @
+    # TON payments are checked on toncenter.com; the key only raises its rate limit (optional).
+    toncenter_url: str = "https://toncenter.com/api/v2"
+    toncenter_api_key: str = ""
 
     # Online shops: the first ones are free, every further shop costs a one-time fee (manual transfer + admin check).
     shop_free_limit: int = 2

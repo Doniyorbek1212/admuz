@@ -39,10 +39,10 @@ class HubTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = context.s;
     final region = ref.watch(hubRegionProvider);
-    // iOS store builds cannot sell ads (paid outside the App Store), so the tile is hidden there.
+    // Store builds pay ads from the balance bought through the store; hidden only where that balance cannot be bought.
     final toolItems = [
       for (final item in hubToolItems)
-        if (item.action != HubAction.ads || !storeBlocksExternalPayments) item,
+        if (item.action != HubAction.ads || !storeBlocksWalletSpending) item,
     ];
     final quickLinks = ref.watch(quickLinksProvider);
     final adminLinks = ref.watch(adminQuickLinksProvider).value ?? const <QuickLink>[];

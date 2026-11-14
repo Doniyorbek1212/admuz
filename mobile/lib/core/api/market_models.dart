@@ -353,6 +353,7 @@ class Ad {
     this.priceUzs = 0,
     this.status = AdStatus.approved,
     this.hasReceipt = false,
+    this.paidFromWallet = false,
     this.rejectReason,
     this.endsAt,
     this.topics = const [],
@@ -375,6 +376,7 @@ class Ad {
         priceUzs: json['price_uzs'] as int? ?? 0,
         status: json.containsKey('status') ? _adStatus(json['status']) : AdStatus.approved,
         hasReceipt: json['has_receipt'] as bool? ?? false,
+        paidFromWallet: json['paid_from_wallet'] as bool? ?? false,
         rejectReason: json['reject_reason'] as String?,
         endsAt: _date(json['ends_at']),
       );
@@ -390,6 +392,9 @@ class Ad {
   final int priceUzs;
   final AdStatus status;
   final bool hasReceipt;
+
+  /// Paid from the UZARO balance (cancelling it before approval gives the money back).
+  final bool paidFromWallet;
   final String? rejectReason;
   final DateTime? endsAt;
 

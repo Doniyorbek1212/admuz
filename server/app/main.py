@@ -33,11 +33,13 @@ from app.routers import (
     media,
     movies,
     music,
+    pay_bot,
     payme,
     places,
     profile,
     public,
     quick_links,
+    store_topup,
     usernames,
 )
 from app.security import RedactingFilter
@@ -96,7 +98,7 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
     routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests,
-               usernames, banned_channels, quick_links, payme)
+               usernames, banned_channels, quick_links, payme, store_topup, pay_bot)
     admin_routers = (admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
     for module in routers + admin_routers:
         app.include_router(module.router)

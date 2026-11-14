@@ -68,6 +68,21 @@ Future<void> playArrivedGift(BuildContext context, WidgetRef ref, int chatId) as
   await showPremiumGift(context, premium.gift, sent: premium);
 }
 
+/// The premium gifts in [gifts], one per kind, dearest first: the own profile's show order.
+List<SentGift> premiumShowOrder(Iterable<SentGift> gifts) {
+  final premium = gifts.where((g) => g.gift.premium).toList()..sort((a, b) => b.gift.priceUzs.compareTo(a.gift.priceUzs));
+  final kinds = <String>{};
+  return [for (final g in premium) if (kinds.add(g.gift.id)) g];
+}
+
+/// Plays [gifts]' shows one after another over the current page; leaving the page stops the rest.
+Future<void> playGiftShows(BuildContext context, List<SentGift> gifts) async {
+  for (final g in gifts) {
+    if (!context.mounted) return;
+    await showPremiumGift(context, g.gift, sent: g);
+  }
+}
+
 /// Proves the signed-in Telegram account to the UZARO server: the app sends `/start <one-time code>` to the
 /// gifts bot from this account and waits until the server has seen it. True once linked.
 Future<bool> ensureGiftsLinked(BuildContext context, WidgetRef ref) async {
@@ -172,7 +187,14 @@ class GiftBubble extends StatelessWidget {
 
 /// Wraps a profile avatar: the person's UZARO gifts float around it in glass bubbles. Shows just [child] when they have none.
 class GiftOrbit extends ConsumerStatefulWidget {
-  const GiftOrbit({super.key, required this.telegramId, required this.avatarSize, required this.child, this.playVideo = false});
+  const GiftOrbit({
+    super.key,
+    required this.telegramId,
+    required this.avatarSize,
+    required this.child,
+    this.playVideo = false,
+    this.playDearest = false,
+  });
 
   final int telegramId;
   final double avatarSize;
@@ -180,6 +202,9 @@ class GiftOrbit extends ConsumerStatefulWidget {
 
   /// Someone else's profile: their newest premium gift plays full screen once when it opens.
   final bool playVideo;
+
+  /// The user's own profile tab: their dearest premium gift plays each time the tab comes into view.
+  final bool playDearest;
 
   @override
   ConsumerState<GiftOrbit> createState() => _GiftOrbitState();
@@ -200,12 +225,27 @@ class _GiftOrbitState extends ConsumerState<GiftOrbit> with TickerProviderStateM
   Offset _releasedAt = Offset.zero;
   bool _videoPlayed = false;
 
+  /// Whether the tab holding this orbit was on screen at the last check (hidden tabs run with tickers off).
+  bool? _tabShown;
+
   @override
   void initState() {
     super.initState();
-    if (widget.playVideo) {
+    if (widget.playVideo || widget.playDearest) {
       ref.listenManual(userGiftsProvider(widget.telegramId), (_, next) => _maybePlayVideo(next.value), fireImmediately: true);
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final shown = TickerMode.valuesOf(context).enabled;
+    // Coming back to the profile tab plays the show again; the first build is left to the listener above.
+    if (widget.playDearest && shown && _tabShown == false) {
+      _videoPlayed = false;
+      _maybePlayVideo(ref.read(userGiftsProvider(widget.telegramId)).value);
+    }
+    _tabShown = shown;
   }
 
   @override
@@ -217,12 +257,16 @@ class _GiftOrbitState extends ConsumerState<GiftOrbit> with TickerProviderStateM
 
   void _maybePlayVideo(ProfileGifts? profile) {
     if (_videoPlayed || profile == null) return;
-    final premium = profile.gifts.where((g) => g.gift.premium).firstOrNull;
+    final premium = widget.playDearest
+        ? premiumShowOrder(profile.gifts).firstOrNull
+        : profile.gifts.where((g) => g.gift.premium).firstOrNull;
     if (premium == null) return;
     _videoPlayed = true;
-    // After the page transition, and only while this profile is still the screen on top.
+    // After the page transition, and only while this profile is still the screen (and tab) on top.
     Future<void>.delayed(const Duration(milliseconds: 700), () {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? false)) unawaited(showPremiumGift(context, premium.gift, sent: premium));
+      if (mounted && TickerMode.valuesOf(context).enabled && (ModalRoute.of(context)?.isCurrent ?? false)) {
+        unawaited(showPremiumGift(context, premium.gift, sent: premium));
+      }
     });
   }
 
@@ -507,9 +551,9 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       onChanged: _sending ? null : (value) => setState(() => _anonymous = value),
                     ),
                     ],
-                    // Store builds: paid gifts are bought from a balance topped up outside the store, which the
-                    // store rules forbid; free ones still go.
-                    if (!storeBlocksExternalPayments || selected.priceUzs == 0)
+                    // A store build whose balance could only be topped up outside the store may send free gifts
+                    // only; Play and App Store builds top up through store billing, so they send them all.
+                    if (!storeBlocksWalletSpending || selected.priceUzs == 0)
                     FilledButton.icon(
                       onPressed: _sending ? null : (enough ? () => _send(selected) : _topUp),
                       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),

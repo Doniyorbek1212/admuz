@@ -1,6 +1,7 @@
 """What the web admin panel needs beyond review: dashboard stats, editable settings, admin accounts, shop detail.
 Changes are audited like every other admin action."""
 
+import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
@@ -91,7 +92,17 @@ async def stats(admin: Viewer, db: DbDep) -> dict[str, Any]:
         "ads_live": live_ads,
         "revenue_uzs": {"ads": int(ad_revenue), "shops": int(shop_revenue), "total": int(ad_revenue) + int(shop_revenue)},
         "daily": [{"date": d.isoformat(), "new_users": new_users.get(d, 0), "ad_income_uzs": int(ad_income.get(d) or 0)} for d in days],
+        "disk": _disk(),
     }
+
+
+def _disk() -> dict[str, int] | None:
+    """The server disk holding uploads (receipts, product media, movies): how full it is."""
+    try:
+        usage = shutil.disk_usage(get_settings().media_dir)
+    except OSError:
+        return None
+    return {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free}
 
 
 # ------------------------------------------------------------------ settings
@@ -114,6 +125,11 @@ class SettingsIn(BaseModel):
     username_price_3_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     username_price_4_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     badge_price_uzs: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    welcome_bonus_uzs: Annotated[int, Field(ge=0, le=10_000_000)] | None = None
+    stars_uzs_per_star: Annotated[int, Field(ge=0, le=100_000)] | None = None
+    ton_uzs_per_ton: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    # A TON address (user-friendly base64url or raw "0:<hex>"); empty switches TON off.
+    ton_wallet: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80, pattern=r"^([A-Za-z0-9_-]{48}|-?\d:[0-9a-fA-F]{64})?$")] | None = None
 
 
 @router.get("/settings")

@@ -3,9 +3,10 @@
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import AdminRole, AdminUser, GiftItem
+from app.models import AdminRole, AdminUser, GiftItem, SentGift
 from app.routers.gifts import webhook_secret
 from app.security import new_secret, sha256_hex
 
@@ -312,3 +313,99 @@ async def test_admin_bonus_by_customer_picked_in_the_users_list(client, session_
     assert credited.json()["balance_uzs"] == 5_000
     detail = (await client.get(f"/v1/admin/customers/{erin.id}", headers=finance)).json()
     assert detail["wallet_uzs"] == 5_000
+    listed = (await client.get("/v1/admin/users", headers=finance)).json()["users"]
+    assert {u["id"]: u["wallet_uzs"] for u in listed}[erin.id] == 5_000
+
+
+async def test_relinking_the_same_telegram_on_a_new_install_moves_the_balance(client, session_factory, new_customer):
+    admin = await _admin(session_factory, AdminRole.FINANCE)
+    rose = await _gift(client, admin, price=5_000)
+    old_install, new_install = await new_customer(), await new_customer()
+    await _link(client, old_install, 7_100_001)
+    await _top_up(client, admin, old_install, 35_000)
+    send = {"gift_id": rose["id"], "recipient_telegram_id": 7_100_009}
+    assert (await old_install.post("/v1/gifts/send", json=send)).status_code == 201
+
+    await _link(client, new_install, 7_100_001)
+
+    moved = (await new_install.get("/v1/wallet")).json()
+    assert moved["balance_uzs"] == 30_000 and [e["kind"] for e in moved["entries"]] == ["gift", "topup"]
+    assert (await old_install.get("/v1/wallet")).json()["balance_uzs"] == 0
+    async with session_factory() as db:
+        senders = (await db.scalars(select(SentGift.sender_customer_id).where(SentGift.sender_telegram_id == 7_100_001))).all()
+    assert [str(s) for s in senders] == [new_install.id]
+    # Another person's Telegram proof moves nothing.
+    stranger = await new_customer()
+    await _link(client, stranger, 7_100_002)
+    assert (await stranger.get("/v1/wallet")).json()["balance_uzs"] == 0
+    assert (await new_install.get("/v1/wallet")).json()["balance_uzs"] == 30_000
+
+
+async def test_ad_paid_from_the_balance_goes_to_review_and_refunds_on_cancel(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    alice = await new_customer()
+    ad_body = {"title": "Chegirma", "media_type": "image", "media_url": "https://example.com/b.jpg", "regions": ["Andijon"], "days": 2}
+    ad = (await alice.post("/v1/ads", json=ad_body)).json()
+    price = ad["price_uzs"]
+    assert (await alice.post(f"/v1/ads/{ad['id']}/pay-wallet")).json()["detail"]["code"] == "INSUFFICIENT_BALANCE"
+
+    await _top_up(client, admin, alice, price + 1_000)
+    paid = await alice.post(f"/v1/ads/{ad['id']}/pay-wallet")
+    assert paid.status_code == 200, paid.text
+    assert paid.json()["status"] == "pending_review" and paid.json()["paid_from_wallet"] is True
+    assert paid.json()["has_receipt"] is False and paid.json()["balance_uzs"] == 1_000
+    assert (await alice.post(f"/v1/ads/{ad['id']}/pay-wallet")).json()["detail"]["code"] == "AD_ALREADY_REVIEWED"
+
+    # Rejected, then sent back to review: not charged twice; no receipt on top of a balance payment.
+    assert (await client.post(f"/v1/admin/ads/{ad['id']}/reject", headers=admin, json={"reason": "Rasm xira"})).status_code == 200
+    receipt = await alice.post(f"/v1/ads/{ad['id']}/receipt", files={"file": ("c.png", FAKE_PNG, "image/png")})
+    assert receipt.json()["detail"]["code"] == "AD_PAID_FROM_WALLET"
+    again = await alice.post(f"/v1/ads/{ad['id']}/pay-wallet")
+    assert again.json()["status"] == "pending_review" and again.json()["balance_uzs"] == 1_000
+
+    assert (await alice.delete(f"/v1/ads/{ad['id']}")).status_code == 204
+    wallet_now = (await alice.get("/v1/wallet")).json()
+    assert wallet_now["balance_uzs"] == price + 1_000
+    kinds = [item["kind"] for item in (await alice.get("/v1/wallet/history")).json()["items"]]
+    assert kinds[:2] == ["refund", "ad"]
+
+
+async def test_welcome_bonus_once_per_telegram_account(client, session_factory, new_customer, monkeypatch):
+    monkeypatch.setattr(get_settings(), "welcome_bonus_uzs", 100_000)
+    alice = await new_customer()
+    before = (await alice.get("/v1/wallet")).json()
+    assert before["balance_uzs"] == 0 and before["welcome_bonus_uzs"] == 100_000  # not linked: offered, not given
+
+    code = (await alice.post("/v1/telegram/link")).json()["code"]
+    reply = await client.post("/v1/telegram/webhook", json=_update(777, f"/start {code}"),
+                              headers={"X-Telegram-Bot-Api-Secret-Token": webhook_secret()})
+    assert "100 000 so'm bonus" in reply.json()["text"]
+    wallet_now = (await alice.get("/v1/wallet")).json()
+    assert wallet_now["balance_uzs"] == 100_000
+    assert wallet_now["entries"][0]["kind"] == "bonus"
+    assert wallet_now["welcome_bonus_uzs"] == 0
+
+    # A reinstall linking the same Telegram account brings the balance along, with no second bonus.
+    again = await new_customer()
+    await _link(client, again, 777)
+    assert (await again.get("/v1/wallet")).json()["balance_uzs"] == 100_000
+
+    # The bonus is spendable like any balance; 0 in the admin panel stops it for new accounts.
+    admin = await _admin(session_factory, AdminRole.OWNER)
+    rose = await _gift(client, admin, price=30_000)
+    sent = await again.post("/v1/gifts/send", json={"gift_id": rose["id"], "recipient_telegram_id": 1})
+    assert sent.status_code == 201 and sent.json()["balance_uzs"] == 70_000
+    assert (await client.put("/v1/admin/settings", headers=admin, json={"welcome_bonus_uzs": 0})).status_code == 200
+    bob = await new_customer()
+    await _link(client, bob, 888)
+    assert (await bob.get("/v1/wallet")).json()["balance_uzs"] == 0
+
+
+async def test_admin_users_have_a_stable_registration_number(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    await new_customer()
+    first = (await client.get("/v1/admin/users", headers=admin, params={"limit": 2})).json()["users"]
+    await new_customer()
+    after = (await client.get("/v1/admin/users", headers=admin, params={"limit": 3})).json()["users"]
+    assert after[0]["number"] == first[0]["number"] + 1  # newest first, numbered in registration order
+    assert after[1]["id"] == first[0]["id"] and after[1]["number"] == first[0]["number"]

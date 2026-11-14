@@ -110,6 +110,8 @@ async def test_stats_count_users_shops_and_revenue(client, new_customer, session
     assert stats["revenue_uzs"]["total"] == 0
     assert len(stats["daily"]) == 30
     assert stats["daily"][-1]["new_users"] == 1
+    disk = stats["disk"]
+    assert disk["total_bytes"] > 0 and disk["used_bytes"] + disk["free_bytes"] <= disk["total_bytes"]
 
 
 async def test_support_hides_a_product_and_sees_shop_detail(client, new_customer, session_factory):

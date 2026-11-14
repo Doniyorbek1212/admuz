@@ -11,6 +11,8 @@ import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart';
+import 'gift_widgets.dart' show ensureGiftsLinked;
+import 'store_topup.dart';
 
 /// Tops up the UZARO balance: transfer to the card, upload the receipt, an admin approves it.
 class TopupScreen extends ConsumerStatefulWidget {
@@ -23,7 +25,7 @@ class TopupScreen extends ConsumerStatefulWidget {
 class _TopupScreenState extends ConsumerState<TopupScreen> {
   static const _paymeTeal = Color(0xFF33CCCC);
   static const _minAmount = 1000;
-  static const _quickAmounts = [10000, 25000, 50000, 100000];
+  static const _quickAmounts = [5000, 50000, 100000, 250000, 400000, 1000000, 5000000, 12000000];
   late Future<Wallet> _wallet = ref.read(sadoApiProvider).wallet();
   final _amount = TextEditingController(text: '25000');
   bool _sending = false;
@@ -107,7 +109,10 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
           if (wallet == null) return const Center(child: CircularProgressIndicator());
           return ListView(padding: const EdgeInsets.only(bottom: 32), children: [
             BalanceCard(balanceUzs: wallet.balanceUzs),
-            if (storeBlocksExternalPayments)
+            WelcomeBonusBanner(bonusUzs: wallet.welcomeBonusUzs, onClaimed: _reload),
+            if (storeBlocksExternalPayments && storeBillingTopUp)
+              StoreTopup(onCredited: _reload)
+            else if (storeBlocksExternalPayments)
               Padding(padding: const EdgeInsets.all(20), child: Text(s.t('topup_unavailable'), textAlign: TextAlign.center))
             else
               _steps(context, wallet),
@@ -235,6 +240,66 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
       step(3, s.t('topup_step3')),
       ],
     ]);
+  }
+}
+
+/// The new-user bonus still waiting ([Wallet.welcomeBonusUzs]): one tap verifies the Telegram account through the
+/// gifts bot and the server puts the bonus on the balance; [onClaimed] then reloads the wallet. Nothing when none waits.
+class WelcomeBonusBanner extends ConsumerStatefulWidget {
+  const WelcomeBonusBanner({super.key, required this.bonusUzs, required this.onClaimed});
+
+  final int bonusUzs;
+  final VoidCallback onClaimed;
+
+  @override
+  ConsumerState<WelcomeBonusBanner> createState() => _WelcomeBonusBannerState();
+}
+
+class _WelcomeBonusBannerState extends ConsumerState<WelcomeBonusBanner> {
+  bool _claiming = false;
+
+  Future<void> _claim() async {
+    setState(() => _claiming = true);
+    final linked = await ensureGiftsLinked(context, ref);
+    if (!mounted) return;
+    setState(() => _claiming = false);
+    if (!linked) return;
+    showToast(context, context.t('welcome_bonus_done', {'amount': formatUzs(context, widget.bonusUzs)}));
+    widget.onClaimed();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.bonusUzs <= 0) return const SizedBox.shrink();
+    final s = context.s;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(colors: [Color(0xFFF7D774), Color(0xFFD4A94E)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+      ),
+      child: Row(children: [
+        const Text('🎁', style: TextStyle(fontSize: 32)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(s.t('welcome_bonus_title', {'amount': formatUzs(context, widget.bonusUzs)}),
+                style: const TextStyle(color: Color(0xFF3A2A06), fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(s.t('welcome_bonus_hint'), style: const TextStyle(color: Color(0xFF5A4512), fontSize: 12.5)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        _claiming
+            ? const SizedBox.square(dimension: 28, child: CircularProgressIndicator(strokeWidth: 2.6, color: Color(0xFF3A2A06)))
+            : FilledButton(
+                onPressed: _claim,
+                style: FilledButton.styleFrom(backgroundColor: const Color(0xFF3A2A06), foregroundColor: Colors.white),
+                child: Text(s.t('welcome_bonus_claim')),
+              ),
+      ]),
+    );
   }
 }
 

@@ -173,9 +173,11 @@ class Wallet {
     required this.topups,
     this.entries = const [],
     this.payme = false,
+    this.welcomeBonusUzs = 0,
   });
 
   factory Wallet.fromJson(Map<String, dynamic> j) => Wallet(
+        welcomeBonusUzs: j['welcome_bonus_uzs'] as int? ?? 0,
         balanceUzs: j['balance_uzs'] as int? ?? 0,
         card: j['card'] as String? ?? '',
         cardHolder: j['card_holder'] as String? ?? '',
@@ -195,6 +197,9 @@ class Wallet {
 
   /// The server takes Payme payments (credited automatically, no receipt).
   final bool payme;
+
+  /// The new-user bonus still waiting: it comes once the Telegram account is verified; 0 when none.
+  final int welcomeBonusUzs;
 }
 
 /// One line of the balance history; [kind] is topup, refund, gift, badge, username or adjust.

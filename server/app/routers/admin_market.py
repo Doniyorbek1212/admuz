@@ -14,7 +14,7 @@ from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
 from app.market import ad_out, profile_out, shop_out
-from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop
+from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop, WalletEntry
 from app.services.audit import audit
 from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics
 from app.uploads import private_file
@@ -221,12 +221,25 @@ async def list_users(
     shops = select(Shop.owner_id, func.count().label("n")).where(Shop.status != ListingStatus.CLOSED).group_by(Shop.owner_id).subquery()
     ads = select(AdCampaign.customer_id, func.count().label("n")).group_by(AdCampaign.customer_id).subquery()
     platform = select(Device.customer_id, func.max(Device.platform).label("platform")).group_by(Device.customer_id).subquery()
+    wallets = select(WalletEntry.customer_id, func.sum(WalletEntry.delta_uzs).label("uzs")).group_by(WalletEntry.customer_id).subquery()
+    # Registration order over every customer ever made, so a user's number never changes.
+    numbers = select(Customer.id, func.row_number().over(order_by=(Customer.created_at, Customer.id)).label("no")).subquery()
     stmt = (
-        select(Customer, CustomerProfile, func.coalesce(shops.c.n, 0), func.coalesce(ads.c.n, 0), platform.c.platform)
+        select(
+            Customer,
+            CustomerProfile,
+            func.coalesce(shops.c.n, 0),
+            func.coalesce(ads.c.n, 0),
+            platform.c.platform,
+            func.coalesce(wallets.c.uzs, 0),
+            numbers.c.no,
+        )
+        .join(numbers, numbers.c.id == Customer.id)
         .outerjoin(CustomerProfile, CustomerProfile.customer_id == Customer.id)
         .outerjoin(shops, shops.c.owner_id == Customer.id)
         .outerjoin(ads, ads.c.customer_id == Customer.id)
         .outerjoin(platform, platform.c.customer_id == Customer.id)
+        .outerjoin(wallets, wallets.c.customer_id == Customer.id)
         .where(Customer.deleted_at.is_(None))
     )
     if q:
@@ -253,7 +266,9 @@ async def list_users(
                 "profile": profile_out(p),
                 "shops": n_shops,
                 "ads": n_ads,
+                "wallet_uzs": int(uzs),
+                "number": int(no),
             }
-            for c, p, n_shops, n_ads, plat in rows.all()
+            for c, p, n_shops, n_ads, plat, uzs, no in rows.all()
         ],
     }

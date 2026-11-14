@@ -20,6 +20,7 @@ import '../chat/marked_messages_screen.dart';
 import '../gifts/gift_showcase.dart' show giftShowcaseProvider;
 import '../gifts/gift_widgets.dart';
 import '../gifts/gifts_screen.dart';
+import '../gifts/my_gifts_screen.dart';
 import '../gifts/profile_background.dart';
 import '../gifts/uzaro_badge.dart' show UzaroBadge;
 import '../gifts/wallet_screen.dart';
@@ -123,6 +124,7 @@ class MyProfileTab extends ConsumerWidget {
             GiftOrbit(
               telegramId: me.id,
               avatarSize: 104,
+              playDearest: true,
               child: GestureDetector(
                 // All photos ever set (swipe, delete), not just the current one.
                 onTap: me.profilePhoto == null
@@ -319,12 +321,28 @@ class MyProfileTab extends ConsumerWidget {
             () => _setGiftsHidden(context, ref, me.id, !giftsHidden),
           ),
         if (giftsOn)
+          item(Icons.redeem_rounded, const Color(0xFFD4A94E), s.t('gifts_mine'), () async {
+            await _push(context, const MyGiftsScreen());
+            ref.invalidate(_giftsHiddenProvider);
+          }),
+        if (giftsOn && giftsHidden != null)
+          item(Icons.auto_awesome_rounded, const Color(0xFFE5486A), s.t('gifts_animation'), () => _playAllShows(context, ref)),
+        if (giftsOn)
           item(Icons.card_giftcard_rounded, brandGold, s.t('gifts_title'), () async {
             await _push(context, const GiftsScreen());
             ref.invalidate(_giftsHiddenProvider);
           }),
       ],
     );
+  }
+
+  /// Every premium gift the user owns (hidden ones too), one show per kind, dearest first.
+  Future<void> _playAllShows(BuildContext context, WidgetRef ref) async {
+    final received = await apiGuard(context, () async => (await ref.read(sadoApiProvider).receivedGifts()).$1);
+    if (received == null || !context.mounted) return;
+    final shows = premiumShowOrder(received);
+    if (shows.isEmpty) return showToast(context, context.t('gifts_animation_none'));
+    await playGiftShows(context, shows);
   }
 
   Future<void> _setGiftsHidden(BuildContext context, WidgetRef ref, int myId, bool hide) async {
