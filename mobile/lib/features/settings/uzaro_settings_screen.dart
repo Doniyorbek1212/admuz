@@ -65,7 +65,8 @@ class UzaroSettingsScreen extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: 16),
         children: [
           SettingsGroup(title: s.t('privacy'), children: [
-            ListTile(
+            // With the secret hold set, the way in is the search button only; nothing here gives it away.
+            if (settings.hiddenHoldSeconds == 0) ListTile(
               title: Text(s.t('hidden_chats')),
               subtitle: Text(s.t('hidden_chats_count', {'n': '${settings.hiddenChatIds.length}'})),
               trailing: const Icon(Icons.chevron_right_rounded),

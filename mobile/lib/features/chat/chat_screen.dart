@@ -112,7 +112,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    openChatFromContent = (context, chatId) => openChat(context, chatId);
+    openChatFromContent = (context, chatId, {messageId}) => openChat(context, chatId, messageId: messageId);
     final topicId = widget.topicId;
     if (topicId != null) _account.activeTopics[widget.chatId] = topicId;
     if (widget.threadId case final threadId?) _account.activeThreads[widget.chatId] = threadId;

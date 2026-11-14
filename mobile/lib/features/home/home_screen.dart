@@ -129,11 +129,7 @@ class HomeScreen extends ConsumerWidget {
                       ],
                     ),
                     actions: [
-                      IconButton(
-                        icon: const Icon(Icons.search_rounded, size: 27),
-                        tooltip: s.t('search'),
-                        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
-                      ),
+                      const _SearchButton(),
                       if (ref.watch(settingsProvider.select((st) => st.showGhostButton))) const _RoundAction(child: GhostModeButton()),
                       const SizedBox(width: 8),
                     ],
@@ -737,12 +733,87 @@ class ArchiveScreen extends StatelessWidget {
   );
 }
 
+/// Opens search on a tap. Held for the secret number of seconds (±0.5 s) it opens the hidden chats instead,
+/// after the passcode when one is set.
+class _SearchButton extends ConsumerStatefulWidget {
+  const _SearchButton();
+
+  @override
+  ConsumerState<_SearchButton> createState() => _SearchButtonState();
+}
+
+class _SearchButtonState extends ConsumerState<_SearchButton> {
+  static const _slackMs = 500;
+  final _held = Stopwatch();
+
+  Future<void> _released() async {
+    final seconds = ref.read(settingsProvider).hiddenHoldSeconds;
+    final heldMs = _held.elapsedMilliseconds;
+    _held
+      ..stop()
+      ..reset();
+    if (seconds == 0 || (heldMs - seconds * 1000).abs() > _slackMs) return;
+    if (await unlockHiddenChats(context, ref) && mounted) {
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HiddenChatsScreen()));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: (_) => _held
+      ..reset()
+      ..start(),
+    onPointerUp: (_) => unawaited(_released()),
+    onPointerCancel: (_) => _held.stop(),
+    child: IconButton(
+      icon: const Icon(Icons.search_rounded, size: 27),
+      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
+      // A hold is not a tap: without this the search would open after the secret hold too. No tooltip, so a hold shows nothing.
+      onLongPress: () {},
+    ),
+  );
+}
+
 class HiddenChatsScreen extends ConsumerWidget {
   const HiddenChatsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(title: Text(context.t('hidden_chats'))),
+    appBar: AppBar(
+      title: Text(context.t('hidden_chats')),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.timer_outlined),
+          tooltip: context.t('hidden_hold'),
+          onPressed: () => _pickHoldSeconds(context, ref),
+        ),
+      ],
+    ),
     body: const ChatListView(listKey: 'hidden'),
   );
+}
+
+/// Only reachable from inside the hidden chats, so the chosen seconds are never on show.
+Future<void> _pickHoldSeconds(BuildContext context, WidgetRef ref) async {
+  final s = context.s;
+  final current = ref.read(settingsProvider).hiddenHoldSeconds;
+  final picked = await showDialog<int>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text(s.t('hidden_hold')),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: Text(s.t('hidden_hold_hint'), style: Theme.of(context).textTheme.bodySmall),
+        ),
+        for (final seconds in const [0, 2, 3, 4, 5, 6, 7, 8, 10])
+          ListTile(
+            leading: Icon(seconds == current ? Icons.radio_button_checked : Icons.radio_button_off),
+            title: Text(seconds == 0 ? s.t('hidden_hold_off') : s.t('hidden_hold_seconds', {'n': '$seconds'})),
+            onTap: () => Navigator.pop(context, seconds),
+          ),
+      ],
+    ),
+  );
+  if (picked != null) ref.read(settingsProvider.notifier).setHiddenHoldSeconds(picked);
 }

@@ -126,6 +126,7 @@ class SettingsIn(BaseModel):
     username_price_4_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     badge_price_uzs: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
     welcome_bonus_uzs: Annotated[int, Field(ge=0, le=10_000_000)] | None = None
+    topup_bonus_percent: Annotated[int, Field(ge=0, le=100)] | None = None
     stars_uzs_per_star: Annotated[int, Field(ge=0, le=100_000)] | None = None
     ton_uzs_per_ton: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
     # A TON address (user-friendly base64url or raw "0:<hex>"); empty switches TON off.

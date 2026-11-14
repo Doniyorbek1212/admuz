@@ -41,6 +41,7 @@ class AppSettings {
     this.autoDownloadPhotos = false,
     this.autoplayGifs = true,
     this.hiddenChatIds = const {},
+    this.hiddenHoldSeconds = 0,
     this.wallpaper = '',
     this.wallpaperPattern = true,
     this.fileGuard = const FileGuardSettings(),
@@ -96,6 +97,10 @@ class AppSettings {
 
   /// Chats hidden from the chat lists (shown only in the passcode-protected "Hidden chats" screen).
   final Set<int> hiddenChatIds;
+
+  /// Secret way in: holding the chat list's search button this many seconds opens the hidden chats, and the
+  /// menu entries for them disappear; 0 = off (the menu shows them).
+  final int hiddenHoldSeconds;
 
   /// Chat background: '' default, 'color:AARRGGBB', 'gradient:N' or 'file:/path'.
   final String wallpaper;
@@ -169,6 +174,7 @@ class AppSettings {
     bool? autoDownloadPhotos,
     bool? autoplayGifs,
     Set<int>? hiddenChatIds,
+    int? hiddenHoldSeconds,
     String? wallpaper,
     bool? wallpaperPattern,
     FileGuardSettings? fileGuard,
@@ -212,6 +218,7 @@ class AppSettings {
         autoDownloadPhotos: autoDownloadPhotos ?? this.autoDownloadPhotos,
         autoplayGifs: autoplayGifs ?? this.autoplayGifs,
         hiddenChatIds: hiddenChatIds ?? this.hiddenChatIds,
+        hiddenHoldSeconds: hiddenHoldSeconds ?? this.hiddenHoldSeconds,
         wallpaper: wallpaper ?? this.wallpaper,
         wallpaperPattern: wallpaperPattern ?? this.wallpaperPattern,
         fileGuard: fileGuard ?? this.fileGuard,
@@ -270,6 +277,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? false,
       autoplayGifs: _prefs.getBool('autoplayGifs') ?? true,
       hiddenChatIds: {for (final id in _prefs.getStringList('hiddenChats') ?? const <String>[]) ?int.tryParse(id)},
+      hiddenHoldSeconds: _prefs.getInt('hiddenHoldSeconds') ?? 0,
       wallpaper: _prefs.getString('wallpaper') ?? '',
       wallpaperPattern: _prefs.getBool('wallpaperPattern') ?? true,
       fileGuard: FileGuardSettings(
@@ -503,6 +511,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     hidden ? next.add(chatId) : next.remove(chatId);
     _prefs.setStringList('hiddenChats', [for (final id in next) '$id']);
     state = state.copyWith(hiddenChatIds: next);
+  }
+
+  void setHiddenHoldSeconds(int seconds) {
+    _prefs.setInt('hiddenHoldSeconds', seconds);
+    state = state.copyWith(hiddenHoldSeconds: seconds);
   }
 
   void setWallpaperPattern(bool value) {

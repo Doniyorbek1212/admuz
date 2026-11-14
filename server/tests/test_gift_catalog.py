@@ -1,6 +1,8 @@
 """Rendered gifts: the manifest is validated, imported into the one gift catalog, prices stay server-side."""
 
+import io
 import json
+import zipfile
 
 import pytest
 from sqlalchemy import func, select
@@ -77,6 +79,47 @@ async def test_import_adds_new_upgrades_old_and_keeps_prices(tmp_path, session_f
     assert rose.price_uzs == 5_000 and rose.duration_ms == 3500
     for name in (rose.show, rose.animation, rose.sound, lion.show, lion.sound):
         assert (public_dir() / name).is_file()
+
+
+def _zip(tmp_path, entries: list[dict], prefix: str = "gift_renders/") -> bytes:
+    folder = tmp_path / "src"
+    folder.mkdir(parents=True)
+    _folder(folder, entries)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for file in folder.iterdir():
+            archive.write(file, prefix + file.name)
+        archive.writestr(prefix + "preview.jpg", b"x")  # not a gift file: skipped
+        archive.writestr(prefix + "../escape.webp", b"x")  # outside the folder: skipped, never written
+    return buffer.getvalue()
+
+
+async def test_admin_imports_a_zip_pack_and_refuses_a_bad_one(tmp_path, client, session_factory):
+    admin = await _admin(session_factory)
+    url = "/v1/admin/gifts/import"
+    pack = _zip(tmp_path, [_entry("comet_tail", 25_000, 2)])
+    first = await client.post(url, headers=admin, files={"file": ("pack.zip", pack, "application/zip")})
+    assert first.status_code == 200, first.text
+    assert first.json() == {"added": 1, "updated": 0, "ids": ["comet_tail"]}
+    again = await client.post(url, headers=admin, files={"file": ("pack.zip", pack, "application/zip")})
+    assert again.json()["updated"] == 1
+    listed = (await client.get("/v1/admin/gifts", headers=admin)).json()["items"]
+    assert [g["price_uzs"] for g in listed if g.get("titles", {}).get("en") == "comet_tail en"] == [25_000]
+
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    _folder(folder, [_entry("star_fall", 9_000)])
+    parts = [("files", (f"renders/{p.name}", p.read_bytes(), "application/octet-stream")) for p in folder.iterdir()]
+    by_folder = await client.post(url, headers=admin, files=[*parts, ("files", ("renders/scene.blend", b"x", "application/octet-stream"))])
+    assert by_folder.status_code == 200, by_folder.text
+    assert by_folder.json() == {"added": 1, "updated": 0, "ids": ["star_fall"]}
+    assert (await client.post(url, headers=admin)).status_code == 400  # neither a ZIP nor files
+
+    broken = await client.post(url, headers=admin, files={"file": ("pack.zip", b"not a zip", "application/zip")})
+    assert broken.status_code == 400 and broken.json()["detail"]["code"] == "GIFT_PACK_INVALID"
+    bad_entry = _entry("bad_tier", tier=9)
+    bad = await client.post(url, headers=admin, files={"file": ("p.zip", _zip(tmp_path / "b", [bad_entry]), "application/zip")})
+    assert bad.status_code == 400 and "tier" in bad.json()["detail"]["message"]
 
 
 async def test_catalog_and_send_use_the_server_price(tmp_path, client, session_factory, new_customer):

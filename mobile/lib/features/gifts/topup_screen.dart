@@ -110,9 +110,21 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
           return ListView(padding: const EdgeInsets.only(bottom: 32), children: [
             BalanceCard(balanceUzs: wallet.balanceUzs),
             WelcomeBonusBanner(bonusUzs: wallet.welcomeBonusUzs, onClaimed: _reload),
-            if (storeBlocksExternalPayments && storeBillingTopUp)
-              StoreTopup(onCredited: _reload)
-            else if (storeBlocksExternalPayments)
+            if (wallet.topupBonusPercent > 0 && !(storeBlocksExternalPayments && !storeBillingTopUp))
+              Card(
+                margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                color: const Color(0xFF2EAD5B).withValues(alpha: 0.12),
+                elevation: 0,
+                child: ListTile(
+                  leading: const Icon(Icons.redeem_rounded, color: Color(0xFF2EAD5B)),
+                  title: Text(s.t('topup_bonus_title', {'p': '${wallet.topupBonusPercent}'}), style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text(s.t('topup_bonus_hint', {'p': '${wallet.topupBonusPercent}', 'b': formatUzs(context, 100000 * wallet.topupBonusPercent ~/ 100)})),
+                ),
+              ),
+            if (storeBlocksExternalPayments && storeBillingTopUp) ...[
+              StoreTopup(onCredited: _reload),
+              if (storeOffersCardReceipt) _steps(context, wallet, cardOnly: true),
+            ] else if (storeBlocksExternalPayments)
               Padding(padding: const EdgeInsets.all(20), child: Text(s.t('topup_unavailable'), textAlign: TextAlign.center))
             else
               _steps(context, wallet),
@@ -139,7 +151,7 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
         _ => Theme.of(context).hintColor,
       };
 
-  Widget _steps(BuildContext context, Wallet wallet) {
+  Widget _steps(BuildContext context, Wallet wallet, {bool cardOnly = false}) {
     final s = context.s;
     final theme = Theme.of(context);
     Widget step(int n, String text) => ListTile(
@@ -163,7 +175,7 @@ class _TopupScreenState extends ConsumerState<TopupScreen> {
             ActionChip(label: Text(formatUzs(context, amount)), onPressed: () => setState(() => _amount.text = '$amount')),
         ]),
       ),
-      if (wallet.payme) ...[
+      if (wallet.payme && !cardOnly) ...[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Semantics(

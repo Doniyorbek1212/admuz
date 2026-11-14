@@ -57,7 +57,10 @@ class _StoreTopupState extends ConsumerState<StoreTopup> {
     // Play: paid but never credited (the app died mid-way) comes back as "restored" and is sent again.
     // StoreKit hands unfinished transactions to the purchase stream by itself.
     if (Platform.isAndroid) unawaited(_store.restorePurchases(applicationUserName: info.account));
-    return (account: info.account, amounts: amounts, products: {for (final p in found.productDetails) p.id: p});
+    final products = {for (final p in found.productDetails) p.id: p};
+    // Once the store sells some packs, hide the ones it cannot (App Store prices stop at $999.99, so no 12M pack).
+    final sold = products.isEmpty ? amounts : {for (final MapEntry(:key, :value) in amounts.entries) if (products.containsKey(key)) key: value};
+    return (account: info.account, amounts: sold, products: products);
   }
 
   void _finish() {

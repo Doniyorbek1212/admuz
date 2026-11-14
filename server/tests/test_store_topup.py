@@ -160,6 +160,27 @@ async def test_sandbox_purchases_are_marked_and_capped_per_account(apple, new_cu
     assert (await customer.get("/v1/wallet")).json()["balance_uzs"] == 800_000
 
 
+async def test_topup_bonus_adds_its_percent_once_but_not_to_sandbox(play, new_customer, monkeypatch):
+    from dataclasses import replace
+
+    from app.services import market_settings, wallet
+
+    async def with_bonus(db):
+        return replace(market_settings.defaults(), topup_bonus_percent=20)
+
+    monkeypatch.setattr(wallet, "load_market_settings", with_bonus)
+    customer = await new_customer()
+    play["purchase"] = _play(customer.account_token)
+    assert (await _buy(customer)).json()["balance_uzs"] == 60_000
+    assert (await _buy(customer)).json()["balance_uzs"] == 60_000  # the same purchase again: no second bonus
+    kinds = [(e["kind"], e["delta_uzs"]) for e in (await customer.get("/v1/wallet/history")).json()["items"]]
+    assert sorted(kinds) == [("bonus", 10_000), ("topup", 50_000)]
+
+    monkeypatch.setattr(get_settings(), "store_test_purchases", True)
+    play["purchase"] = _play(customer.account_token, is_test=True, order="GPA.test")
+    assert (await _buy(customer)).json()["balance_uzs"] == 110_000
+
+
 async def test_real_verifier_rejects_a_forged_transaction(monkeypatch):
     roots = list(app_store.ROOTS_DIR.glob("*.cer"))
     assert [p.name for p in roots] == ["AppleRootCA-G3.cer"]

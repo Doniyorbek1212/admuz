@@ -75,7 +75,7 @@ void main() {
       final en = translations['en']!;
       // Literals on t()/count() lines that are values or placeholders, not keys.
       const notKeys = {
-        'history', 'mark', 'actor', 'ad', 'users', 'title', 'n', 'name', 'time', 'date', 'email', 'phone', 'prefix', 'lang', 'hint', 'link',
+        'history', 'mark', 'actor', 'p', 'ad', 'users', 'title', 'n', 'name', 'time', 'date', 'email', 'phone', 'prefix', 'lang', 'hint', 'link',
         'main', 'fix', 'translate', 'emoji', 'summarize', 'clear', 'mute', 'delete', 'pin', 'retry', 'reply', 'copy',
         'edit', 'forward', 'share', 'select', 'gallery', 'camera', 'video', 'file', 'location', 'poll', 'contact', 'read',
         'archive', 'count', 'domain', 'seconds', 'bot', 'now', 'scheduled', 'reschedule', 'admins', 'dismiss', 'remove', 'version',

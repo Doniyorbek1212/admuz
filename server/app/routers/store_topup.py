@@ -82,7 +82,7 @@ async def _credit(
         reference = reference.replace(":", "-test:", 1)
         if await _test_credits(db, current.id) >= TEST_CREDIT_CAP_UZS:
             raise forbidden("TEST_PURCHASE_LIMIT")
-    if not await wallet.record(db, current.id, amount_uzs, "topup", reference):
+    if not await wallet.record_topup(db, current.id, amount_uzs, reference):
         return False, amount_uzs
     audit(db, f"customer:{current.id}", "store_topup", reference, amount_uzs=amount_uzs, test=is_test)
     try:

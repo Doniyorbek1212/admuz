@@ -1,8 +1,11 @@
 """Admin side of UZARO gifts: the catalog (upload animated WebP/GIF, price, order, hide) and balance top-ups
 (check the card-transfer receipt, then approve to credit the balance or reject with a reason)."""
 
+import asyncio
+import tempfile
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
@@ -15,7 +18,7 @@ from app.errors import bad_request, conflict, not_found
 from app.models import AdminRole, AdminUser, Customer, GiftItem, SentGift, TelegramLink, TopupStatus, WalletTopup
 from app.routers.admin_market import ReasonIn
 from app.routers.gifts import gift_out, topup_out
-from app.services import pay_notify, wallet
+from app.services import gift_catalog, pay_notify, wallet
 from app.services.audit import audit
 from app.uploads import private_file, save_gift_animation, save_gift_video
 
@@ -26,6 +29,7 @@ Support = Annotated[AdminUser, Depends(require_admin(AdminRole.SUPPORT))]
 Finance = Annotated[AdminUser, Depends(require_admin(AdminRole.FINANCE))]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 Price = Annotated[int, Field(ge=0, le=10_000_000)]
+MAX_PACK_BYTES = 30 << 20  # under the 32 MB request cap; bigger sets go up as several ZIPs
 
 
 async def _gift(db: DbDep, gift_id: uuid.UUID) -> GiftItem:
@@ -66,6 +70,44 @@ async def create_gift(
     audit(db, f"admin:{admin.name}", "gift_created", str(gift.id), price_uzs=price_uzs)
     await db.commit()
     return gift_out(gift)
+
+
+@router.post("/import")
+async def import_gift_pack(
+    admin: Support,
+    db: DbDep,
+    file: Annotated[UploadFile | None, File()] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict[str, Any]:
+    """Rendered gifts (see the admin panel's format guide) as one ZIP [file], or as the folder's own [files]
+    (manifest.json plus gift files; the panel sends a big folder one gift per request). Same-id gifts are replaced."""
+    if (file is None) == (not files):
+        raise bad_request("GIFT_PACK_INVALID", "send a ZIP file or the folder's files")
+    with tempfile.TemporaryDirectory() as folder:
+        dest = Path(folder)
+        try:
+            if file is not None:
+                data = await file.read(MAX_PACK_BYTES + 1)
+                if len(data) > MAX_PACK_BYTES:
+                    raise bad_request("GIFT_PACK_TOO_BIG")
+                gifts = await asyncio.to_thread(gift_catalog.extract_pack, data, dest)
+            else:
+                for upload in files or []:
+                    name = PurePosixPath((upload.filename or "").replace("\\", "/")).name
+                    limit = gift_catalog.pack_file_limit(name)
+                    if limit:
+                        gift_catalog.save_pack_file(dest, name, await upload.read(limit + 1))
+                if not (dest / "manifest.json").is_file():
+                    raise ValueError("manifest.json is missing")
+                gifts = await asyncio.to_thread(gift_catalog.parse_manifest, dest / "manifest.json")
+        except ValueError as exc:
+            raise bad_request("GIFT_PACK_INVALID", str(exc)) from exc
+        added, updated = await gift_catalog.import_rendered_gifts(db, gifts)
+    name = file.filename if file is not None else "folder"
+    audit(db, f"admin:{admin.name}", "gift_pack_imported", "gifts", file=(name or "")[:120], added=added, updated=updated,
+          ids=[g.key for g in gifts])
+    await db.commit()
+    return {"added": added, "updated": updated, "ids": [g.key for g in gifts]}
 
 
 class GiftIn(BaseModel):
@@ -141,7 +183,7 @@ async def approve_topup(topup_id: uuid.UUID, admin: Support, db: DbDep) -> dict[
     topup.status = TopupStatus.APPROVED.value
     topup.reviewed_by = admin.name
     topup.reviewed_at = datetime.now(UTC)
-    await wallet.record(db, topup.customer_id, topup.amount_uzs, "topup", str(topup.id))
+    await wallet.record_topup(db, topup.customer_id, topup.amount_uzs, str(topup.id))
     audit(db, f"admin:{admin.name}", "topup_approved", str(topup.id), amount_uzs=topup.amount_uzs)
     await db.commit()
     await pay_notify.credited(db, topup.customer_id, topup.amount_uzs, "karta")

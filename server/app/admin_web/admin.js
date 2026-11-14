@@ -515,6 +515,7 @@ async function renderSettings(el) {
         ${field('username_price_4_uzs', "4 harfli nom (so'm)", s.username_price_4_uzs, 'number', "0 — sotilmaydi. 5+ harfli nomlar bepul. Sotib olish: ilova, uzaromessenger.uz/nom va bot.")}
         ${field('badge_price_uzs', "Ism yonidagi belgi, 30 kun (so'm)", s.badge_price_uzs, 'number', "Galochka yoki istalgan emoji. 0 — sotilmaydi.")}
         ${field('welcome_bonus_uzs', "Yangi foydalanuvchiga bonus (so'm)", s.welcome_bonus_uzs, 'number', "Har bir Telegram hisobiga bir marta, hisob tasdiqlanganda. Sovg'a, reklama, belgi, nomga ishlatiladi. 0 — berilmaydi.")}
+        ${field('topup_bonus_percent', "Balans to'ldirganda bonus (%)", s.topup_bonus_percent, 'number', "Har bir to'lovga shu foiz qo'shib beriladi: 20 — 100 000 so'm to'lasa, yana 20 000 so'm bonus. Karta, Payme, bot, Google Play, App Store — hammasiga. 0 — o'chiq.")}
       </div>
       <h3>To'lov kartasi</h3>
       <div class="form-grid">
@@ -554,7 +555,7 @@ async function renderSettings(el) {
     e.preventDefault();
     const body = {};
     ['ad_price_per_region_day_uzs', 'extra_shop_price_uzs', 'shop_free_limit', 'app_build', 'ads_personalization', 'ads_topic_picker', 'ads_interest_weight',
-      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs', 'badge_price_uzs', 'welcome_bonus_uzs', 'stars_uzs_per_star', 'ton_uzs_per_ton'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
+      'username_price_2_uzs', 'username_price_3_uzs', 'username_price_4_uzs', 'badge_price_uzs', 'welcome_bonus_uzs', 'topup_bonus_percent', 'stars_uzs_per_star', 'ton_uzs_per_ton'].forEach((k) => { body[k] = Number(el.querySelector(`#${k}`).value || 0); });
     ['ad_payment_card', 'ad_payment_card_holder', 'app_version', 'app_release_notes', 'ton_wallet'].forEach((k) => { body[k] = el.querySelector(`#${k}`).value.trim(); });
     body.ads_interest_half_life_days = Math.max(1, Number(el.querySelector('#ads_interest_half_life_days').value || 14));
     await run(() => api('/v1/admin/settings', { method: 'PUT', body }), 'Sozlamalar saqlandi');

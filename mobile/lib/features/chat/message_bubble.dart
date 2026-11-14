@@ -21,6 +21,7 @@ import 'message_tools.dart';
 
 /// Narrowest a captioned photo/video bubble gets, so the caption under a tall portrait stays readable.
 const _captionMinWidth = 240.0;
+const _longCaptionChars = 80;
 
 /// The message a reply points to, resolved by TDLib from the reply itself (works across chats and threads).
 final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
@@ -275,12 +276,15 @@ class MessageBubble extends ConsumerWidget {
     final hasText = text != null && text.text.isNotEmpty;
     // Captioned photo/video: the bubble is as wide as the media and the caption wraps under it (Telegram);
     // a narrow portrait one widens to a readable caption width and is cropped to fill it.
+    // A long caption takes the full bubble width instead of wrapping into a narrow column.
     final naturalMedia = album == null && hasText ? mediaWidth(content, maxWidth) : null;
     final captionedMediaWidth = naturalMedia == null
         ? null
-        : naturalMedia < _captionMinWidth
-            ? (_captionMinWidth > maxWidth ? maxWidth : _captionMinWidth)
-            : naturalMedia;
+        : (text?.text.length ?? 0) > _longCaptionChars
+            ? maxWidth
+            : naturalMedia < _captionMinWidth
+                ? (_captionMinWidth > maxWidth ? maxWidth : _captionMinWidth)
+                : naturalMedia;
     final bubbleMaxWidth = captionedMediaWidth ?? maxWidth;
     // Time sits at the end of the last text line when it fits (Telegram layout).
     final policy = ref.watch(linkPolicyProvider);
@@ -306,7 +310,7 @@ class MessageBubble extends ConsumerWidget {
     );
 
     Widget? senderLabel;
-    if (showSender && !outgoing && (account.isGroup(chat) || isChannel && message.authorSignature != null)) {
+    if (showSender && !outgoing && (account.isGroup(chat) || isChannel && (message.authorSignature ?? '').isNotEmpty)) {
       final name = isChannel ? (message.authorSignature ?? '') : account.senderName(message.senderId);
       final seed = account.senderKey(message.senderId);
       final label = Text(
@@ -604,21 +608,52 @@ class _ForwardHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
-    final name = switch (info.origin) {
-      td.MessageOriginUser(:final senderUserId) => account.userName(senderUserId),
-      td.MessageOriginChat(:final senderChatId) => account.chats[senderChatId]?.title ?? '',
-      td.MessageOriginChannel(:final chatId) => account.chats[chatId]?.title ?? '',
-      td.MessageOriginHiddenUser(:final senderName) => senderName,
-      _ => '',
+    final color = Theme.of(context).colorScheme.primary;
+    const avatarSize = 20.0;
+    // Name, avatar and where a tap leads: the person's profile, or the channel at the original post.
+    final (String name, Widget? avatar, VoidCallback? onTap) = switch (info.origin) {
+      td.MessageOriginUser(:final senderUserId) => (
+          account.userName(senderUserId),
+          UserAvatar(userId: senderUserId, size: avatarSize, showOnline: false),
+          () => openSenderProfile(context, account, td.MessageSenderUser(userId: senderUserId)),
+        ),
+      td.MessageOriginChat(:final senderChatId) => (
+          account.chats[senderChatId]?.title ?? '',
+          ChatAvatar(chatId: senderChatId, size: avatarSize, showOnline: false),
+          () => openChatFromContent(context, senderChatId),
+        ),
+      td.MessageOriginChannel(:final chatId, :final messageId) => (
+          account.chats[chatId]?.title ?? '',
+          ChatAvatar(chatId: chatId, size: avatarSize, showOnline: false),
+          () => openChatFromContent(context, chatId, messageId: messageId),
+        ),
+      td.MessageOriginHiddenUser(:final senderName) => (senderName, null, null),
+      _ => ('', null, null),
     };
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
-      child: Text.rich(
-        TextSpan(children: [
-          TextSpan(text: '${context.t('forwarded_from')}\n'),
-          TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w600)),
-        ]),
-        style: TextStyle(fontSize: 13.5, color: Theme.of(context).colorScheme.primary),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(context.t('forwarded_from'), style: TextStyle(fontSize: 13.5, color: color)),
+          const SizedBox(height: 3),
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(avatarSize / 2),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (avatar != null) ...[avatar, const SizedBox(width: 6)],
+              Flexible(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color),
+                ),
+              ),
+            ]),
+          ),
+        ],
       ),
     );
   }

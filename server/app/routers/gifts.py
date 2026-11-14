@@ -419,6 +419,8 @@ async def get_wallet(current: CustomerDep, db: DbDep) -> dict[str, Any]:
         # Not linked yet: the bonus that linking the Telegram account would bring (granted above once linked).
         "welcome_bonus_uzs": 0 if await db.scalar(select(TelegramLink.customer_id).where(TelegramLink.customer_id == current.id))
         else settings.welcome_bonus_uzs,
+        # Extra percent every paid top-up brings (shown on the top-up screen); 0 = none.
+        "topup_bonus_percent": settings.topup_bonus_percent,
         # The wallet screen's latest history; the full list pages through /wallet/history.
         "entries": entries,
         "entries_more": more,

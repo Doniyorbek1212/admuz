@@ -234,7 +234,7 @@ async def _stars_paid(db: AsyncSession, user_id: int, paid: dict[str, Any]) -> N
 async def _credit(db: AsyncSession, customer: uuid.UUID, user_id: int, amount: int, reference: str, method: str) -> bool:
     """Credits one payment once; tells the payer. False when this payment was already credited."""
     try:
-        fresh = await wallet.record(db, customer, amount, "topup", reference)
+        fresh = await wallet.record_topup(db, customer, amount, reference)
         if fresh:
             audit(db, f"customer:{customer}", "bot_topup", reference, amount_uzs=amount, method=method)
         await db.commit()

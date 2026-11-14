@@ -139,7 +139,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
               value: theme.brightness == Brightness.dark,
               onChanged: (dark) => ref.read(settingsProvider.notifier).setThemeMode(dark ? ThemeMode.dark : ThemeMode.light),
             ),
-            if (settings.hiddenChatIds.isNotEmpty) _row(Icons.visibility_off_rounded, const Color(0xFF7C4DFF), s.t('hidden_chats'), _openHidden),
+            if (settings.hiddenChatIds.isNotEmpty && settings.hiddenHoldSeconds == 0) _row(Icons.visibility_off_rounded, const Color(0xFF7C4DFF), s.t('hidden_chats'), _openHidden),
             _row(Icons.add_a_photo_rounded, const Color(0xFFFF5C8A), s.t('add_story'), _addStory),
             _row(Icons.download_rounded, const Color(0xFF13B88A), s.t('downloads'), () => _openPanel(const DownloadsScreen())),
           ]),

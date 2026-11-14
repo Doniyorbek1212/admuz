@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GiftItem, SentGift, TelegramLink, WalletEntry
+from app.services.market_settings import load_market_settings
 
 Direction = Literal["all", "in", "out"]
 
@@ -34,6 +35,27 @@ async def record(db: AsyncSession, customer_id: uuid.UUID, delta_uzs: int, kind:
         return False
     db.add(WalletEntry(customer_id=customer_id, delta_uzs=delta_uzs, kind=kind, reference=reference))
     return True
+
+
+async def record_topup(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int, reference: str) -> bool:
+    """A paid top-up plus the admin's top-up bonus (topup_bonus_percent of it, a "bonus" line); sandbox store
+    purchases get no bonus. False (nothing changed) when this payment was already credited. The caller commits."""
+    if not await record(db, customer_id, amount_uzs, "topup", reference):
+        return False
+    bonus = amount_uzs * (await load_market_settings(db)).topup_bonus_percent // 100
+    if bonus > 0 and "-test:" not in reference:
+        db.add(WalletEntry(customer_id=customer_id, delta_uzs=bonus, kind="bonus", reference=f"topup:{reference}"))
+    return True
+
+
+async def topup_bonus(db: AsyncSession, customer_id: uuid.UUID, reference: str) -> int:
+    """So'm the bonus for this top-up gave (0 when none)."""
+    delta = await db.scalar(
+        select(WalletEntry.delta_uzs).where(
+            WalletEntry.customer_id == customer_id, WalletEntry.kind == "bonus", WalletEntry.reference == f"topup:{reference}"
+        )
+    )
+    return int(delta or 0)
 
 
 async def grant_welcome(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int) -> int:

@@ -5,12 +5,14 @@ the sound are copied to the public media dir. Re-running is safe. A price is set
 existing gift (such as the older drawn lion, plane and helicopter) keeps the price it has.
 """
 
+import io
 import json
 import re
 import shutil
 import uuid
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,6 +77,52 @@ def parse_manifest(path: Path) -> list[RenderedGift]:
     keys = [g.key for g in gifts]
     _check(len(set(keys)) == len(keys), path.name, "duplicate ids")
     return gifts
+
+
+PACK_FILE = re.compile(r"[a-z][a-z0-9_]{1,31}(_icon)?\.(webp|mp3)")
+MAX_MANIFEST_BYTES = 256 << 10
+MAX_PACK_ENTRIES = 400
+
+
+def extract_pack(data: bytes, dest: Path) -> list[RenderedGift]:
+    """A ZIP of one rendered-gifts folder (manifest.json plus the files it names) unpacked into [dest] and validated.
+
+    Only manifest.json and files named like gift files are taken, by base name, so paths inside the ZIP cannot
+    escape [dest]; previews, Blender sources and anything else in the folder are skipped.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise ValueError("not a ZIP file") from exc
+    with archive:
+        entries = [e for e in archive.infolist() if not e.is_dir() and "__MACOSX" not in e.filename]
+        _check(len(entries) <= MAX_PACK_ENTRIES, "ZIP", "too many files")
+        paths = {e.filename: PurePosixPath(e.filename.replace("\\", "/")) for e in entries}
+        manifests = [e for e in entries if paths[e.filename].name == "manifest.json"]
+        _check(len(manifests) == 1, "ZIP", "needs exactly one manifest.json")
+        root = paths[manifests[0].filename].parent
+        for entry in entries:
+            path = paths[entry.filename]
+            limit = pack_file_limit(path.name)
+            if path.parent != root or limit == 0:
+                continue
+            _check(entry.file_size <= limit, path.name, "too big")
+            with archive.open(entry) as source:
+                save_pack_file(dest, path.name, source.read(limit + 1))
+    return parse_manifest(dest / "manifest.json")
+
+
+def pack_file_limit(name: str) -> int:
+    """Byte cap for a file taken into a pack, or 0 when the name is not one the importer takes."""
+    if name == "manifest.json":
+        return MAX_MANIFEST_BYTES
+    return MAX_BYTES["show"] if PACK_FILE.fullmatch(name) else 0
+
+
+def save_pack_file(dest: Path, name: str, body: bytes) -> None:
+    """Writes one pack file flat into [dest] by base name; [name] must already pass pack_file_limit."""
+    _check(len(body) <= pack_file_limit(name), name, "too big")
+    (dest / name).write_bytes(body)
 
 
 def _publish(source: Path, current: str) -> str:

@@ -39,6 +39,8 @@ class MarketSettings:
     ton_wallet: str = ""
     # So'm put on the balance once per Telegram account when it is first linked; 0 stops new grants.
     welcome_bonus_uzs: int = 100_000
+    # Extra so'm on every paid top-up, as a percent of it (20 = 100 000 so'm paid gives 20 000 more); 0 = off.
+    topup_bonus_percent: int = 0
 
 
 EDITABLE = tuple(f.name for f in fields(MarketSettings))

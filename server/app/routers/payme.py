@@ -221,7 +221,7 @@ async def perform_transaction(db: DbDep, params: dict[str, Any]) -> dict[str, An
             raise PaymeError(ERR_CANNOT_PERFORM)
         order.state = STATE_PERFORMED
         order.perform_time = _now_ms()
-        await wallet.record(db, order.customer_id, order.amount_uzs, "topup", f"payme:{order.id}")
+        await wallet.record_topup(db, order.customer_id, order.amount_uzs, f"payme:{order.id}")
         audit(db, "payme", "payme_performed", str(order.id), amount_uzs=order.amount_uzs)
         await db.commit()
         # Payme waits for this answer, so the pay bot's "money arrived" message goes out in the background.
@@ -237,10 +237,13 @@ async def cancel_transaction(db: DbDep, params: dict[str, Any]) -> dict[str, Any
     if order.state == STATE_CREATED:
         await _cancel(db, order, STATE_CANCELLED, reason)
     elif order.state == STATE_PERFORMED:
-        # A refund takes the money back off the balance; once it has been spent the payment stays.
-        if await wallet.balance(db, order.customer_id) < order.amount_uzs:
+        # A refund takes the money (and the top-up bonus it gave) back off the balance; once spent, the payment stays.
+        bonus = await wallet.topup_bonus(db, order.customer_id, f"payme:{order.id}")
+        if await wallet.balance(db, order.customer_id) < order.amount_uzs + bonus:
             raise PaymeError(ERR_CANNOT_CANCEL)
         await wallet.record(db, order.customer_id, -order.amount_uzs, "refund", f"payme:{order.id}")
+        if bonus:
+            await wallet.record(db, order.customer_id, -bonus, "refund", f"bonus:payme:{order.id}")
         audit(db, "payme", "payme_refunded", str(order.id), amount_uzs=order.amount_uzs)
         await _cancel(db, order, STATE_CANCELLED_AFTER_PERFORM, reason)
     return {"transaction": str(order.id), "cancel_time": order.cancel_time, "state": order.state}

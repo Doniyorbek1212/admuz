@@ -18,4 +18,8 @@ bool get storeBillingTopUp => Platform.isIOS || (Platform.isAndroid && _store ==
 /// through the store itself.
 bool get storeBlocksWalletSpending => storeBlocksExternalPayments && !storeBillingTopUp;
 
+/// The Play build also offers the card transfer with a receipt an admin approves, under the Play Billing packs
+/// (the owner's choice, against Play's payments policy for digital goods). iOS keeps In-App Purchase only.
+bool get storeOffersCardReceipt => Platform.isAndroid && _store == 'play';
+
 const _store = String.fromEnvironment('STORE');

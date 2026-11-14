@@ -994,7 +994,7 @@ class _ContactView extends ConsumerWidget {
 }
 
 /// Hook set by the chat screen so content widgets can open chats without importing navigation.
-void Function(BuildContext context, int chatId) openChatFromContent = (_, _) {};
+void Function(BuildContext context, int chatId, {int? messageId}) openChatFromContent = (_, _, {messageId}) {};
 
 /// Content this TDLib build does not know yet (e.g. Bot API HTML widgets): says so instead of an empty bubble,
 /// and opens the message in the Telegram app when it has a public link.

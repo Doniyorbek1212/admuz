@@ -241,7 +241,7 @@ async function fetchJson(path, init) {
   const res = await fetch(path, { ...init, headers: { 'X-Admin-Key': state.key } });
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({})))?.detail || {};
-    throw new ApiError(detail.code || `HTTP_${res.status}`, res.status);
+    throw Object.assign(new ApiError(detail.code || `HTTP_${res.status}`, res.status), { reason: detail.message || '' });
   }
   return res.json();
 }
