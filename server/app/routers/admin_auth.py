@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.deps import ADMIN_SESSION_PREFIX, DbDep, client_ip, get_redis, require_admin_address
 from app.errors import too_many, unauthorized
 from app.models import AdminUser
-from app.security import new_secret, sha256_hex, verify_password
+from app.security import hash_password, new_secret, sha256_hex, verify_password
 from app.services.audit import audit
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -20,6 +20,7 @@ LOGIN_ATTEMPTS_PER_WINDOW = 10
 LOGIN_WINDOW_SECONDS = 900
 # An address an admin signed in from stays exempt from the per-login lock this long (the per-address limit still applies).
 KNOWN_ADDRESS_SECONDS = 30 * 86400
+_UNKNOWN_LOGIN_HASH = hash_password(new_secret())  # matches no password; burns the same time as a real check
 
 
 class LoginIn(BaseModel):
@@ -63,7 +64,9 @@ async def login(body: LoginIn, request: Request, db: DbDep) -> dict[str, Any]:
     # A stranger's failures must not lock the admin out, so an address they signed in from skips the per-login lock.
     await _check_not_locked(keys[:1] if await redis.exists(known) else keys)
     admin = await db.scalar(select(AdminUser).where(AdminUser.login.in_(login_candidates(body.login))))
-    if admin is None or not admin.active or not verify_password(body.password, admin.password_hash):
+    # An unknown login costs the same scrypt run, so the response time does not reveal which logins exist.
+    stored = admin.password_hash if admin is not None else _UNKNOWN_LOGIN_HASH
+    if not verify_password(body.password, stored) or admin is None or not admin.active:
         await _count_failure(keys)
         raise unauthorized("LOGIN_INVALID")
     token = new_secret(32)
