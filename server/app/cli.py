@@ -109,6 +109,20 @@ async def set_login(name: str, login: str, password: str) -> None:
     print(f"login set for {name}: {login}; {ended} open session(s) ended")
 
 
+async def set_admin_telegram(name: str, telegram_id: str) -> None:
+    """Turns the Telegram sign-in confirmation on (a Telegram user id) or off (0) for one admin."""
+    if not telegram_id.isdigit():
+        print("telegram id must be a number (0 turns the confirmation off)")
+        sys.exit(1)
+    async with SessionFactory() as db:
+        admin = await _admin(db, name)
+        admin.telegram_user_id = int(telegram_id) or None
+        audit(db, "cli", "admin_updated", name, telegram_2fa=telegram_id)
+        await db.commit()
+    await get_redis().aclose()
+    print(f"{name}: Telegram confirmation {'on for ' + telegram_id if int(telegram_id) else 'off'}")
+
+
 async def list_admins() -> None:
     async with SessionFactory() as db:
         for admin in await db.scalars(select(AdminUser).order_by(AdminUser.created_at)):
@@ -295,6 +309,8 @@ def main() -> None:
             asyncio.run(revoke_key(name))
         case ["set-login", name, login, password]:
             asyncio.run(set_login(name, login, password))
+        case ["set-admin-telegram", name, telegram_id]:
+            asyncio.run(set_admin_telegram(name, telegram_id))
         case ["list-admins"]:
             asyncio.run(list_admins())
         case ["release-expired-reservations"]:

@@ -22,7 +22,9 @@ const SHOP_STATUS = {
   rejected: ['Rad etilgan', 'bad'], closed: ['Yopilgan', 'bad'], close_requested: ['Yopish so\'ralgan', 'gold'],
 };
 const ERRORS = {
-  ADMIN_KEY_INVALID: "Admin kaliti noto'g'ri", LOGIN_INVALID: "Login yoki parol noto'g'ri", LOGIN_TAKEN: 'Bu login band', ADMIN_KEY_REQUIRED: 'Admin kaliti kerak', ADMIN_ROLE_INSUFFICIENT: "Bu amal uchun huquqingiz yetmaydi",
+  ADMIN_KEY_INVALID: "Admin kaliti noto'g'ri", LOGIN_INVALID: "Login yoki parol noto'g'ri",
+  LOGIN_DENIED: "Kirish Telegramda rad etildi", LOGIN_NOT_CONFIRMED: "Kirish Telegramda tasdiqlanmadi (90 soniya o'tdi). Qayta urinib ko'ring.",
+  LOGIN_PENDING: "Telegramdagi oldingi so'rov hali kutilmoqda: uni tasdiqlang yoki rad eting", TWO_FACTOR_UNAVAILABLE: "Telegramga tasdiqlash so'rovi yuborilmadi. Birozdan keyin urinib ko'ring.", LOGIN_TAKEN: 'Bu login band', ADMIN_KEY_REQUIRED: 'Admin kaliti kerak', ADMIN_ROLE_INSUFFICIENT: "Bu amal uchun huquqingiz yetmaydi",
   RATE_LIMITED: "Juda ko'p urinish. 15 daqiqadan keyin qayta urining.", RECEIPT_REQUIRED: "To'lov cheki yuklanmagan",
   AD_NOT_PENDING_REVIEW: 'Reklama tekshiruv holatida emas', SHOP_NOT_REVIEWABLE: "Bu do'konni hozir tekshirib bo'lmaydi",
   ADMIN_NAME_TAKEN: 'Bu nom band', HTTP_422: "Maydonlarni tekshiring", CANNOT_CHANGE_OWN_ACCESS: "O'zingizning huquqingizni o'chira olmaysiz", VALIDATION_FAILED: "Maydonlarni tekshiring",
@@ -682,10 +684,16 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     const err = $('#login-error');
     err.hidden = true;
+    const submit = e.target.querySelector('button[type="submit"]');
+    const label = submit?.textContent;
     try {
+      // A password sign-in may wait for the admin's tap in Telegram (up to 90 s).
+      if (submit) { submit.disabled = true; submit.textContent = $('#by-key').hidden ? 'Kutilmoqda… Telegramda tasdiqlang' : 'Kirilmoqda…'; }
       if ($('#by-key').hidden) await loginWithPassword($('#admin-login').value.trim(), $('#admin-password').value);
       else await login($('#admin-key').value.trim());
-    } catch (ex) { err.textContent = errorText(ex); err.hidden = false; }
+    } catch (ex) { err.textContent = errorText(ex); err.hidden = false; } finally {
+      if (submit) { submit.disabled = false; submit.textContent = label; }
+    }
   });
   $('#switch-mode').onclick = () => {
     const byKey = $('#by-key').hidden;

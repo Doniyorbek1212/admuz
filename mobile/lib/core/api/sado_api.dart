@@ -70,7 +70,7 @@ class SadoApi {
     _storage.write(key: _refreshKey, value: map['refresh_token'] as String);
   }
 
-  Future<dynamic> _send(String method, String path, {Object? data, Map<String, dynamic>? query, bool auth = true, Map<String, String>? headers, ResponseType? responseType}) async {
+  Future<dynamic> _send(String method, String path, {Object? data, Map<String, dynamic>? query, bool auth = true, Map<String, String>? headers, ResponseType? responseType, Duration? receiveTimeout}) async {
     if (!configured) throw ApiException('SERVER_NOT_CONFIGURED');
     for (var attempt = 0; ; attempt++) {
       if (auth) await _ensureAuth();
@@ -82,6 +82,7 @@ class SadoApi {
           options: Options(
             method: method,
             responseType: responseType,
+            receiveTimeout: receiveTimeout,
             headers: {if (auth && _accessToken != null) 'Authorization': 'Bearer $_accessToken', ...?headers},
           ),
         );
@@ -589,7 +590,9 @@ class SadoApi {
   Future<String> adminLogin(String login, [String password = '']) async {
     var key = login;
     if (password.isNotEmpty) {
-      final session = await _send('POST', '/v1/admin/login', data: {'login': login, 'password': password}, auth: false) as Map<String, dynamic>;
+      // The server answers once the admin confirms the sign-in in Telegram (up to 90 s).
+      final session = await _send('POST', '/v1/admin/login', data: {'login': login, 'password': password}, auth: false,
+          receiveTimeout: const Duration(minutes: 2)) as Map<String, dynamic>;
       key = session['token'] as String;
     }
     final me = await _send('GET', '/v1/admin/me', auth: false, headers: {'X-Admin-Key': key}) as Map<String, dynamic>;

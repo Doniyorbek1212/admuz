@@ -11,6 +11,7 @@ from app.deps import ADMIN_SESSION_PREFIX, DbDep, client_ip, get_redis, require_
 from app.errors import too_many, unauthorized
 from app.models import AdminUser
 from app.security import hash_password, new_secret, sha256_hex, verify_password
+from app.services import admin_2fa
 from app.services.audit import audit
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -69,6 +70,14 @@ async def login(body: LoginIn, request: Request, db: DbDep) -> dict[str, Any]:
     if not verify_password(body.password, stored) or admin is None or not admin.active:
         await _count_failure(keys)
         raise unauthorized("LOGIN_INVALID")
+    if admin.telegram_user_id:
+        # The password was right; now the admin taps "Tasdiqlash" in Telegram. Free the DB connection while waiting.
+        admin_id, name, telegram_id = admin.id, admin.name, admin.telegram_user_id
+        await db.rollback()
+        await admin_2fa.confirm(str(admin_id), name, telegram_id, ip)
+        admin = await db.get(AdminUser, admin_id)
+        if admin is None or not admin.active:
+            raise unauthorized("LOGIN_INVALID")
     token = new_secret(32)
     await redis.set(f"{ADMIN_SESSION_PREFIX}{sha256_hex(token)}", str(admin.id), ex=SESSION_SECONDS)
     await redis.set(known, "1", ex=KNOWN_ADDRESS_SECONDS)

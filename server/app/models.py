@@ -273,6 +273,8 @@ class AdminUser(Base):
     # Optional login/password for the web panel (scrypt hash); the key keeps working alongside.
     login: Mapped[str | None] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str | None] = mapped_column(String(255))
+    # Set: a password sign-in also needs a tap on "Tasdiqlash" in this Telegram account (services/admin_2fa.py).
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
