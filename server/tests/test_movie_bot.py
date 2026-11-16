@@ -91,7 +91,9 @@ async def test_wrong_secret_strangers_and_file_videos_are_refused(client, bot):
 async def test_new_film_is_copied_to_the_channel_and_listed_in_the_app(client, bot, new_customer, session_factory):
     await _send(client, _message(message_id=10, video=_video()))
     await _send(client, _press(_data(bot, "Yangi film")))
-    await _send(client, _message(message_id=11, text="Qasoskorlar: Final (2019)", reply_to_message={"message_id": _last_prompt(bot)}))
+    # A pasted channel caption: the first line is the name, the year is found below, the rest is the description.
+    caption = "Qasoskorlar: Final\n🇺🇿Tili: o'zbek tili\n🗓Yili: 2019-yil"
+    await _send(client, _message(message_id=11, text=caption, reply_to_message={"message_id": _last_prompt(bot)}))
     await _send(client, _press(_data(bot, "Jangari")))
     await _send(client, _press(_data(bot, "Fantastika")))
     await _send(client, _press(_data(bot, "Tayyor")))
@@ -103,6 +105,7 @@ async def test_new_film_is_copied_to_the_channel_and_listed_in_the_app(client, b
         title = await db.scalar(select(MovieTitle))
         video = await db.scalar(select(MovieVideo))
     assert (title.kind, title.title, title.year, title.genres) == (MovieKind.MOVIE, "Qasoskorlar: Final", 2019, "Jangari, Fantastika")
+    assert title.description == "🇺🇿Tili: o'zbek tili\n🗓Yili: 2019-yil"
     assert title.poster and title.poster.endswith(".png")
     assert video.status == VideoStatus.READY and video.tg_channel == "uzaro_kino" and video.duration_seconds == 5400
     copied_id = 500 + [m for m, _ in bot].index("copyMessage") + 1

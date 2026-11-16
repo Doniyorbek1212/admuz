@@ -46,6 +46,7 @@ NOT_A_VIDEO = (
     "(yuborishda «Fayl sifatida» belgisini olib tashlang)."
 )
 _YEAR = re.compile(r"^(.*?)[\s,]*\(?((?:18|19|20)\d{2})\)?$")
+_ANY_YEAR = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 _SEASON = re.compile(r"(\d{1,3})\s*-?\s*fasl|\bs(\d{1,2})\s*e\d", re.IGNORECASE)
 _EPISODE = re.compile(r"(\d{1,4})\s*-?\s*qism|qism\s*(\d{1,4})|\bs\d{1,2}\s*e(\d{1,4})|\bep?(?:isode)?\s*(\d{1,4})\b", re.IGNORECASE)
 
@@ -290,9 +291,14 @@ async def _skipped_poster(db: AsyncSession, draft: dict[str, Any], choice: str) 
 
 
 async def _got_name(db: AsyncSession, draft: dict[str, Any], text: str) -> None:
-    match = _YEAR.match(text[:200].strip())
-    name, year = (match.group(1).strip(), int(match.group(2))) if match and match.group(1).strip() else (text[:200].strip(), None)
-    draft.update(name=name, year=year)
+    """The first line is the name; a pasted channel caption's other lines become the description, and its year is kept."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first = lines[0][:200]
+    match = _YEAR.match(first)
+    name, year = (match.group(1).strip(), int(match.group(2))) if match and match.group(1).strip() else (first, None)
+    if year is None and (found := _ANY_YEAR.search(text)):
+        year = int(found.group(1))
+    draft.update(name=name, year=year, desc="\n".join(lines[1:])[:3000])
     if draft["kind"] == MovieKind.SERIES:
         existing = await db.scalar(select(MovieTitle).where(
             MovieTitle.kind == MovieKind.SERIES, func.lower(MovieTitle.title) == name.lower()
@@ -402,7 +408,7 @@ async def _publish(db: AsyncSession, draft: dict[str, Any]) -> str | None:
         return "Bu serial o'chirilgan. Videoni qaytadan yuboring."
     fresh = title is None
     if title is None:
-        title = MovieTitle(kind=MovieKind(draft["kind"]), title=draft["name"], year=draft["year"],
+        title = MovieTitle(kind=MovieKind(draft["kind"]), title=draft["name"], year=draft["year"], description=draft.get("desc", ""),
                            genres=", ".join(draft["cats"])[:200], poster=draft.get("poster") or await _frame_poster(draft))
     video = MovieVideo(season=draft["season"], episode=draft["episode"], name="", status=VideoStatus.READY,
                        original_name=draft["fname"], original_bytes=draft["size"], uploaded_bytes=draft["size"],
