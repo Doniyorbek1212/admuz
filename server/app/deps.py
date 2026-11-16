@@ -42,8 +42,13 @@ async def get_current_customer(request: Request, db: DbDep) -> CurrentCustomer:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
         raise unauthorized()
+    return await customer_from_token(db, header[7:].strip())
+
+
+async def customer_from_token(db: AsyncSession, token: str) -> CurrentCustomer:
+    """The customer behind an access token (also used by the games WebSocket, which has no Authorization header)."""
     try:
-        customer_id, device_id = decode_access_token(header[7:].strip())
+        customer_id, device_id = decode_access_token(token)
     except TokenError as exc:
         raise unauthorized("TOKEN_INVALID") from exc
     device = await db.get(Device, device_id)

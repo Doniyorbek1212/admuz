@@ -94,6 +94,9 @@ void main() {
         'tone',
         // Wallet ledger kinds, payment method and history filter values.
         'badge', 'bonus', 'in', 'out', 'payme', 'refund', 'topup',
+        // Online games: socket message fields, game kinds and sides, result-dialog choices, placeholders.
+        'again', 'checkers', 'chess', 'draws', 'from', 'game', 'kind', 'l', 'losses', 'rank', 'resign', 't', 'view', 'w',
+        'white', 'wins',
       };
       final missing = used.where((k) => !notKeys.contains(k) && !en.containsKey(k) && !en.containsKey('${k}_one')).toList()..sort();
       expect(missing, isEmpty);

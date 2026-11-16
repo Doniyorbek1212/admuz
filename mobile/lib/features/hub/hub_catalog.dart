@@ -34,8 +34,11 @@ enum HubAction {
   /// Songs an admin uploaded to the server, by section.
   music,
 
-  /// Chess, checkers, sudoku and the sliding puzzle, served from our site (/games/).
+  /// Online chess and checkers (ratings, tournaments) plus the offline games on our site (/games/).
   games,
+
+  /// UZARO AI chat assistant (server-side model; the app never talks to the provider).
+  ai,
 
   /// UZARO gifts: balance, the shop and the gifts this user received.
   gifts,
@@ -86,15 +89,13 @@ const hubFunItems = [
   HubItem('hub_movies', Icons.movie_rounded, Color(0xFFE53935), action: HubAction.movies, query: 'kino seriallar'),
   HubItem('hub_music', Icons.music_note_rounded, Color(0xFF2EC27E), action: HubAction.music, query: 'musiqa'),
   HubItem('hub_games', Icons.sports_esports_rounded, Color(0xFF8B6CFF), action: HubAction.games, query: "o'yinlar"),
-  HubItem('hub_stickers', Icons.emoji_emotions_rounded, Color(0xFFFFC233), query: 'stikerlar'),
   HubItem('hub_themes', Icons.palette_rounded, Color(0xFFFF5C8A), action: HubAction.themes),
-  HubItem('hub_greetings', Icons.mail_rounded, Color(0xFFFF7A59), query: 'tabriklar'),
   HubItem('hub_gifts', Icons.card_giftcard_rounded, Color(0xFF26C6B0), action: HubAction.gifts, query: "sovg'alar"),
   HubItem('hub_shops', Icons.storefront_rounded, Color(0xFF3D8BFF), action: HubAction.shops),
 ];
 
 const hubToolItems = [
-  HubItem('hub_ai', Icons.auto_awesome_rounded, Color(0xFF8B6CFF), query: 'gpt bot'),
+  HubItem('hub_ai', Icons.auto_awesome_rounded, Color(0xFF8B6CFF), action: HubAction.ai, query: 'gpt bot'),
   HubItem('hub_business', Icons.work_rounded, Color(0xFFFF7A59), action: HubAction.business),
   HubItem('hub_ads', Icons.campaign_rounded, Color(0xFFFF4D7A), action: HubAction.ads),
   HubItem('help', Icons.help_rounded, Color(0xFF3D8BFF), action: HubAction.support),

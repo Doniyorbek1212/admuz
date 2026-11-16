@@ -1,5 +1,7 @@
 alembic==1.20.0
 asyncpg==0.32.0
+# Online chess: legal moves, check/mate, draws (games/chess_rules.py).
+chess==1.11.2
 # Apple's library: verifies StoreKit 2 signed transactions (wallet top-up on iOS).
 app-store-server-library==3.1.2
 # PyJWT's RS256, for the Google Play service-account token.
@@ -15,3 +17,5 @@ redis==8.1.0
 SQLAlchemy==2.1.4
 telethon==1.44.0
 uvicorn==0.54.0
+# WebSocket support for uvicorn (live games).
+websockets==15.0.1

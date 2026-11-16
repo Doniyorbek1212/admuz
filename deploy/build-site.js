@@ -23,6 +23,17 @@ const META = {
   "terms.html": ["t_meta_title", "t_lead", "t_title"],
   "hamyon.html": ["w_meta_title", "w_lead", "w_title"],
 };
+// What the app does, for search engines and AI answer engines (schema.org featureList / keywords).
+const FEATURES = {
+  uz: ["Telegram hisobi bilan ishlaydigan o‘zbekcha messenjer", "Sharpa rejimi", "O‘chirilgan xabarlar arxivi", "PIN-qulf va yashirin chatlar", "12 tagacha raqam", "AI tarjimon", "UZARO AI yordamchisi", "Onlayn shaxmat va shashka, reyting va sovrinli turnirlar", "Shahar xizmatlari", "Ilova ichidagi do‘konlar va e’lonlar", "UZARO hamyoni"],
+  ru: ["Мессенджер на узбекском для аккаунта Telegram", "Режим «Призрак»", "Архив удалённых сообщений", "PIN-код и скрытые чаты", "До 12 номеров", "AI-переводчик", "Помощник UZARO AI", "Онлайн-шахматы и шашки с рейтингом и призовыми турнирами", "Сервисы города", "Магазины и объявления в приложении", "Кошелёк UZARO"],
+  en: ["Uzbek messenger for your Telegram account", "Ghost mode", "Deleted-messages archive", "PIN lock and hidden chats", "Up to 12 numbers", "AI translator", "UZARO AI assistant", "Online chess and checkers with ratings and prize tournaments", "City services", "In-app shops and listings", "UZARO wallet"],
+};
+const KEYWORDS = {
+  uz: "o‘zbekcha messenjer, telegram o‘zbekcha, sharpa rejimi, o‘chirilgan xabarlar, UZARO AI, sun’iy intellekt o‘zbekcha, onlayn shaxmat, shashka onlayn, shaxmat turniri, do‘kon ochish",
+  ru: "узбекский мессенджер, telegram на узбекском, режим призрак, удалённые сообщения, UZARO AI, шахматы онлайн, шашки онлайн, шахматный турнир, Узаро",
+  en: "Uzbek messenger, Telegram client Uzbekistan, ghost mode, deleted messages, UZARO AI, online chess, online checkers, chess tournament",
+};
 const ALT_NAMES = ["Uzaro", "UZARO Messenger", "Uzaro messenjer", "Узаро", "uzaromessenger"];
 // data-i18n-<suffix>="key" fills the attribute named here.
 const ATTRS = { content: "content", aria: "aria-label", alt: "alt", "apk-meta": "data-apk-meta", "apk-soon": "data-apk-soon" };
@@ -108,11 +119,13 @@ function jsonLd(lang, page) {
         offers: { "@type": "Offer", price: "0", priceCurrency: "UZS" },
         publisher: { "@id": `${BASE}#org` },
         screenshot: ["home", "hub", "ai", "shop_inside"].map((n) => `${BASE}assets/screens/${n}.webp`),
+        featureList: FEATURES[lang],
+        keywords: KEYWORDS[lang],
       },
       {
         "@type": "FAQPage",
         inLanguage: lang,
-        mainEntity: [1, 2, 3, 4, 5, 6, 7].map((i) => ({ "@type": "Question", name: t(lang, `q${i}`), acceptedAnswer: { "@type": "Answer", text: t(lang, `a${i}`) } })),
+        mainEntity: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => ({ "@type": "Question", name: t(lang, `q${i}`), acceptedAnswer: { "@type": "Answer", text: t(lang, `a${i}`) } })),
       },
     ];
   } else {

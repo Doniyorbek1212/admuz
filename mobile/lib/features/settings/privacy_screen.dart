@@ -441,13 +441,15 @@ Future<void> _deleteAccountNow(BuildContext context, TelegramAccount account) as
 }
 
 /// One-field text dialog; null when cancelled.
-Future<String?> promptText(BuildContext context, {required String title, required String label, TextInputType? keyboard, String initial = '', bool obscure = false}) {
+Future<String?> promptText(BuildContext context,
+    {required String title, required String label, TextInputType? keyboard, String initial = '', bool obscure = false, int? maxLength}) {
   final controller = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: TextField(controller: controller, autofocus: true, keyboardType: keyboard, obscureText: obscure, decoration: InputDecoration(labelText: label)),
+      content: TextField(
+          controller: controller, autofocus: true, keyboardType: keyboard, obscureText: obscure, maxLength: maxLength, decoration: InputDecoration(labelText: label)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: Text(context.t('cancel'))),
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),

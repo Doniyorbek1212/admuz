@@ -802,3 +802,8 @@ class ProfileBadge(Base):
     emoji_id: Mapped[int] = mapped_column(BigInteger, default=0)  # Telegram custom emoji id; 0 = UZARO checkmark
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# Game tables live in their own module; importing it here registers them with Base for Alembic and the app.
+from app.ai import models as _ai_models  # noqa: E402, F401
+from app.games import models as _game_models  # noqa: E402, F401

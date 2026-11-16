@@ -17,7 +17,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 
 /// Links a user may pin to the hub's quick row (admin-pinned ones come on top and do not count).
-const maxQuickLinks = 3;
+const maxQuickLinks = 4;
 
 /// How long the hub keeps the admin-pinned links after leaving it.
 const _adminLinksCacheFor = Duration(minutes: 10);
@@ -145,49 +145,61 @@ String? normalizeQuickUrl(String input) {
 
 bool _isWebLogo(String logo) => logo.startsWith('http://') || logo.startsWith('https://');
 
-final quickLinksProvider = NotifierProvider<QuickLinksNotifier, List<QuickLink>>(QuickLinksNotifier.new);
+final quickLinksProvider = NotifierProvider<QuickLinksNotifier, List<QuickLink?>>(QuickLinksNotifier.new);
 
-/// The user's own pinned quick links, remembered on this phone.
-class QuickLinksNotifier extends Notifier<List<QuickLink>> {
+/// The user's own pinned quick links, remembered on this phone: [maxQuickLinks] fixed slots, null where empty,
+/// so a link stays in the slot the user put it in.
+class QuickLinksNotifier extends Notifier<List<QuickLink?>> {
   static const _key = 'hubQuickLinks';
 
+  static List<QuickLink?> _slots(Iterable<QuickLink?> links) {
+    final list = links.take(maxQuickLinks).toList();
+    return [...list, for (var i = list.length; i < maxQuickLinks; i++) null];
+  }
+
   @override
-  List<QuickLink> build() {
+  List<QuickLink?> build() {
     final raw = ref.watch(sharedPreferencesProvider).getString(_key);
-    if (raw == null) return const [];
+    if (raw == null) return _slots(const []);
     try {
       final data = jsonDecode(raw);
-      if (data is! List) return const [];
-      return [
+      if (data is! List) return _slots(const []);
+      // Older versions saved a list without gaps; it simply fills the first slots.
+      return _slots([
         for (final entry in data)
           if (entry case {'name': final String name, 'url': final String url})
             QuickLink(name, url,
-                logo: entry['logo'] as String?, androidPackage: entry['package'] as String?, appStoreUrl: entry['appstore'] as String?),
-      ];
+                logo: entry['logo'] as String?, androidPackage: entry['package'] as String?, appStoreUrl: entry['appstore'] as String?)
+          else
+            null,
+      ]);
     } on FormatException catch (error) {
       debugPrint('quick links unreadable: $error');
-      return const [];
+      return _slots(const []);
     }
   }
 
-  /// False when the row is full or the link is already pinned.
-  bool add(QuickLink link) {
-    if (state.length >= maxQuickLinks || state.any((l) => l.url == link.url)) return false;
-    _save([...state, link]);
+  /// Puts [link] in [slot] when that is empty, else in the first empty one. False when every slot is taken or
+  /// the link is already pinned.
+  bool add(QuickLink link, {int? slot}) {
+    if (state.any((l) => l?.url == link.url)) return false;
+    final at = slot != null && slot >= 0 && slot < state.length && state[slot] == null ? slot : state.indexOf(null);
+    if (at < 0) return false;
+    _save([for (var i = 0; i < state.length; i++) i == at ? link : state[i]]);
     return true;
   }
 
   void remove(QuickLink link) {
-    _save([for (final l in state) if (l.url != link.url) l]);
+    _save([for (final l in state) l?.url == link.url ? null : l]);
     final logo = link.logo;
     if (logo != null && !_isWebLogo(logo)) unawaited(_deletePicture(logo));
   }
 
-  void setLogo(String url, String logo) => _save([for (final l in state) l.url == url ? l.withLogo(logo) : l]);
+  void setLogo(String url, String logo) => _save([for (final l in state) l != null && l.url == url ? l.withLogo(logo) : l]);
 
-  void _save(List<QuickLink> links) {
-    ref.read(sharedPreferencesProvider).setString(_key, jsonEncode([for (final l in links) l.toJson()]));
-    state = links;
+  void _save(List<QuickLink?> links) {
+    ref.read(sharedPreferencesProvider).setString(_key, jsonEncode([for (final l in links) l?.toJson()]));
+    state = _slots(links);
   }
 }
 
@@ -262,7 +274,7 @@ Future<void> openQuickLink(BuildContext context, QuickLink link) async {
 }
 
 /// Picker for a new quick link: a preset or a name, address and picture of the user's own.
-Future<void> addQuickLink(BuildContext context, WidgetRef ref) async {
+Future<void> addQuickLink(BuildContext context, WidgetRef ref, {int? slot}) async {
   final link = await showModalBottomSheet<QuickLink>(
     context: context,
     showDragHandle: true,
@@ -271,7 +283,7 @@ Future<void> addQuickLink(BuildContext context, WidgetRef ref) async {
   );
   if (link == null || !context.mounted) return;
   final links = ref.read(quickLinksProvider.notifier);
-  final added = links.add(link);
+  final added = links.add(link, slot: slot);
   showToast(context, context.t(added ? 'quick_added' : 'quick_exists'));
   // The tile shows the letter until the site's icon is found.
   if (added && link.logo == null) links.setLogo(link.url, await findSiteLogo(link.url));
@@ -348,7 +360,7 @@ class _AddQuickLinkSheetState extends ConsumerState<_AddQuickLinkSheet> {
   Widget build(BuildContext context) {
     final s = context.s;
     final pinned = {
-      for (final l in ref.watch(quickLinksProvider)) l.url,
+      for (final l in ref.watch(quickLinksProvider).nonNulls) l.url,
       for (final l in ref.watch(adminQuickLinksProvider).value ?? const <QuickLink>[]) l.url,
     };
     final presets = [for (final p in quickLinkPresets) if (!pinned.contains(p.url)) p];
@@ -490,7 +502,7 @@ class _PhoneAppsSheetState extends ConsumerState<_PhoneAppsSheet> {
   @override
   Widget build(BuildContext context) {
     final s = context.s;
-    final pinned = {for (final l in ref.watch(quickLinksProvider)) ?l.androidPackage};
+    final pinned = {for (final l in ref.watch(quickLinksProvider).nonNulls) ?l.androidPackage};
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(
@@ -594,7 +606,7 @@ class _AppStoreSheetState extends ConsumerState<_AppStoreSheet> {
   @override
   Widget build(BuildContext context) {
     final s = context.s;
-    final pinned = {for (final l in ref.watch(quickLinksProvider)) ?l.appStoreUrl};
+    final pinned = {for (final l in ref.watch(quickLinksProvider).nonNulls) ?l.appStoreUrl};
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SizedBox(

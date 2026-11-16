@@ -18,9 +18,9 @@ import '../business/shops_screen.dart';
 import '../gifts/gifts_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_screen.dart';
-import '../webapp/web_app_screen.dart' show hasWebView;
 import 'hub_banners.dart';
-import 'games_screen.dart';
+import '../ai/uzaro_ai_screen.dart';
+import '../games/games_lobby_screen.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
 import 'hub_quick_links.dart';
@@ -71,21 +71,23 @@ class HubTab extends ConsumerWidget {
                     labelLines: 1,
                     onTap: () => openQuickLink(context, link),
                   ),
-                for (final link in quickLinks)
-                  _HubTile(
-                    icon: QuickLinkBadge(link: link, size: _quickIconSize),
-                    label: link.name,
-                    labelLines: 1,
-                    onTap: () => openQuickLink(context, link),
-                    onLongPress: () => confirmRemoveQuickLink(context, ref, link),
-                  ),
-                if (quickLinks.length < maxQuickLinks)
-                  _HubTile(
-                    icon: _IconTile(icon: Icons.add_rounded, color: Theme.of(context).hintColor, size: _quickIconSize, iconSize: 30, radius: 17),
-                    label: s.t('add'),
-                    labelLines: 1,
-                    onTap: () => addQuickLink(context, ref),
-                  ),
+                // The user's 4 slots; an empty one is "+" and fills exactly that slot.
+                for (final (slot, link) in quickLinks.indexed)
+                  if (link != null)
+                    _HubTile(
+                      icon: QuickLinkBadge(link: link, size: _quickIconSize),
+                      label: link.name,
+                      labelLines: 1,
+                      onTap: () => openQuickLink(context, link),
+                      onLongPress: () => confirmRemoveQuickLink(context, ref, link),
+                    )
+                  else
+                    _HubTile(
+                      icon: _IconTile(icon: Icons.add_rounded, color: Theme.of(context).hintColor, size: _quickIconSize, iconSize: 30, radius: 17),
+                      label: s.t('add'),
+                      labelLines: 1,
+                      onTap: () => addQuickLink(context, ref, slot: slot),
+                    ),
               ],
             ),
             _HubSection(
@@ -224,8 +226,10 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
     case HubAction.music:
       push(ref.read(sadoApiProvider).configured ? const MusicScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.games:
-      // The games page is a web view: without one (Windows) the public game channels are shown.
-      push(ref.read(sadoApiProvider).configured && hasWebView ? const GamesScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+      // Online chess and checkers need the UZARO server; without it the public game channels are shown.
+      push(ref.read(sadoApiProvider).configured ? const GamesLobbyScreen() : HubResultsScreen(title: label, query: item.query ?? label));
+    case HubAction.ai:
+      push(ref.read(sadoApiProvider).configured ? const UzaroAiScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.gifts:
       push(ref.read(sadoApiProvider).configured ? const GiftsScreen() : HubResultsScreen(title: label, query: item.query ?? label));
     case HubAction.themes:

@@ -1,0 +1,36 @@
+# UZARO
+
+> UZARO (Uzaro, Узаро) is a free messenger in Uzbek that runs on the Telegram network through Telegram's open API (TDLib). You sign in with your Telegram number and keep the same chats and contacts. UZARO is not an official Telegram app. It runs on Android, iPhone and Windows, in Uzbek, Russian and English.
+
+## What it does
+
+- Ghost mode: your online status, read receipts and "typing…" are not sent to the other person, and you can view stories unnoticed.
+- Deleted-messages archive: messages that others delete stay on your phone. They are never sent to the UZARO server.
+- PIN lock and hidden chats.
+- Up to 12 phone numbers in one app, switched with one tap.
+- AI translator inside chats.
+- UZARO AI: an assistant inside the app that answers questions, writes texts, translates and makes plans. Chat history is saved and you can start a new chat at any time. Free requests have a daily limit shown in the app.
+- Online chess and Russian checkers (8×8) against other users, with ratings, game history and tournaments. Tournaments are free to enter; prize winners get a reward on their UZARO balance.
+- City services, in-app shops and listings for businesses (the first 2 shops are free).
+- UZARO wallet for paid services such as advertising.
+
+## Privacy
+
+Messages, calls and files go straight to Telegram's servers. The UZARO server stores only business data (shops, products, listings), game results, UZARO AI chats and wallet records.
+
+## Download
+
+- Google Play: https://play.google.com/store/apps/details?id=uz.uzaro.app
+- App Store: https://apps.apple.com/app/uzaro-messenger/id6827434122
+- Android APK and Windows: https://uzaromessenger.uz/download
+
+## Pages
+
+- [Home (Uzbek)](https://uzaromessenger.uz/)
+- [Home (Russian)](https://uzaromessenger.uz/ru/)
+- [Home (English)](https://uzaromessenger.uz/en/)
+- [User guide](https://uzaromessenger.uz/docs.html)
+- [Wallet](https://uzaromessenger.uz/hamyon.html)
+- [Short UZARO usernames](https://uzaromessenger.uz/nom.html)
+- [Privacy policy](https://uzaromessenger.uz/privacy)
+- [Terms of use](https://uzaromessenger.uz/terms.html)

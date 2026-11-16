@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -111,6 +113,98 @@ class SadoApi {
   Future<dynamic> _post(String path, {Object? data, bool auth = true}) => _send('POST', path, data: data, auth: auth);
   Future<dynamic> _put(String path, Object data) => _send('PUT', path, data: data);
   Future<dynamic> _delete(String path) => _send('DELETE', path);
+
+  // ------------------------------------------------------------------ online games (chess, checkers)
+
+  /// The access token for the games WebSocket, which cannot send an Authorization header; [renew] after a refusal.
+  Future<String> liveToken({bool renew = false}) async {
+    if (!configured) throw ApiException('SERVER_NOT_CONFIGURED');
+    if (renew) _accessToken = null;
+    await _ensureAuth();
+    return _accessToken ?? (throw ApiException('UNAUTHORIZED', 401));
+  }
+
+  Future<Map<String, dynamic>> gamesMe() async => await _get('/v1/games/me') as Map<String, dynamic>;
+  Future<void> setGameName(String name) => _put('/v1/games/me', {'name': name});
+  Future<Map<String, dynamic>> gamesLeaderboard(String kind, String speed) async =>
+      await _get('/v1/games/leaderboard', query: {'kind': kind, 'speed': speed}) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> gamesHistory({String? kind, int offset = 0}) async =>
+      await _get('/v1/games/history', query: {'kind': ?kind, 'offset': offset}) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> gamesActive() async => await _get('/v1/games/active') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> gameRecord(String id) async => await _get('/v1/games/games/$id') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> tournaments() async => await _get('/v1/games/tournaments') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> tournament(String id) async => await _get('/v1/games/tournaments/$id') as Map<String, dynamic>;
+  Future<void> joinTournament(String id) => _post('/v1/games/tournaments/$id/join');
+  Future<void> leaveTournament(String id) => _post('/v1/games/tournaments/$id/leave');
+
+  // ------------------------------------------------------------------ UZARO AI
+
+  Future<Map<String, dynamic>> aiStatus() async => await _get('/v1/ai/status') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> aiChats() async => await _get('/v1/ai/chats') as Map<String, dynamic>;
+  Future<Map<String, dynamic>> aiChat(String id) async => await _get('/v1/ai/chats/$id') as Map<String, dynamic>;
+  Future<void> renameAiChat(String id, String title) => _send('PATCH', '/v1/ai/chats/$id', data: {'title': title});
+  Future<void> deleteAiChat(String id) => _delete('/v1/ai/chats/$id');
+  Future<void> deleteAllAiChats() => _delete('/v1/ai/chats');
+
+  /// Asks UZARO AI; yields the server's events ({"t":"chat"|"delta"|"done"|"error", ...}) as they stream in.
+  /// [cancel] aborts the request at once (cancelling the stream subscription alone waits for the next chunk).
+  Stream<Map<String, dynamic>> aiAsk(String text, {String? chatId, CancelToken? cancel}) async* {
+    if (!configured) throw ApiException('SERVER_NOT_CONFIGURED');
+    for (var attempt = 0; ; attempt++) {
+      await _ensureAuth();
+      final Response<ResponseBody> response;
+      try {
+        response = await _dio.post<ResponseBody>(
+          '/v1/ai/messages',
+          data: {'text': text, 'chat_id': ?chatId},
+          cancelToken: cancel,
+          options: Options(
+            responseType: ResponseType.stream,
+            receiveTimeout: const Duration(minutes: 3),
+            validateStatus: (_) => true,
+            headers: {'Authorization': 'Bearer $_accessToken', 'Accept': 'text/event-stream'},
+          ),
+        );
+      } on DioException catch (error) {
+        throw _toApiException(error);
+      }
+      final body = response.data;
+      final status = response.statusCode ?? 0;
+      if (status == 401 && attempt == 0) {
+        await body?.stream.drain<void>(); // free the connection before the retry
+        _accessToken = null;
+        continue;
+      }
+      if (body == null) throw ApiException('SERVER_ERROR', status);
+      final lines = body.stream.cast<List<int>>().transform(utf8.decoder).transform(const LineSplitter());
+      if (status != 200) {
+        final raw = await lines.join();
+        Object? decoded;
+        try {
+          decoded = jsonDecode(raw.isEmpty ? '{}' : raw);
+        } on FormatException {
+          decoded = null; // an HTML error page from the proxy
+        }
+        final detail = decoded is Map ? decoded['detail'] : null;
+        throw ApiException(detail is Map && detail['code'] is String ? detail['code'] as String : 'SERVER_ERROR', status);
+      }
+      try {
+        await for (final line in lines) {
+          if (!line.startsWith('data:')) continue;
+          final Object? event;
+          try {
+            event = jsonDecode(line.substring(5));
+          } on FormatException {
+            continue;
+          }
+          if (event is Map<String, dynamic>) yield event;
+        }
+      } on DioException catch (error) {
+        throw _toApiException(error);
+      }
+      return;
+    }
+  }
 
   // ------------------------------------------------------------------ profile and media
 

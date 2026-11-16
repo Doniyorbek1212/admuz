@@ -143,6 +143,8 @@ const PAGES = {
   gifts: { title: "Sovg'alar", role: 'viewer', render: (el, arg) => renderGifts(el, arg) }, // admin_gifts.js
   banned: { title: 'Taqiqlangan kanallar', role: 'viewer', render: (el) => renderBanned(el) }, // admin_banned.js
   quick: { title: 'Tezkor havolalar', role: 'viewer', render: (el) => renderQuickLinks(el) }, // admin_quick_links.js
+  ai: { title: 'UZARO AI', role: 'viewer', render: (el) => renderAi(el) }, // admin_ai.js
+  games: { title: "O'yinlar va musobaqalar", role: 'viewer', render: (el, arg) => renderGames(el, arg) }, // admin_games.js
   users: { title: 'Foydalanuvchilar', role: 'support', render: renderUsers },
   settings: { title: 'Sozlamalar', role: 'viewer', render: renderSettings },
   admins: { title: 'Adminlar', role: 'owner', render: renderAdmins },

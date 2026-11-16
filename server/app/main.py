@@ -11,11 +11,14 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import engine
 from app.deps import get_redis
+from app.games.hub import hub as game_hub
 from app.limits import BodySizeLimit
 from app.routers import (
     activity,
     admin,
+    admin_ai,
     admin_auth,
+    admin_games,
     admin_gifts,
     admin_market,
     admin_movies,
@@ -23,10 +26,12 @@ from app.routers import (
     admin_panel,
     admin_places,
     ads,
+    ai,
     badges,
     banned_channels,
     billing,
     customers,
+    games,
     gifts,
     interests,
     market,
@@ -75,10 +80,12 @@ for name in ("uvicorn.access", "uvicorn.error"):
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     stop = asyncio.Event()
     # Tests drive the movie pipeline directly instead of racing a background worker.
-    worker = asyncio.create_task(movie_pipeline.worker(stop)) if get_settings().environment != "test" else None
+    background = get_settings().environment != "test"
+    # Tests drive the game hub's ticker directly too.
+    workers = [asyncio.create_task(movie_pipeline.worker(stop)), asyncio.create_task(game_hub.run(stop))] if background else []
     yield
     stop.set()
-    if worker is not None:
+    for worker in workers:
         worker.cancel()
         with suppress(asyncio.CancelledError):
             await worker
@@ -98,8 +105,8 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
     routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests,
-               usernames, banned_channels, quick_links, payme, store_topup, pay_bot)
-    admin_routers = (admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
+               usernames, banned_channels, quick_links, payme, store_topup, pay_bot, games, ai)
+    admin_routers = (admin_ai, admin_games, admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
     for module in routers + admin_routers:
         app.include_router(module.router)
     app.include_router(banned_channels.admin_router)

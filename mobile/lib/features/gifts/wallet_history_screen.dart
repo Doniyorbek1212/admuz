@@ -170,6 +170,7 @@ class WalletEntryTile extends ConsumerWidget {
         'topup' => s.t('wallet_kind_topup'),
         'refund' => s.t('wallet_kind_refund'),
         'bonus' => s.t('wallet_kind_bonus'),
+        'prize' => s.t('wallet_kind_prize'),
         'gift' => entry.titleFor(s.locale) ?? s.t('gifts_title'),
         'badge' => s.t('uzaro_badge'),
         'username' => entry.title == null ? s.t('uzaro_username') : '@${entry.title}',

@@ -36,6 +36,7 @@ from app.providers.mock import make_token, sign_notification
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 TABLES = (
+    "ai_messages, ai_chats, games, tournament_players, tournaments, game_ratings, game_players, "
     "banned_channels, uzaro_usernames, customer_interests, profile_styles, wallet_topups, payme_orders, wallet_ledger, sent_gifts, gift_items, telegram_links, "
     "music_tracks, activity_days,movie_videos, movie_titles, "
     "places, app_settings, stock_movements, ad_campaigns, products, shops, media_uploads, customer_profiles, "
