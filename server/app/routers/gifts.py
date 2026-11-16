@@ -23,7 +23,7 @@ from app.errors import bad_request, conflict, forbidden, not_found, unauthorized
 from app.models import GiftItem, ProfileStyle, SentGift, TelegramLink, TopupStatus, WalletTopup
 from app.routers.payme import payme_configured
 from app.security import constant_time_equals, sha256_hex
-from app.services import username_bot, wallet
+from app.services import movie_bot, username_bot, wallet
 from app.services.audit import audit
 from app.services.carry_over import carry_over
 from app.services.market_settings import load_market_settings
@@ -148,6 +148,9 @@ async def telegram_webhook(
     try:
         update = await request.json()
     except ValueError:
+        return {"ok": True}
+    if isinstance(update, dict) and movie_bot.wants(update):
+        await movie_bot.handle(db, update)
         return {"ok": True}
     message = update.get("message") if isinstance(update, dict) else None
     if not isinstance(message, dict):

@@ -72,7 +72,11 @@ async def save_public(file: UploadFile) -> tuple[str, str, int]:
 
 async def save_public_image(file: UploadFile) -> str:
     """Stores a JPEG, PNG or WebP image publicly (a quick link's logo); returns its name."""
-    data = await read_limited(file, get_settings().max_image_bytes)
+    return await save_public_image_bytes(await read_limited(file, get_settings().max_image_bytes))
+
+
+async def save_public_image_bytes(data: bytes) -> str:
+    """Like [save_public_image] for an image already in memory (a poster sent to the movies bot)."""
     kind = sniff(data)
     if kind is None or kind[0] != "image":
         raise bad_request("NOT_AN_IMAGE")

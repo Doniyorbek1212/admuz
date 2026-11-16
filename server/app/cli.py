@@ -247,7 +247,8 @@ def set_gifts_webhook(host: str) -> None:
     print(_bot_call(token, "setWebhook", {
         "url": f"{host.rstrip('/')}/v1/telegram/webhook",
         "secret_token": webhook_secret(),
-        "allowed_updates": ["message"],
+        # callback_query: the movies bot's buttons, when it is this same bot (services/movie_bot.py).
+        "allowed_updates": ["message", "callback_query"],
         "drop_pending_updates": True,
     }))
 

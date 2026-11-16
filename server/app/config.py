@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     tg_api_hash: str = ""
     movies_bot_token: str = ""  # the bot must be an admin of the channel with "post messages"
     movies_channel: str = ""  # public channel username without @
+    # Telegram user ids allowed to publish through the movies bot (a video sent to the bot, a few questions, then
+    # the bot copies it to the channel). It works when the movies bot is the gifts bot (same token): its updates
+    # arrive at /v1/telegram/webhook. Env: SADO_BILLING_MOVIES_BOT_ADMINS='[860723328]'.
+    movies_bot_admins: list[int] = Field(default_factory=list)
     movie_max_upload_bytes: int = 8 * 1024 * 1024 * 1024
     movie_chunk_bytes: int = 16 * 1024 * 1024
     # Uploads are refused when they would leave less free disk than this (the compressed copy needs room too).

@@ -626,7 +626,7 @@ const ACTION_LABEL = {
   ad_approved: 'Reklama tasdiqlandi', ad_rejected: 'Reklama rad etildi', shop_approved: "Do'kon tasdiqlandi", shop_rejected: "Do'kon rad etildi",
   shop_closed: "Do'kon yopildi", shop_close_declined: "Yopish so'rovi rad etildi", shop_viewed: "Do'kon ko'rildi", users_listed: "Foydalanuvchilar ko'rildi",
   customer_viewed: "Foydalanuvchi ko'rildi", override_granted: 'Imkoniyat berildi', override_revoked: 'Imkoniyat olib qo\'yildi', credits_adjusted: "Kreditlar o'zgartirildi",
-  movie_created: "Kino qo'shildi", movie_updated: 'Kino tahrirlandi', movie_deleted: "Kino o'chirildi", movie_video_started: 'Video yuklash boshlandi', movie_video_deleted: "Video o'chirildi",
+  movie_created: "Kino qo'shildi", movie_updated: 'Kino tahrirlandi', movie_deleted: "Kino o'chirildi", movie_video_started: 'Video yuklash boshlandi', movie_video_published: 'Video bot orqali joylandi',movie_video_deleted: "Video o'chirildi",
   settings_updated: "Sozlamalar o'zgartirildi", admin_login: 'Panelga kirdi', admin_credentials_set: 'Login/parol berildi', admin_created: 'Admin yaratildi', admin_updated: "Admin o'zgartirildi", product_hidden: 'Mahsulot yashirildi', product_shown: "Mahsulot qayta ko'rsatildi",
 };
 

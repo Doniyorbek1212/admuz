@@ -148,7 +148,8 @@ async def _bot():  # telethon is imported lazily: tests and the API never load i
     from telethon import TelegramClient
 
     settings = get_settings()
-    client = TelegramClient(str(work_dir() / "bot"), settings.tg_api_id, settings.tg_api_hash)
+    # No updates here: the same bot answers admins through its Bot API webhook (movie_bot).
+    client = TelegramClient(str(work_dir() / "bot"), settings.tg_api_id, settings.tg_api_hash, receive_updates=False)
     await client.start(bot_token=settings.movies_bot_token)
     return client
 

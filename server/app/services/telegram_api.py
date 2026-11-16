@@ -24,9 +24,12 @@ def configured() -> bool:
     return bool(settings.pay_bot_token and settings.pay_bot_username)
 
 
-async def call(method: str, **params: Any) -> Any:
-    """Calls a Bot API method with JSON parameters (None values dropped) and returns its result."""
-    token = get_settings().pay_bot_token
+async def call(method: str, *, bot_token: str | None = None, **params: Any) -> Any:
+    """Calls a Bot API method with JSON parameters (None values dropped) and returns its result.
+
+    [bot_token] picks another bot (the movies bot); the pay bot is the default.
+    """
+    token = bot_token or get_settings().pay_bot_token
     body = {key: value for key, value in params.items() if value is not None}
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
@@ -39,12 +42,12 @@ async def call(method: str, **params: Any) -> Any:
     return data.get("result")
 
 
-async def download(file_id: str, limit: int) -> bytes:
+async def download(file_id: str, limit: int, *, bot_token: str | None = None) -> bytes:
     """A file a user sent the bot, refused when bigger than [limit] bytes."""
-    info = await call("getFile", file_id=file_id)
+    info = await call("getFile", bot_token=bot_token, file_id=file_id)
     if int(info.get("file_size") or 0) > limit or not info.get("file_path"):
         raise TelegramError("getFile: FILE_TOO_LARGE")
-    token = get_settings().pay_bot_token
+    token = bot_token or get_settings().pay_bot_token
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             response = await client.get(f"{API}/file/bot{token}/{info['file_path']}")
