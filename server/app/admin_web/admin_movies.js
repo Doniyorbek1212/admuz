@@ -1,7 +1,7 @@
 'use strict';
 // "Kinolar" page: films and series for the app's Töplam section. Videos go up in resumable chunks; the server
 // compresses each one and posts it to the Telegram channel, then deletes its own copy.
-/* global api, run, esc, toast, openModal, closeModal, confirmBox, can, date, ERRORS, ApiError, state, $ */
+/* global api, run, esc, toast, openModal, closeModal, confirmBox, can, date, ERRORS, ApiError, state, gb, $ */
 
 const MOVIE_CATEGORIES = [
   'Jangari', 'Komediya', 'Drama', 'Melodrama', 'Tarixiy', 'Fantastika', 'Sarguzasht', 'Detektiv', 'Triller', "Qo'rqinchli",
@@ -17,7 +17,6 @@ Object.assign(ERRORS, {
 });
 
 const mb = (n) => `${(Number(n || 0) / 1048576).toLocaleString('uz-UZ', { maximumFractionDigits: 1 })} MB`;
-const gb = (n) => `${(Number(n || 0) / 1073741824).toLocaleString('uz-UZ', { maximumFractionDigits: 1 })} GB`;
 const hours = (s) => `${Math.floor(s / 3600)} soat ${Math.floor((s % 3600) / 60)} daqiqa`;
 const uploads = new Map(); // video id -> percent, for uploads running in this tab
 
