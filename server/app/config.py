@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     payme_key: str = ""
     payme_checkout_url: str = "https://checkout.paycom.uz"
     payme_return_url: str = "https://uzaromessenger.uz"
+    # Networks Payme calls from (Merchant API docs: 185.234.113.1-15). A call from elsewhere is logged; it is
+    # refused only while payme_enforce_ips is on, so turn that on after a real payment has shown the address.
+    payme_allowed_ips: list[str] = Field(default_factory=lambda: ["185.234.113.0/28"])
+    payme_enforce_ips: bool = False
 
     # The pay bot (@UzaroPay_bot): balance top-ups in Telegram (Payme, Telegram Stars, TON, card via an admin) and the
     # website's wallet sign-in. Telegram calls POST /v1/telegram/pay-webhook; register it with
@@ -138,11 +142,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _admin_networks_parse(self) -> "Settings":
-        for value in self.admin_allowed_ips:
-            try:
-                ipaddress.ip_network(value, strict=False)
-            except ValueError as exc:
-                raise ValueError(f"SADO_BILLING_ADMIN_ALLOWED_IPS: {value!r} is not an IP address or CIDR network") from exc
+        for env, values in (("ADMIN_ALLOWED_IPS", self.admin_allowed_ips), ("PAYME_ALLOWED_IPS", self.payme_allowed_ips)):
+            for value in values:
+                try:
+                    ipaddress.ip_network(value, strict=False)
+                except ValueError as exc:
+                    raise ValueError(f"SADO_BILLING_{env}: {value!r} is not an IP address or CIDR network") from exc
         return self
 
     @model_validator(mode="after")
@@ -177,6 +182,10 @@ class Settings(BaseSettings):
     @property
     def admin_networks(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
         return [ipaddress.ip_network(value, strict=False) for value in self.admin_allowed_ips]
+
+    @property
+    def payme_networks(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        return [ipaddress.ip_network(value, strict=False) for value in self.payme_allowed_ips]
 
     @property
     def deployed(self) -> bool:

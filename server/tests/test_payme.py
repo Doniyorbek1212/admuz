@@ -57,6 +57,26 @@ async def test_wrong_key_and_unknown_method(client, new_customer):
     assert (await _rpc(client, "ChangePassword", {"password": "x"}))["error"]["code"] == -32601
 
 
+async def test_unlisted_address_is_logged_then_refused_once_enforced(monkeypatch, caplog):
+    import httpx
+
+    from app.main import app
+
+    def from_address(ip: str) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(ip, 4000)), base_url="http://test")
+
+    async def call(ip: str) -> dict:
+        async with from_address(ip) as payme_side:
+            response = await payme_side.post(URL, json={"id": 7, "method": "X", "params": {}}, headers=_auth())
+            return response.json()
+
+    assert (await call("203.0.113.9"))["error"]["code"] == -32601  # log-only: the key still decides
+    assert "unlisted address 203.0.113.9 (allowed)" in caplog.text
+    monkeypatch.setattr(get_settings(), "payme_enforce_ips", True)
+    assert (await call("203.0.113.9"))["error"]["code"] == -32504
+    assert (await call("185.234.113.7"))["error"]["code"] == -32601  # Payme's network passes
+
+
 async def test_full_payment_credits_balance_once(client, new_customer):
     customer = await new_customer()
     order = await _order(customer, 10_000)

@@ -8,6 +8,7 @@ Every answer is HTTP 200 with "result" or "error", as Payme expects. Amounts fro
 
 import base64
 import binascii
+import ipaddress
 import logging
 import time
 import uuid
@@ -19,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.deps import CustomerDep, DbDep, rate_limit
+from app.deps import CustomerDep, DbDep, client_ip, rate_limit
 from app.errors import unavailable
 from app.models import PaymeOrder
 from app.security import constant_time_equals
@@ -120,6 +121,21 @@ def _authorized(request: Request) -> bool:
     return login == "Paycom" and constant_time_equals(password, get_settings().payme_key)
 
 
+def _from_payme(request: Request) -> bool:
+    """True when the caller is on Payme's networks or the check only logs; an unlisted caller is always logged."""
+    settings = get_settings()
+    address = client_ip(request)
+    try:
+        listed = any(ipaddress.ip_address(address) in network for network in settings.payme_networks)
+    except ValueError:
+        listed = False
+    if listed:
+        log.info("payme call from %s", address)
+        return True
+    log.warning("payme call from unlisted address %s (%s)", address, "refused" if settings.payme_enforce_ips else "allowed")
+    return not settings.payme_enforce_ips
+
+
 def _error(request_id: Any, code: int, data: str | None = None) -> dict[str, Any]:
     ru, uz, en = _MESSAGES[code]
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": {"ru": ru, "uz": uz, "en": en}, "data": data}}
@@ -132,7 +148,7 @@ async def payme_rpc(request: Request, db: DbDep) -> dict[str, Any]:
     except ValueError:
         return _error(None, ERR_PARSE)
     request_id = payload.get("id") if isinstance(payload, dict) else None
-    if not _authorized(request):
+    if not _from_payme(request) or not _authorized(request):
         return _error(request_id, ERR_AUTH)
     if not isinstance(payload, dict) or not isinstance(payload.get("params"), dict):
         return _error(request_id, ERR_REQUEST)
