@@ -307,47 +307,6 @@ Future<void> moderateReaction(BuildContext context, TelegramAccount account, td.
   if (done == true && context.mounted) showToast(context, s.t(action == 'report' ? 'report_sent' : 'done'));
 }
 
-/// Returned by [pickRecentDocument] when the user wants the system file picker instead.
-const pickFromDevice = 'device';
-
-/// Files the user sent recently anywhere, to resend without picking them again. Pops a [td.Document] or [pickFromDevice].
-Future<Object?> pickRecentDocument(BuildContext context, TelegramAccount account) async {
-  var recent = const <td.Message>[];
-  try {
-    recent = (await account.send<td.FoundMessages>(const td.SearchOutgoingDocumentMessages(query: '', limit: 20))).messages;
-  } on TdException catch (error) {
-    debugPrint('recent documents failed: $error');
-  }
-  final documents = [for (final m in recent) if (m.content case td.MessageDocument(:final document)) document];
-  if (documents.isEmpty || !context.mounted) return pickFromDevice;
-  final s = context.s;
-  return showModalBottomSheet<Object>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) => SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
-        child: ListView(shrinkWrap: true, children: [
-          ListTile(
-            leading: const Icon(Icons.folder_open_rounded),
-            title: Text(s.t('choose_from_device'), style: const TextStyle(fontWeight: FontWeight.w600)),
-            onTap: () => Navigator.pop(context, pickFromDevice),
-          ),
-          SectionHeader(s.t('recent_files')),
-          for (final document in documents)
-            ListTile(
-              leading: const Icon(Icons.insert_drive_file_outlined),
-              title: Text(document.fileName.isEmpty ? s.t('file') : document.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(formatFileSize(document.document.size)),
-              onTap: () => Navigator.pop(context, document),
-            ),
-        ]),
-      ),
-    ),
-  );
-}
-
 /// Group members currently sharing their live location; tapping one jumps to that message.
 Future<int?> pickLiveLocation(BuildContext context, TelegramAccount account, int chatId) async {
   final found = await guard(context, () => account.send<td.Messages>(td.SearchChatRecentLocationMessages(chatId: chatId, limit: 50)));

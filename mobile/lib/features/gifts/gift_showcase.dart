@@ -35,8 +35,8 @@ final giftShowcaseProvider = FutureProvider.family<GiftShowcase?, int>((ref, rec
   return ref.watch(_showcaseLoaderProvider).load(recipientId);
 });
 
-/// Behind a chat row: the recipient's dearest gifts drift around the whole row, each on its own loop, always fully
-/// inside the row's frame. Nothing (and no ticker) for recipients without gifts.
+/// Behind a chat row: the recipient's dearest gifts drift one slow lap around the whole row when it appears, then rest,
+/// always fully inside the row's frame. Nothing (and no ticker) for recipients without gifts.
 class GiftDrift extends ConsumerWidget {
   const GiftDrift({super.key, required this.recipientId, this.size = 24});
 
@@ -62,8 +62,10 @@ class _DriftingGifts extends StatefulWidget {
 }
 
 class _DriftingGiftsState extends State<_DriftingGifts> with SingleTickerProviderStateMixin {
-  static const _lap = Duration(seconds: 16);
+  static const _lap = Duration(seconds: 9);
   late final AnimationController _loop = AnimationController(vsync: this, duration: _lap);
+  // One lap that slows to rest where it began: an endless loop per row kept the whole chat list repainting every frame.
+  late final Animation<double> _glide = CurvedAnimation(parent: _loop, curve: Curves.easeOutCubic);
 
   @override
   void didChangeDependencies() {
@@ -71,8 +73,8 @@ class _DriftingGiftsState extends State<_DriftingGifts> with SingleTickerProvide
     // "Remove animations" in the phone settings keeps the gifts where they are.
     if (MediaQuery.disableAnimationsOf(context)) {
       _loop.stop();
-    } else if (!_loop.isAnimating) {
-      _loop.repeat();
+    } else if (_loop.status == AnimationStatus.dismissed) {
+      _loop.forward();
     }
   }
 
@@ -95,12 +97,12 @@ class _DriftingGiftsState extends State<_DriftingGifts> with SingleTickerProvide
   Widget build(BuildContext context) {
     final gifts = widget.gifts;
     return AnimatedBuilder(
-      animation: _loop,
+      animation: _glide,
       // Painted cheapest first so the dearest gift passes over the others.
       builder: (context, _) => Stack(children: [
         for (final (i, sent) in gifts.indexed.toList().reversed)
           Align(
-            alignment: _place(_loop.value, i, gifts.length),
+            alignment: _place(_glide.value, i, gifts.length),
             child: Opacity(
               opacity: i == 0 ? 0.9 : 0.72,
               child: GiftStill(key: ValueKey(sent.id), url: sent.gift.animationUrl, size: widget.size * _scale[math.min(i, _scale.length - 1)]),

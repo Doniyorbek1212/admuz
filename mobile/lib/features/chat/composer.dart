@@ -41,9 +41,9 @@ import '../settings/business_settings.dart';
 import 'composer_panels.dart';
 import 'composer_suggestions.dart';
 import 'contact_picker.dart';
+import 'file_sheet.dart';
 import 'location_picker.dart';
 import 'message_content.dart' show replyThumb, withoutMediaEmoji;
-import 'message_tools.dart';
 import 'poll_creator.dart';
 import 'time_capsule_view.dart';
 
@@ -743,36 +743,42 @@ class ComposerState extends ConsumerState<Composer> {
         final file = await picker.pickVideo(source: ImageSource.camera);
         if (file != null && mounted) await guard(context, () => account.sendVideo(chatId, file.path, replyToId: replyId));
       case AttachAction(action: 'file'):
-        final recent = await pickRecentDocument(context, account);
+        final picked = await pickDocument(context, account);
         if (!mounted) return;
-        if (recent case final td.Document document) {
-          await guard(
-            context,
-            () => account.sendContent(
-              chatId,
-              td.InputMessageDocument(
-                document: td.InputDocument(document: td.InputFileRemote(id: document.document.remote.id), thumbnail: null, disableContentTypeDetection: false),
-                caption: null,
+        switch (picked) {
+          case final td.Document document:
+            await guard(
+              context,
+              () => account.sendContent(
+                chatId,
+                td.InputMessageDocument(
+                  document: td.InputDocument(document: td.InputFileRemote(id: document.document.remote.id), thumbnail: null, disableContentTypeDetection: false),
+                  caption: null,
+                ),
+                replyToId: replyId,
               ),
-              replyToId: replyId,
-            ),
-          );
-          return;
-        }
-        if (recent != pickFromDevice) return;
-        final files = await FilePicker.pickFiles();
-        for (final file in files) {
-          final path = file.path;
-          if (path == null || !mounted) continue;
-          await guard(context, () => account.sendDocument(chatId, path, replyToId: replyId));
+            );
+          case FileSource.device:
+            await _sendDeviceFiles(audio: false);
+          case FileSource.music:
+            await _sendDeviceFiles(audio: true);
+          case FileSource.galleryFiles:
+            final media = await showAttachSheet(context, asFiles: true);
+            if (!mounted) return;
+            switch (media) {
+              case AttachMedia():
+                await _sendMedia(media);
+              // No gallery permission: the sheet offers the system picker instead.
+              case AttachAction(action: 'system_gallery'):
+                await _sendDeviceFiles(audio: false);
+              default:
+                return;
+            }
+          default:
+            return;
         }
       case AttachAction(action: 'music'):
-        final files = await FilePicker.pickFiles(type: FileType.audio);
-        for (final file in files) {
-          final path = file.path;
-          if (path == null || !mounted) continue;
-          await guard(context, () => account.sendAudio(chatId, path, replyToId: replyId));
-        }
+        await _sendDeviceFiles(audio: true);
       case AttachAction(action: 'location'):
         await _sendLocation();
       case AttachAction(action: 'poll'):
@@ -801,6 +807,19 @@ class ComposerState extends ConsumerState<Composer> {
     }
     widget.onCancelReply();
     widget.onSent();
+  }
+
+  /// Files from the system picker, each sent as a document (or as music with [audio]).
+  Future<void> _sendDeviceFiles({required bool audio}) async {
+    final account = ref.read(accountProvider);
+    final chatId = widget.chat.id;
+    final replyId = widget.replyTo?.id;
+    final files = await FilePicker.pickFiles(type: audio ? FileType.audio : FileType.any);
+    for (final file in files) {
+      final path = file.path;
+      if (path == null || !mounted) continue;
+      await guard(context, () => audio ? account.sendAudio(chatId, path, replyToId: replyId) : account.sendDocument(chatId, path, replyToId: replyId));
+    }
   }
 
   /// Whether an attach-menu Mini App works in this kind of chat (TDLib's supports* flags).
