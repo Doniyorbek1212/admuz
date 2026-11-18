@@ -949,12 +949,18 @@ class TelegramAccount {
     }
   }
 
+  String? _reportedNetworkKind;
+
   /// Tells TDLib whether we are on Wi-Fi or mobile data (auto-download presets, data usage).
   Future<void> reportNetworkType() async {
     final kind = await KeepAliveService.networkType();
     // Never "none": TDLib then stops connecting, and this is only re-sent once connected, so a moment offline
     // (started at boot before Wi-Fi, Doze) left the app stuck on "Waiting for network". TDLib retries on its own.
     if (kind == null || kind == 'none' || _disposed) return;
+    // setNetworkType reopens every connection; re-sending the same type on each Ready looped
+    // Ready -> Connecting -> Ready and made "Connecting…" blink in the header.
+    if (kind == _reportedNetworkKind) return;
+    _reportedNetworkKind = kind;
     final td.NetworkType type = switch (kind) {
       'wifi' => const td.NetworkTypeWiFi(),
       'mobile' => const td.NetworkTypeMobile(),
@@ -964,6 +970,7 @@ class TelegramAccount {
     try {
       await client.send<td.Ok>(td.SetNetworkType(type: type));
     } on TdException catch (error) {
+      _reportedNetworkKind = null;
       debugPrint('setNetworkType failed: $error');
     }
   }

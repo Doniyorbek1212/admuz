@@ -518,8 +518,10 @@ class ProfilePhotosScreenState extends ConsumerState<ProfilePhotosScreen> {
                   itemBuilder: (context, index) {
                     final photo = photos[index];
                     final biggest = photo.sizes.reduce((a, b) => a.width * a.height >= b.width * b.height ? a : b);
+                    // Full-screen box: the tiny minithumbnail shown while the photo loads is stretched to the
+                    // final size instead of sitting small in the middle and then jumping.
                     return InteractiveViewer(
-                      child: Center(child: TdImage(file: biggest.photo, minithumbnail: photo.minithumbnail, fit: BoxFit.contain)),
+                      child: SizedBox.expand(child: TdImage(file: biggest.photo, minithumbnail: photo.minithumbnail, fit: BoxFit.contain)),
                     );
                   },
                 ),

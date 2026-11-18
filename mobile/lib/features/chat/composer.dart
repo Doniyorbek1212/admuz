@@ -4,6 +4,8 @@ import 'dart:math';
 
 import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -111,8 +113,20 @@ class ComposerState extends ConsumerState<Composer> {
   String? _recordPath;
   final List<int> _waveform = [];
   StreamSubscription<Amplitude>? _amplitudeSub;
+
+  /// Video notes only: stops the recording at Telegram's one-minute cap.
   Timer? _recordTicker;
-  double _dragOffset = 0;
+
+  // Drag and voice level live in notifiers so a finger move or a mic sample repaints the strip and the
+  // halo only, not the whole composer (that rebuild made recording stutter).
+  final _drag = ValueNotifier<double>(0);
+  double get _dragOffset => _drag.value;
+  set _dragOffset(double value) => _drag.value = value;
+  final _voiceLevel = ValueNotifier<double>(0);
+
+  // Asked once per app run instead of on every press: each is a platform call before recording can start.
+  static bool? _opusSupported;
+  static String? _tempDirPath;
 
   /// Finger still on the mic; a recorder that finishes starting after release is discarded.
   bool _pressing = false;
@@ -193,6 +207,8 @@ class ComposerState extends ConsumerState<Composer> {
     }
     _amplitudeSub?.cancel();
     _recordTicker?.cancel();
+    _drag.dispose();
+    _voiceLevel.dispose();
     unawaited(_recorder?.dispose());
     _cameraOverlay?.remove();
     _tipTimer?.cancel();
@@ -893,20 +909,22 @@ class ComposerState extends ConsumerState<Composer> {
       if (mounted) showToast(context, context.t('mic_permission'));
       return;
     }
-    final opus = Platform.isAndroid && await recorder.isEncoderSupported(AudioEncoder.opus);
-    final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.${opus ? 'ogg' : 'm4a'}';
+    final opus = _opusSupported ??= Platform.isAndroid && await recorder.isEncoderSupported(AudioEncoder.opus);
+    final dir = _tempDirPath ??= (await getTemporaryDirectory()).path;
+    final path = '$dir/voice_${DateTime.now().millisecondsSinceEpoch}.${opus ? 'ogg' : 'm4a'}';
     await recorder.start(
       RecordConfig(encoder: opus ? AudioEncoder.opus : AudioEncoder.aacLc, numChannels: 1, sampleRate: 48000, bitRate: 64000),
       path: path,
     );
     HapticFeedback.mediumImpact();
     _waveform.clear();
+    _voiceLevel.value = 0;
     _amplitudeSub = recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amp) {
       // dBFS (-160..0) mapped to Telegram's 0..31 waveform scale.
-      _waveform.add((((amp.current + 50) / 50).clamp(0.0, 1.0) * 31).round());
+      final level = ((amp.current + 50) / 50).clamp(0.0, 1.0);
+      _waveform.add((level * 31).round());
+      _voiceLevel.value = level;
     });
-    _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) => setState(() {}));
     if (!ref.read(settingsProvider).ghostMode) {
       unawaited(ref.read(accountProvider).sendTyping(widget.chat.id, const td.ChatActionRecordingVoiceNote()));
     }
@@ -1122,11 +1140,9 @@ class ComposerState extends ConsumerState<Composer> {
     final startedAt = DateTime.now();
     _flash = false;
     _showRecordingOverlay(controller, startedAt);
-    _recordTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      if (!mounted) return;
-      setState(() {});
-      // Telegram caps round videos at one minute: send what was recorded.
-      if (DateTime.now().difference(startedAt) >= _videoNoteLimit) unawaited(_stopRecording(send: true));
+    // Telegram caps round videos at one minute: send what was recorded.
+    _recordTicker = Timer(_videoNoteLimit, () {
+      if (mounted) unawaited(_stopRecording(send: true));
     });
     if (!ref.read(settingsProvider).ghostMode) {
       unawaited(ref.read(accountProvider).sendTyping(widget.chat.id, const td.ChatActionRecordingVideoNote()));
@@ -1567,46 +1583,56 @@ class ComposerState extends ConsumerState<Composer> {
   /// Hold to record, slide left to cancel, slide up to lock; while locked a tap sends.
   Widget _micButton(ThemeData theme) {
     final primary = theme.colorScheme.primary;
-    // Halo while recording: follows the voice level, or breathes slowly for video.
-    final pulse = !_recording
-        ? 0.0
-        : (_recordingVideo || _waveform.isEmpty ? (sin(DateTime.now().millisecondsSinceEpoch / 320) + 1) / 2 : _waveform.last / 31);
-    return GestureDetector(
+    return RawGestureDetector(
       key: const ValueKey('mic'),
-      onTap: () {
-        if (_recording && _locked) {
-          unawaited(_stopRecording(send: true));
-        } else if (!_recording) {
-          HapticFeedback.selectionClick();
-          setState(() => _videoMode = !_videoMode);
-          _showMicTip(context.t(_videoMode ? 'hold_to_record_video' : 'hold_to_record'));
-        }
+      gestures: {
+        TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+          TapGestureRecognizer.new,
+          (tap) => tap.onTap = () {
+            if (_recording && _locked) {
+              unawaited(_stopRecording(send: true));
+            } else if (!_recording) {
+              HapticFeedback.selectionClick();
+              setState(() => _videoMode = !_videoMode);
+              _showMicTip(context.t(_videoMode ? 'hold_to_record_video' : 'hold_to_record'));
+            }
+          },
+        ),
+        // Recording starts after a short hold (Telegram-like), not Flutter's default half second.
+        LongPressGestureRecognizer: GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(duration: _micHoldDelay),
+          (press) => press
+            ..onLongPressStart = (_) {
+              _pressing = true;
+              unawaited(_startRecording());
+            }
+            ..onLongPressMoveUpdate = (details) {
+              if (!_recording || _locked) return;
+              final offset = details.offsetFromOrigin;
+              if (offset.dy < -_lockDistance) {
+                HapticFeedback.selectionClick();
+                _dragOffset = 0;
+                setState(() => _locked = true);
+                return;
+              }
+              _dragOffset = min(0, offset.dx);
+              if (_dragOffset < -_cancelDistance) unawaited(_stopRecording(send: false));
+            }
+            ..onLongPressEnd = (_) {
+              _pressing = false;
+              if (_recording && !_locked) unawaited(_stopRecording(send: _dragOffset > -_cancelDistance));
+            }
+            ..onLongPressCancel = () => _pressing = false,
+        ),
       },
-      onLongPressStart: (_) {
-        _pressing = true;
-        unawaited(_startRecording());
-      },
-      onLongPressMoveUpdate: (details) {
-        if (!_recording || _locked) return;
-        final offset = details.offsetFromOrigin;
-        if (offset.dy < -_lockDistance) {
-          HapticFeedback.selectionClick();
-          setState(() {
-            _locked = true;
-            _dragOffset = 0;
-          });
-          return;
-        }
-        setState(() => _dragOffset = min(0, offset.dx));
-        if (_dragOffset < -_cancelDistance) unawaited(_stopRecording(send: false));
-      },
-      onLongPressEnd: (_) {
-        _pressing = false;
-        if (_recording && !_locked) unawaited(_stopRecording(send: _dragOffset > -_cancelDistance));
-      },
-      onLongPressCancel: () => _pressing = false,
-      // Phones: always a round accent button beside the floating field (aka style); desktop: a plain icon until recording.
-      child: AnimatedContainer(
+      // Halo while recording: follows the voice level, or breathes slowly for video.
+      child: _MicHalo(
+        active: _recording,
+        breathe: _recordingVideo,
+        level: _voiceLevel,
+        color: primary,
+        // Phones: always a round accent button beside the floating field (aka style); desktop: a plain icon until recording.
+        child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         width: _recording ? 60 : (isDesktop ? 48 : 54),
@@ -1616,7 +1642,6 @@ class ComposerState extends ConsumerState<Composer> {
           shape: BoxShape.circle,
           gradient: isDesktop ? (_recording ? brandGradient(primary, vertical: true) : null) : _goldMetal,
           boxShadow: [
-            if (_recording) BoxShadow(color: primary.withValues(alpha: 0.28), spreadRadius: 6 + 14 * pulse),
             if (_recording || !isDesktop)
               BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4)),
           ],
@@ -1638,29 +1663,19 @@ class ComposerState extends ConsumerState<Composer> {
           ),
         ),
       ),
+      ),
     );
   }
 
   /// Recording strip left of the mic: blinking dot, timer, then the slide hint or (locked) cancel.
   Widget _recordingInfo(Strings s) {
     final theme = Theme.of(context);
-    final elapsed = DateTime.now().difference(_recordStart ?? DateTime.now());
-    final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
     return SizedBox(
       height: 48,
       child: Row(
         children: [
           const SizedBox(width: 14),
-          AnimatedOpacity(
-            duration: const Duration(milliseconds: 300),
-            opacity: (elapsed.inMilliseconds ~/ 500).isEven ? 1 : 0.2,
-            child: const Icon(Icons.fiber_manual_record_rounded, color: Colors.redAccent, size: 14),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '${formatDuration(elapsed)},$tenths',
-            style: const TextStyle(fontSize: 15.5, fontFeatures: [FontFeature.tabularFigures()]),
-          ),
+          _RecordClock(startedAt: _recordStart ?? DateTime.now()),
           Expanded(
             child: _locked
                 ? Center(
@@ -1669,19 +1684,21 @@ class ComposerState extends ConsumerState<Composer> {
                       child: Text(s.t('cancel').toUpperCase(), style: TextStyle(color: theme.colorScheme.error)),
                     ),
                   )
-                : Transform.translate(
-                    offset: Offset(max(-80, _dragOffset / 2), 0),
-                    child: Opacity(
-                      opacity: (1 + _dragOffset / _cancelDistance).clamp(0.3, 1.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.chevron_left_rounded, color: theme.hintColor),
-                          Flexible(
-                            child: Text(s.t('slide_to_cancel'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor)),
-                          ),
-                        ],
-                      ),
+                : ValueListenableBuilder<double>(
+                    valueListenable: _drag,
+                    // Built once; only the slide offset and fade follow the finger.
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.chevron_left_rounded, color: theme.hintColor),
+                        Flexible(
+                          child: Text(s.t('slide_to_cancel'), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.hintColor)),
+                        ),
+                      ],
+                    ),
+                    builder: (context, drag, hint) => Transform.translate(
+                      offset: Offset(max(-80, drag / 2), 0),
+                      child: Opacity(opacity: (1 + drag / _cancelDistance).clamp(0.3, 1.0), child: hint),
                     ),
                   ),
           ),
@@ -1691,6 +1708,109 @@ class ComposerState extends ConsumerState<Composer> {
       ),
     );
   }
+}
+
+/// How long the mic must be held before recording starts.
+const _micHoldDelay = Duration(milliseconds: 200);
+
+/// Blinking red dot and the m:ss,t timer; ticks every frame on its own so the composer does not rebuild.
+class _RecordClock extends StatefulWidget {
+  const _RecordClock({required this.startedAt});
+
+  final DateTime startedAt;
+
+  @override
+  State<_RecordClock> createState() => _RecordClockState();
+}
+
+class _RecordClockState extends State<_RecordClock> with SingleTickerProviderStateMixin {
+  late final _ticker = createTicker((_) => setState(() {}))..start();
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final elapsed = DateTime.now().difference(widget.startedAt);
+    final tenths = (elapsed.inMilliseconds % 1000) ~/ 100;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Opacity(
+          // Smooth blink, once a second.
+          opacity: 0.2 + 0.8 * (cos(elapsed.inMilliseconds / 1000 * 2 * pi) + 1) / 2,
+          child: const Icon(Icons.fiber_manual_record_rounded, color: Colors.redAccent, size: 14),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '${formatDuration(elapsed)},$tenths',
+          style: const TextStyle(fontSize: 15.5, fontFeatures: [FontFeature.tabularFigures()]),
+        ),
+      ],
+    );
+  }
+}
+
+/// Halo around the mic while recording: eases toward the voice level every frame (or breathes for video).
+class _MicHalo extends StatefulWidget {
+  const _MicHalo({required this.active, required this.breathe, required this.level, required this.color, required this.child});
+
+  final bool active;
+  final bool breathe;
+  final ValueListenable<double> level;
+  final Color color;
+  final Widget child;
+
+  @override
+  State<_MicHalo> createState() => _MicHaloState();
+}
+
+class _MicHaloState extends State<_MicHalo> with SingleTickerProviderStateMixin {
+  late final _ticker = createTicker(_tick);
+  double _pulse = 0;
+
+  void _tick(Duration elapsed) {
+    final target = widget.breathe ? (sin(elapsed.inMilliseconds / 320) + 1) / 2 : widget.level.value;
+    // Mic samples come every 100 ms; easing fills the frames between them.
+    setState(() => _pulse += (target - _pulse) * 0.2);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) _ticker.start();
+  }
+
+  @override
+  void didUpdateWidget(_MicHalo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !_ticker.isActive) {
+      _pulse = 0;
+      _ticker.start();
+    } else if (!widget.active && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            if (widget.active) BoxShadow(color: widget.color.withValues(alpha: 0.28), spreadRadius: 6 + 14 * _pulse),
+          ],
+        ),
+        child: widget.child,
+      );
 }
 
 /// Round accent send button beside the floating field, matching the mic button.
