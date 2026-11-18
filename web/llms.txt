@@ -11,7 +11,7 @@
 - AI translator inside chats.
 - UZARO AI: an assistant inside the app that answers questions, writes texts, translates and makes plans. Chat history is saved and you can start a new chat at any time. Free requests have a daily limit shown in the app.
 - Online chess and Russian checkers (8×8) against other users, with ratings, game history and tournaments. Tournaments are free to enter; prize winners get a reward on their UZARO balance.
-- City services, in-app shops and listings for businesses (the first 2 shops are free).
+- City services, in-app shops and listings for businesses (the first shop is free).
 - UZARO wallet for paid services such as advertising.
 
 ## Privacy
