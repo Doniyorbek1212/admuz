@@ -33,6 +33,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
+    <!-- The portrait lock below would otherwise make Play require a portrait screen and drop landscape-only devices. -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
 
     <application
         android:requestLegacyExternalStorage="true"
