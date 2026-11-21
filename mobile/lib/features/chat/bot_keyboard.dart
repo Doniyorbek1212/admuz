@@ -214,7 +214,7 @@ class _InlineButtonState extends ConsumerState<_InlineButton> {
         ],
       ),
     );
-    controller.dispose();
+    // Not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
     return result == null || result.isEmpty ? null : result;
   }
 

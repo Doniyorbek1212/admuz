@@ -1,5 +1,6 @@
 {
     "cmake.sourceDirectory": "C:/Users/Comp X/Desktop/sado/mobile/windows",
     "java.compile.nullAnalysis.mode": "automatic",
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "dart.flutterSdkPath": "C:/flutter-3.47.8"
 }

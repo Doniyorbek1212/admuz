@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/sado_api.dart';
+import '../../core/interests.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -8,6 +10,7 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_drawer.dart';
 import '../home/home_screen.dart';
+import '../home/tab_order_screen.dart';
 
 /// Font families every Android phone ships (fonts.xml), so no font files are bundled.
 const _fonts = ['', 'sans-serif-light', 'sans-serif-medium', 'sans-serif-condensed', 'serif', 'monospace', 'casual', 'cursive'];
@@ -62,7 +65,8 @@ class UzaroSettingsScreen extends ConsumerWidget {
         padding: const EdgeInsets.only(bottom: 16),
         children: [
           SettingsGroup(title: s.t('privacy'), children: [
-            ListTile(
+            // With the secret hold set, the way in is the search button only; nothing here gives it away.
+            if (settings.hiddenHoldSeconds == 0) ListTile(
               title: Text(s.t('hidden_chats')),
               subtitle: Text(s.t('hidden_chats_count', {'n': '${settings.hiddenChatIds.length}'})),
               trailing: const Icon(Icons.chevron_right_rounded),
@@ -75,6 +79,14 @@ class UzaroSettingsScreen extends ConsumerWidget {
               notifier.setGhostMode(value);
               account.setOnline(!value);
             }, hint: 'ghost_mode_hint'),
+            toggle('personalized_ads', ref.watch(personalizedAdsProvider), (value) async {
+              try {
+                await ref.read(personalizedAdsProvider.notifier).set(value);
+              } on ApiException catch (error) {
+                // Off locally already, so nothing new is learnt; the old server scores just fade with time.
+                debugPrint('interests not cleared: $error');
+              }
+            }, hint: 'personalized_ads_hint'),
           ]),
           SettingsGroup(title: s.t('confirmations'), children: [
             toggle('confirm_sticker', settings.confirmSticker, notifier.setConfirmSticker),
@@ -99,6 +111,12 @@ class UzaroSettingsScreen extends ConsumerWidget {
             toggle('keep_deleted', settings.keepDeleted, notifier.setKeepDeleted, hint: 'keep_deleted_hint'),
             toggle('avatar_opens_profile', settings.avatarOpensProfile, notifier.setAvatarOpensProfile),
             toggle('chat_type_tabs', settings.chatTypeTabs, notifier.setChatTypeTabs, hint: 'chat_type_tabs_hint'),
+            ListTile(
+              title: Text(s.t('tab_order')),
+              subtitle: Text(s.t('tab_order_hint')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TabOrderScreen())),
+            ),
             toggle('send_by_enter', settings.sendByEnter, notifier.setSendByEnter),
           ]),
           SettingsGroup(title: s.t('reset_title'), children: [

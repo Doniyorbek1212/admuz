@@ -28,6 +28,7 @@ import 'chat_tile.dart';
 import 'ghost_mode_button.dart';
 import 'home_drawer.dart';
 import 'home_shell.dart';
+import 'tab_order_screen.dart';
 
 /// Right-hand pane of the tablet split view; null on phones.
 final chatPaneNavigatorKey = GlobalKey<NavigatorState>();
@@ -74,12 +75,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final folders = ref.watch(foldersProvider);
     final s = context.s;
-    final tabs = <(String, String)>[
-      ('main', s.t('all_chats')),
-      if (ref.watch(settingsProvider.select((st) => st.chatTypeTabs)))
-        for (final type in chatTypeTabs) (type, s.t('tab_${type.substring(5)}')),
-      for (final folder in folders) ('folder:${folder.id}', folder.name.text.text),
-    ];
+    final tabs = homeTabs(ref, s);
     final wide = MediaQuery.sizeOf(context).width >= splitViewMinWidth;
     final pages = TabBarView(
       children: [for (final tab in tabs) ChatListView(listKey: tab.$1, showArchive: tab.$1 == 'main')],
@@ -133,11 +129,7 @@ class HomeScreen extends ConsumerWidget {
                       ],
                     ),
                     actions: [
-                      IconButton(
-                        icon: const Icon(Icons.search_rounded, size: 27),
-                        tooltip: s.t('search'),
-                        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
-                      ),
+                      const _SearchButton(),
                       if (ref.watch(settingsProvider.select((st) => st.showGhostButton))) const _RoundAction(child: GhostModeButton()),
                       const SizedBox(width: 8),
                     ],
@@ -297,6 +289,8 @@ class _ListCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        // Gold frame of the UZARO look.
+        border: Border.all(color: brandGold, width: 1.4),
         boxShadow: [BoxShadow(color: theme.colorScheme.primary.withValues(alpha: 0.08), blurRadius: 16, offset: const Offset(0, -2))],
       ),
       child: child,
@@ -315,11 +309,17 @@ class _FolderTabLabel extends ConsumerWidget {
     final unread = ref.watch(unreadCountProvider(listKey));
     // Follows the tab's animated label color: white on the selected pill, muted ink elsewhere.
     final color = DefaultTextStyle.of(context).style.color ?? context.onAppBar;
+    final iconName = ref.watch(foldersProvider.select((folders) => folders.where((f) => 'folder:${f.id}' == listKey).firstOrNull?.icon.name));
     return GestureDetector(
       onLongPress: () => showFolderMenu(context, ref.read(accountProvider), listKey, title),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Telegram's default "Custom" icon stays hidden; a chosen one shows before the name.
+          if (iconName != null && iconName.isNotEmpty && iconName != 'Custom') ...[
+            Icon(folderIconData(iconName), size: 17, color: color),
+            const SizedBox(width: 6),
+          ],
           Text(title),
           if (unread > 0) ...[
             const SizedBox(width: 8),
@@ -461,28 +461,7 @@ class _FolderRail extends StatelessWidget {
   final List<(String, String)> tabs;
   final List<td.ChatFolderInfo> folders;
 
-  /// Tab key or Telegram folder icon name (ChatFolderIcon.name) to a Material icon.
-  static IconData _icon(String key) => switch (key) {
-    'main' || 'All' => Icons.forum_rounded,
-    'type:private' || 'Private' => Icons.person_rounded,
-    'type:group' || 'Groups' => Icons.groups_rounded,
-    'type:channel' || 'Channels' => Icons.campaign_rounded,
-    'type:bot' || 'Bots' => Icons.smart_toy_rounded,
-    'type:unread' || 'Unread' => Icons.mark_chat_unread_rounded,
-    'Unmuted' => Icons.notifications_active_rounded,
-    'Favorite' || 'Crown' => Icons.star_rounded,
-    'Work' || 'Trade' || 'Money' => Icons.work_rounded,
-    'Home' => Icons.home_rounded,
-    'Love' || 'Like' => Icons.favorite_rounded,
-    'Study' || 'Book' || 'Note' => Icons.menu_book_rounded,
-    'Game' || 'Party' || 'Mask' => Icons.sports_esports_rounded,
-    'Sport' => Icons.sports_soccer_rounded,
-    'Travel' || 'Airplane' => Icons.flight_rounded,
-    'Setup' => Icons.settings_rounded,
-    'Light' => Icons.lightbulb_rounded,
-    'Palette' || 'Flower' || 'Cat' => Icons.palette_rounded,
-    _ => Icons.folder_rounded,
-  };
+  static IconData _icon(String key) => folderIconData(key);
 
   @override
   Widget build(BuildContext context) {
@@ -556,13 +535,24 @@ class _FolderRailItem extends ConsumerWidget {
                 child: Icon(icon, color: color, size: 26),
               ),
               const SizedBox(height: 5),
-              Text(
-                title,
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
-              ),
+              if (title.trim().contains(' '))
+                Text(
+                  title,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
+                )
+              else
+                // One long word ("O'qilmagan") shrinks a little instead of breaking mid-word.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    style: TextStyle(color: color, fontSize: 11.5, height: 1.15, fontWeight: selected ? FontWeight.w600 : FontWeight.w500),
+                  ),
+                ),
             ],
           ),
         ),
@@ -743,12 +733,87 @@ class ArchiveScreen extends StatelessWidget {
   );
 }
 
+/// Opens search on a tap. Held for the secret number of seconds (±0.5 s) it opens the hidden chats instead,
+/// after the passcode when one is set.
+class _SearchButton extends ConsumerStatefulWidget {
+  const _SearchButton();
+
+  @override
+  ConsumerState<_SearchButton> createState() => _SearchButtonState();
+}
+
+class _SearchButtonState extends ConsumerState<_SearchButton> {
+  static const _slackMs = 500;
+  final _held = Stopwatch();
+
+  Future<void> _released() async {
+    final seconds = ref.read(settingsProvider).hiddenHoldSeconds;
+    final heldMs = _held.elapsedMilliseconds;
+    _held
+      ..stop()
+      ..reset();
+    if (seconds == 0 || (heldMs - seconds * 1000).abs() > _slackMs) return;
+    if (await unlockHiddenChats(context, ref) && mounted) {
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const HiddenChatsScreen()));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: (_) => _held
+      ..reset()
+      ..start(),
+    onPointerUp: (_) => unawaited(_released()),
+    onPointerCancel: (_) => _held.stop(),
+    child: IconButton(
+      icon: const Icon(Icons.search_rounded, size: 27),
+      onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SearchScreen())),
+      // A hold is not a tap: without this the search would open after the secret hold too. No tooltip, so a hold shows nothing.
+      onLongPress: () {},
+    ),
+  );
+}
+
 class HiddenChatsScreen extends ConsumerWidget {
   const HiddenChatsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(title: Text(context.t('hidden_chats'))),
+    appBar: AppBar(
+      title: Text(context.t('hidden_chats')),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.timer_outlined),
+          tooltip: context.t('hidden_hold'),
+          onPressed: () => _pickHoldSeconds(context, ref),
+        ),
+      ],
+    ),
     body: const ChatListView(listKey: 'hidden'),
   );
+}
+
+/// Only reachable from inside the hidden chats, so the chosen seconds are never on show.
+Future<void> _pickHoldSeconds(BuildContext context, WidgetRef ref) async {
+  final s = context.s;
+  final current = ref.read(settingsProvider).hiddenHoldSeconds;
+  final picked = await showDialog<int>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text(s.t('hidden_hold')),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: Text(s.t('hidden_hold_hint'), style: Theme.of(context).textTheme.bodySmall),
+        ),
+        for (final seconds in const [0, 2, 3, 4, 5, 6, 7, 8, 10])
+          ListTile(
+            leading: Icon(seconds == current ? Icons.radio_button_checked : Icons.radio_button_off),
+            title: Text(seconds == 0 ? s.t('hidden_hold_off') : s.t('hidden_hold_seconds', {'n': '$seconds'})),
+            onTap: () => Navigator.pop(context, seconds),
+          ),
+      ],
+    ),
+  );
+  if (picked != null) ref.read(settingsProvider.notifier).setHiddenHoldSeconds(picked);
 }

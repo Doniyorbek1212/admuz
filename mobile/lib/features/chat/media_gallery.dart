@@ -655,7 +655,10 @@ class _GalleryVideoState extends ConsumerState<_GalleryVideo> with WidgetsBindin
           children: [
             CircularProgressIndicator(color: Colors.white, value: total > 0 ? file.local.downloadedSize / total : null),
             const SizedBox(height: 12),
-            Text('${formatFileSize(file.local.downloadedSize)} / ${formatFileSize(total)}', style: const TextStyle(color: Colors.white70)),
+            Text(
+              '${total > 0 ? '${file.local.downloadedSize * 100 ~/ total}% · ' : ''}${formatFileSize(file.local.downloadedSize)} / ${formatFileSize(total)}',
+              style: const TextStyle(color: Colors.white70),
+            ),
           ],
         ),
       );

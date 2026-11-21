@@ -291,7 +291,7 @@ void main() {
   testWidgets('bot chat with keyboard and formatting', (tester) async {
     Map<String, dynamic> entity(int offset, int length, Map<String, dynamic> type) => {'@type': 'textEntity', 'offset': offset, 'length': length, 'type': type};
     Map<String, dynamic> button(String text, Map<String, dynamic> type) => {'@type': 'inlineKeyboardButton', 'text': text, 'icon_custom_emoji_id': 0, 'style': {'@type': 'buttonStyleDefault'}, 'type': type};
-    const welcome = 'Xush kelibsiz! Bu bot buyurtmalarni qabul qiladi. Batafsil: sado.uz';
+    const welcome = 'Xush kelibsiz! Bu bot buyurtmalarni qabul qiladi. Batafsil: uzaromessenger.uz';
     final botMessage = td.Message.fromJson({
       ..._message(2, 5, 5, {
         '@type': 'messageText',
@@ -309,8 +309,8 @@ void main() {
         '@type': 'replyMarkupInlineKeyboard',
         'rows': [
           [button('🛒 Buyurtma berish', {'@type': 'inlineKeyboardButtonTypeCallback', 'data': 'b3JkZXI='}), button('📋 Menyu', {'@type': 'inlineKeyboardButtonTypeCallback', 'data': 'bWVudQ=='})],
-          [button('Ilovani ochish', {'@type': 'inlineKeyboardButtonTypeWebApp', 'url': 'https://sado.uz'})],
-          [button('Saytga o\'tish', {'@type': 'inlineKeyboardButtonTypeUrl', 'url': 'https://sado.uz'})],
+          [button('Ilovani ochish', {'@type': 'inlineKeyboardButtonTypeWebApp', 'url': 'https://uzaromessenger.uz'})],
+          [button('Saytga o\'tish', {'@type': 'inlineKeyboardButtonTypeUrl', 'url': 'https://uzaromessenger.uz'})],
         ],
       },
     })!;

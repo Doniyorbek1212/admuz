@@ -35,6 +35,8 @@ class LiveLocationService {
     final message = await account.sendLiveLocation(chatId, position.latitude, position.longitude, periodSeconds: period.inSeconds);
     _shares.add(_LiveShare(account, chatId, message.id, DateTime.now().add(period)));
     _ensureListening();
+    // A phone lying still sends no positions (distanceFilter), so expiry must not wait for one: GPS would stay on.
+    Timer(period + const Duration(seconds: 1), _dropExpired);
     revision.value++;
     return true;
   }
@@ -64,15 +66,20 @@ class LiveLocationService {
     ).listen(_onPosition, onError: (Object error) => debugPrint('position stream failed: $error'));
   }
 
-  void _onPosition(Position position) {
+  /// Forgets ended shares and turns GPS off once none is left; true while some share is still live.
+  bool _dropExpired() {
     final now = DateTime.now();
+    final before = _shares.length;
     _shares.removeWhere((s) => now.isAfter(s.until));
-    if (_shares.isEmpty) {
-      unawaited(_positions?.cancel());
-      _positions = null;
-      revision.value++;
-      return;
-    }
+    if (_shares.length != before) revision.value++;
+    if (_shares.isNotEmpty) return true;
+    unawaited(_positions?.cancel());
+    _positions = null;
+    return false;
+  }
+
+  void _onPosition(Position position) {
+    if (!_dropExpired()) return;
     for (final share in List.of(_shares)) {
       unawaited(share.account
           .updateLiveLocation(share.chatId, share.messageId, latitude: position.latitude, longitude: position.longitude)

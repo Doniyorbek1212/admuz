@@ -9,6 +9,17 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // One instance only: a second one would find TDLib's database locked. It brings the open window forward
+  // instead. The mutex lives until the process exits.
+  ::CreateMutexW(nullptr, TRUE, L"Local\\uz.uzaro.app.single-instance");
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (HWND existing = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"UZARO")) {
+      if (::IsIconic(existing)) ::ShowWindow(existing, SW_RESTORE);
+      ::SetForegroundWindow(existing);
+    }
+    return EXIT_SUCCESS;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {

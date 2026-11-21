@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Shaxmat</title>
+<link rel="stylesheet" href="games.css?v=2">
+<style>
+  .sq .w { color: #fffdf7; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
+  .sq .b { color: #1a1411; text-shadow: 0 0 1px #fff8; }
+  .taken { min-height: 22px; font-size: 20px; letter-spacing: -2px; color: var(--muted); }
+</style>
+<script src="common.js?v=2" defer></script>
+<script src="chess.js?v=2" defer></script>
+</head>
+<body>
+<h1 data-t="chess">Shaxmat</h1>
+<div class="bar">
+  <button class="btn" type="button" data-mode="ai" data-t="vs_ai"></button>
+  <button class="btn" type="button" data-mode="duo" data-t="two_players"></button>
+</div>
+<div class="bar" id="levels">
+  <button class="btn" type="button" data-level="1" data-t="easy"></button>
+  <button class="btn" type="button" data-level="2" data-t="medium"></button>
+  <button class="btn" type="button" data-level="3" data-t="hard"></button>
+</div>
+<div class="taken" id="taken-b"></div>
+<div class="board" id="board"></div>
+<div class="taken" id="taken-w"></div>
+<div class="status" id="status"></div>
+<div class="bar">
+  <button class="btn" type="button" id="undo" data-t="undo"></button>
+  <span class="grow"></span>
+  <button class="btn primary" type="button" id="new" data-t="new_game"></button>
+</div>
+</body>
+</html>

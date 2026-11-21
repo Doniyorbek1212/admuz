@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_lock.dart';
 import '../../core/config.dart';
+import '../../core/store_rules.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
 import '../../state/link_policy.dart';
@@ -13,6 +14,7 @@ import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../admin/admin_panel_screen.dart';
+import '../business/ads_screen.dart';
 import '../business/business_screen.dart';
 import '../chat/marked_messages_screen.dart';
 import '../calls/calls_screen.dart';
@@ -102,7 +104,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
     return ListView(
         padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
         children: [
-          if (_showAccounts) _accounts(context),
+          if (_showAccounts) const Padding(padding: EdgeInsets.only(top: 6), child: AccountSwitcherList()),
           const SizedBox(height: 6),
           SettingsGroup(children: [
             _row(Icons.group_add_rounded, const Color(0xFF2E9BF0), s.t('new_group'), () => _push(const ContactsScreen(createGroup: true))),
@@ -137,12 +139,13 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
               value: theme.brightness == Brightness.dark,
               onChanged: (dark) => ref.read(settingsProvider.notifier).setThemeMode(dark ? ThemeMode.dark : ThemeMode.light),
             ),
-            if (settings.hiddenChatIds.isNotEmpty) _row(Icons.visibility_off_rounded, const Color(0xFF7C4DFF), s.t('hidden_chats'), _openHidden),
+            if (settings.hiddenChatIds.isNotEmpty && settings.hiddenHoldSeconds == 0) _row(Icons.visibility_off_rounded, const Color(0xFF7C4DFF), s.t('hidden_chats'), _openHidden),
             _row(Icons.add_a_photo_rounded, const Color(0xFFFF5C8A), s.t('add_story'), _addStory),
             _row(Icons.download_rounded, const Color(0xFF13B88A), s.t('downloads'), () => _openPanel(const DownloadsScreen())),
           ]),
           SettingsGroup(children: [
             _row(Icons.work_rounded, const Color(0xFFFF7A59), s.t('hub_business'), () => _push(const BusinessScreen())),
+            if (!storeBlocksWalletSpending) _row(Icons.campaign_rounded, const Color(0xFFFF4D7A), s.t('hub_ads'), () => _push(const AdsScreen())),
             if (ref.watch(hasAdminKeyProvider).value ?? false)
               _row(Icons.admin_panel_settings_rounded, const Color(0xFF5A6B7F), s.t('admin_title'), () => _push(const AdminPanelScreen())),
             _row(Icons.settings_rounded, const Color(0xFF8E8E93), s.t('settings'), () => _openPanel(const SettingsScreen())),
@@ -158,14 +161,18 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
         ],
     );
   }
+}
 
-  Widget _accounts(BuildContext context) {
+/// Logged-in accounts plus "add account"; tapping one closes the enclosing drawer or sheet.
+class AccountSwitcherList extends ConsumerWidget {
+  const AccountSwitcherList({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final slots = ref.watch(accountSlotsProvider);
     final s = context.s;
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: SettingsGroup(children: [
+    return SettingsGroup(children: [
         for (final slot in slots.slots)
           ListTile(
             leading: CircleAvatar(child: Text(initialsOf(slots.labels[slot] ?? '$slot'))),
@@ -188,8 +195,7 @@ class _HomeDrawerState extends ConsumerState<HomeDrawer> {
               ref.read(accountSlotsProvider.notifier).addAccount();
             },
           ),
-      ]),
-    );
+      ]);
   }
 }
 

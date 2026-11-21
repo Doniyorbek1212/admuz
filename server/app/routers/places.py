@@ -9,6 +9,7 @@ from pydantic import StringConstraints
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import like_pattern
 from app.deps import CustomerDep, DbDep
 from app.errors import bad_request, not_found
 from app.market import REGIONS, Region
@@ -74,7 +75,7 @@ async def _scope(db: AsyncSession, region: str, district: str) -> list[ColumnEle
 
 
 def _search(q: str) -> ColumnElement[bool]:
-    pattern = f"%{q.replace('%', '').replace('_', '')}%"
+    pattern = like_pattern(q)
     return or_(Place.name.ilike(pattern), Place.subcategory.ilike(pattern), Place.address.ilike(pattern), Place.district.ilike(pattern))
 
 
@@ -122,6 +123,52 @@ async def list_places(
     return {
         "items": [place_out(p, lat=lat, lon=lon) for p in rows[:limit]],
         "next_offset": offset + limit if has_more else None,
+    }
+
+
+LOCATE_RADIUS_M = 25_000
+LOCATE_NEIGHBOURS = 30
+
+
+@router.get("/locate")
+async def locate(
+    current: CustomerDep,
+    db: DbDep,
+    lat: Annotated[float, Query(ge=-90, le=90)],
+    lon: Annotated[float, Query(ge=-180, le=180)],
+) -> dict[str, Any]:
+    """Region and district (tuman) of a position, voted by the nearest known places weighted by closeness.
+    The directory's own names come back, so the app can select them as they are. Null when nothing is near."""
+    k = math.cos(math.radians(lat))
+    box = LOCATE_RADIUS_M / 111_000
+    near = (
+        Place.active.is_(True),
+        Place.latitude.between(lat - box, lat + box),
+        Place.longitude.between(lon - box / max(k, 0.1), lon + box / max(k, 0.1)),
+    )
+    sq = func.pow(Place.latitude - lat, 2) + func.pow((Place.longitude - lon) * k, 2)
+    rows = list(await db.scalars(select(Place).where(*near).order_by(sq).limit(LOCATE_NEIGHBOURS)))
+    scored = [(p, distance_m(lat, lon, p.latitude, p.longitude)) for p in rows if p.latitude is not None and p.longitude is not None]
+    scored = [(p, d) for p, d in scored if d <= LOCATE_RADIUS_M]
+    if not scored:
+        return {"region": None, "district": None, "nearest_m": None}
+
+    def vote(key: str | None, votes: dict[str, float], d: float) -> None:
+        if key:
+            votes[key] = votes.get(key, 0.0) + 1.0 / (d + 300.0)  # +300 m: one place next door does not outvote a town
+
+    regions: dict[str, float] = {}
+    for p, d in scored:
+        vote(p.region, regions, d)
+    region = max(regions, key=regions.__getitem__)
+    districts: dict[str, float] = {}
+    for p, d in scored:
+        if p.region == region:
+            vote(p.district, districts, d)
+    return {
+        "region": region,
+        "district": max(districts, key=districts.__getitem__) if districts else None,
+        "nearest_m": round(min(d for _, d in scored)),
     }
 
 

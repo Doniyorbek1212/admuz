@@ -13,6 +13,7 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../home/home_screen.dart';
 import '../stories/story_extras.dart' show StoryNotificationExceptionsScreen;
+import 'message_tone_picker.dart';
 import 'notification_sounds.dart';
 
 const _scopes = <String, td.NotificationSettingsScope>{
@@ -121,6 +122,16 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
               title: Text(s.t('notif_preview')),
               value: settings.messagePreview,
               onChanged: settings.notificationsEnabled ? notifier.setMessagePreview : null,
+            ),
+            ListTile(
+              enabled: settings.notificationsEnabled,
+              leading: const Icon(Icons.music_note_rounded),
+              title: Text(s.t('message_tone')),
+              subtitle: Text(s.t('sound_${settings.messageTone}')),
+              onTap: () async {
+                final tone = await pickMessageTone(context, current: settings.messageTone);
+                if (tone != null && tone.isNotEmpty) notifier.setMessageTone(tone);
+              },
             ),
           ]),
           SettingsGroup(title: s.t('chat_sounds'), children: [

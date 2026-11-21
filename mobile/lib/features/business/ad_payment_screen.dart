@@ -5,8 +5,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/store_rules.dart';
+import '../../core/api/gift_models.dart' show Wallet;
 import '../../core/api/market_models.dart';
 import '../../core/api/sado_api.dart';
+import '../gifts/topup_screen.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
@@ -28,7 +30,36 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
   late final Future<AdsConfig> _config = ref.read(sadoApiProvider).adsConfig();
   bool _uploading = false;
 
+  late Future<Wallet> _wallet = ref.read(sadoApiProvider).wallet();
+  bool _payingFromWallet = false;
+
   bool get _canPay => _ad.status == AdStatus.awaitingPayment || _ad.status == AdStatus.rejected || _ad.status == AdStatus.pendingReview;
+
+  /// The balance can pay (or, once paid, resubmit) an ad that is not under review yet.
+  bool get _canPayFromWallet => _ad.status == AdStatus.awaitingPayment || _ad.status == AdStatus.rejected;
+
+  Future<void> _payFromWallet() async {
+    final s = context.s;
+    if (!_ad.paidFromWallet &&
+        !await confirm(context, title: s.t('ad_pay_wallet'), message: s.t('ad_pay_wallet_confirm', {'amount': formatUzs(context, _ad.priceUzs)}))) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _payingFromWallet = true);
+    final updated = await apiGuard(context, () => ref.read(sadoApiProvider).payAdFromWallet(_ad.id));
+    if (!mounted) return;
+    setState(() {
+      _payingFromWallet = false;
+      if (updated != null) _ad = updated;
+      _wallet = ref.read(sadoApiProvider).wallet();
+    });
+    if (updated != null) showToast(context, s.t('ad_pay_wallet_done'));
+  }
+
+  Future<void> _topUp() async {
+    await Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const TopupScreen()));
+    if (mounted) setState(() => _wallet = ref.read(sadoApiProvider).wallet());
+  }
 
   Future<void> _uploadReceipt() async {
     final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 90, maxWidth: 2000);
@@ -70,7 +101,7 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
           ),
           SettingsGroup(children: [
             ListTile(
-              title: Text(_ad.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+              title: Text(_ad.label(s.t('hub_ads')), style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Text(s.t('ad_regions_list', {'list': _ad.regions.join(', ')})),
               trailing: StatusChip.ad(_ad),
             ),
@@ -90,7 +121,13 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
                 child: Text(s.t('ad_ends', {'date': DateFormat('dd.MM.yyyy HH:mm').format(_ad.endsAt!)})),
               ),
           ]),
-          if (_canPay) _paymentSteps(context),
+          if (_ad.paidFromWallet && _ad.status != AdStatus.approved)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+              child: Text(s.t('ad_pay_wallet_paid'), style: TextStyle(color: theme.hintColor)),
+            ),
+          if (_canPayFromWallet) _walletPayment(context),
+          if (_canPay && !_ad.paidFromWallet) _paymentSteps(context),
           if (_ad.status != AdStatus.approved)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -103,6 +140,46 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  /// Pay from the UZARO balance: the only way in the store builds, where the balance is bought through the store.
+  Widget _walletPayment(BuildContext context) {
+    final s = context.s;
+    return FutureBuilder<Wallet>(
+      future: _wallet,
+      builder: (context, snapshot) {
+        final balance = snapshot.data?.balanceUzs;
+        final enough = _ad.paidFromWallet || (balance != null && balance >= _ad.priceUzs);
+        return SettingsGroup(title: s.t('ad_pay_wallet'), children: [
+          if (balance != null)
+            ListTile(
+              leading: Icon(Icons.account_balance_wallet_rounded, color: Theme.of(context).colorScheme.primary),
+              title: Text(s.t('ad_pay_wallet_balance', {'amount': formatUzs(context, balance)})),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: switch ((balance, enough)) {
+              _ when _payingFromWallet => const Center(child: CircularProgressIndicator()),
+              (_, true) => FilledButton.icon(
+                  onPressed: _payFromWallet,
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                  icon: const Icon(Icons.account_balance_wallet_rounded),
+                  label: Text(_ad.paidFromWallet
+                      ? s.t('ad_pay_wallet_resend')
+                      : s.t('ad_pay_wallet_btn', {'amount': formatUzs(context, _ad.priceUzs)})),
+                ),
+              (null, _) when !snapshot.hasError => const Center(child: CircularProgressIndicator()),
+              _ => OutlinedButton.icon(
+                  onPressed: _topUp,
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                  icon: const Icon(Icons.add_card_rounded),
+                  label: Text(s.t('gifts_topup')),
+                ),
+            },
+          ),
+        ]);
+      },
     );
   }
 
@@ -123,7 +200,7 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
       builder: (context, snapshot) {
         final config = snapshot.data;
         final card = config?.cardNumber ?? '';
-        return SettingsGroup(title: s.t('ad_pay_title'), children: [
+        return SettingsGroup(title: s.t('ad_pay_by_card'), children: [
           step(1, s.t('ad_pay_step1', {'amount': formatUzs(context, _ad.priceUzs)}), done: _ad.hasReceipt),
           if (config != null && card.isEmpty)
             Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 8), child: Text(s.t('ad_card_missing'), style: TextStyle(color: theme.colorScheme.error))),

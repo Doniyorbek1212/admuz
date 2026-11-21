@@ -44,6 +44,12 @@ class ChatHistory extends ChangeNotifier {
   int sponsoredSpacing = 0;
   final Set<int> _sponsoredViewed = {};
 
+  /// A message arrived (or was sent) in this chat just now; drives the screen effects.
+  void Function(td.Message message)? onLiveMessage;
+
+  /// Reactions of a loaded message changed: old and new interaction info; drives the screen effects.
+  void Function(td.MessageInteractionInfo? before, td.MessageInteractionInfo? after)? onInteractionChanged;
+
   StreamSubscription<td.Update>? _subscription;
   final Set<int> _viewed = {};
   bool _disposed = false;
@@ -225,7 +231,8 @@ class ChatHistory extends ChangeNotifier {
   /// Marks messages as read on screen. Ghost mode only clears the badge on this phone; Telegram is not told.
   void markViewed(Iterable<int> messageIds) {
     if (ghostMode) {
-      account.markReadLocally(chatId);
+      // Called from the message list's item builder: notifying providers mid-build throws, so wait for the frame to end.
+      scheduleMicrotask(() => account.markReadLocally(chatId));
       return;
     }
     final fresh = messageIds.where((id) => id > 0 && _viewed.add(id)).toList();
@@ -235,10 +242,26 @@ class ChatHistory extends ChangeNotifier {
         .catchError((Object _) => const td.Ok()));
   }
 
+  /// My message with new reactions came on screen. TDLib counts them read once the message is viewed, but
+  /// [markViewed] skips outgoing messages. Ghost mode must not view (an outgoing id would mark everything
+  /// before it read), so it clears reactions only; reading reactions is never shown to anyone.
+  void markReactionsSeen(int messageId) {
+    if (messageId <= 0 || !_reactionsSeen.add(messageId)) return;
+    final request = ghostMode
+        ? td.ReadAllChatReactions(chatId: chatId) as td.TdFunction
+        : td.ViewMessages(chatId: chatId, messageIds: [messageId], source: null, forceRead: true);
+    // Called from the list's item builder: the reply (and the badge update it brings) lands after the frame.
+    unawaited(account.send<td.Ok>(request).catchError((Object _) => const td.Ok()));
+  }
+
+  final Set<int> _reactionsSeen = {};
+
   void _onEvent(td.Update update) {
     switch (update) {
       case td.UpdateNewMessage(:final message) when message.chatId == chatId:
         if (!_inTopic(message)) return;
+        // Not the backlog delivered after a reconnect: only messages from the last minute.
+        if (DateTime.now().millisecondsSinceEpoch ~/ 1000 - message.date < 60) onLiveMessage?.call(message);
         if (hasNewer || messages.any((m) => m.id == message.id)) return;
         messages.insert(0, message);
       case td.UpdateMessageSendSucceeded(:final message, :final oldMessageId) when message.chatId == chatId:
@@ -247,9 +270,13 @@ class ChatHistory extends ChangeNotifier {
         _replace(oldMessageId, (_) => message);
       case td.UpdateMessageContent(chatId: final id, :final messageId, :final newContent) when id == chatId:
         _replace(messageId, (m) => m.copyWith(content: newContent));
+      case td.UpdateMessageEphemeralContent(chatId: final id, :final messageId, :final ephemeralContent) when id == chatId:
+        _replace(messageId, (m) => _withJson(m, {'ephemeral_content': ephemeralContent?.toJson()}));
       case td.UpdateMessageEdited(chatId: final id, :final messageId, :final editDate, :final replyMarkup) when id == chatId:
         _replace(messageId, (m) => _withJson(m, {'edit_date': editDate, 'reply_markup': replyMarkup?.toJson()}));
       case td.UpdateMessageInteractionInfo(chatId: final id, :final messageId, :final interactionInfo) when id == chatId:
+        final index = indexOf(messageId);
+        if (index >= 0) onInteractionChanged?.call(messages[index].interactionInfo, interactionInfo);
         _replace(messageId, (m) => _withJson(m, {'interaction_info': interactionInfo?.toJson()}));
       case td.UpdateMessageIsPinned(chatId: final id, :final messageId, :final isPinned) when id == chatId:
         _replace(messageId, (m) => m.copyWith(isPinned: isPinned));

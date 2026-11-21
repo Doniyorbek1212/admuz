@@ -1,3 +1,4 @@
+import ipaddress
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -41,8 +42,13 @@ async def get_current_customer(request: Request, db: DbDep) -> CurrentCustomer:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
         raise unauthorized()
+    return await customer_from_token(db, header[7:].strip())
+
+
+async def customer_from_token(db: AsyncSession, token: str) -> CurrentCustomer:
+    """The customer behind an access token (also used by the games WebSocket, which has no Authorization header)."""
     try:
-        customer_id, device_id = decode_access_token(header[7:].strip())
+        customer_id, device_id = decode_access_token(token)
     except TokenError as exc:
         raise unauthorized("TOKEN_INVALID") from exc
     device = await db.get(Device, device_id)
@@ -65,6 +71,7 @@ def require_admin(minimum: AdminRole) -> Callable[..., Coroutine[Any, Any, Admin
     """Admin auth via X-Admin-Key (stored hashed). Roles are hierarchical."""
 
     async def dependency(request: Request, db: DbDep, x_admin_key: Annotated[str | None, Header()] = None) -> AdminUser:
+        require_admin_address(request)
         if not x_admin_key:
             raise unauthorized("ADMIN_KEY_REQUIRED")
         admin = None
@@ -107,6 +114,19 @@ async def revoke_admin_sessions(admin_id: uuid.UUID) -> int:
         if await redis.get(key) == str(admin_id):
             removed += await redis.delete(key)
     return removed
+
+
+def require_admin_address(request: Request) -> None:
+    """With SADO_BILLING_ADMIN_ALLOWED_IPS set, the admin API answers only those networks (office, VPN)."""
+    networks = get_settings().admin_networks
+    if not networks:
+        return
+    try:
+        address = ipaddress.ip_address(client_ip(request))
+    except ValueError as exc:
+        raise forbidden("ADMIN_ADDRESS_FORBIDDEN") from exc
+    if not any(address in network for network in networks):
+        raise forbidden("ADMIN_ADDRESS_FORBIDDEN")
 
 
 def client_ip(request: Request) -> str:

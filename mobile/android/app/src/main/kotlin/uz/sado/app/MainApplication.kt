@@ -36,13 +36,13 @@ class MainApplication : Application() {
         MethodChannel(engine.dartExecutor.binaryMessenger, VideoNoteTranscoder.CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "cropSquare" -> {
-                    val input = call.argument<String>("input")
+                    val inputs = call.argument<List<String>>("inputs").orEmpty()
                     val output = call.argument<String>("output")
                     val size = call.argument<Int>("size") ?: 480
-                    if (input == null || output == null) {
-                        result.error("bad_args", "input and output are required", null)
+                    if (inputs.isEmpty() || output == null) {
+                        result.error("bad_args", "inputs and output are required", null)
                     } else {
-                        VideoNoteTranscoder.cropSquare(this, input, output, size, result)
+                        VideoNoteTranscoder.cropSquare(this, inputs, output, size, result)
                     }
                 }
                 else -> result.notImplemented()

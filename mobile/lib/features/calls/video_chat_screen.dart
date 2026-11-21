@@ -434,7 +434,7 @@ class _VideoChatScreenState extends ConsumerState<VideoChatScreen> {
         ),
       ),
     );
-    controller.dispose();
+    // Not disposed: the sheet still rebuilds its field during the close animation; GC frees it.
   }
 
   Future<void> _messageMenu(td.GroupCallMessage message) async {

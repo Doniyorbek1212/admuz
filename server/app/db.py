@@ -14,6 +14,11 @@ engine = create_async_engine(get_settings().database_url, pool_size=20, max_over
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
+def like_pattern(term: str) -> str:
+    """%term% for ILIKE. The user's wildcards and the escape character are dropped: a trailing backslash is an SQL error."""
+    return "%" + term.translate(str.maketrans("", "", "%_\\")) + "%"
+
+
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with SessionFactory() as session:
         yield session

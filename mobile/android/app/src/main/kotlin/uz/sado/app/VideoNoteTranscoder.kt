@@ -9,6 +9,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -23,9 +24,12 @@ import java.io.File
 object VideoNoteTranscoder {
     const val CHANNEL = "uz.sado.app/video"
 
-    /** Must run on a looper thread (the method channel's main thread); answers [result] when done. */
+    /**
+     * Joins [inputs] (one clip per camera used: flipping the camera starts a new clip) and crops each to
+     * size×size. Must run on a looper thread (the method channel's main thread); answers [result] when done.
+     */
     @OptIn(UnstableApi::class)
-    fun cropSquare(context: Context, input: String, output: String, size: Int, result: MethodChannel.Result) {
+    fun cropSquare(context: Context, inputs: List<String>, output: String, size: Int, result: MethodChannel.Result) {
         val transformer = Transformer.Builder(context)
             .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
@@ -41,9 +45,13 @@ object VideoNoteTranscoder {
             })
             .build()
         val crop = Presentation.createForWidthAndHeight(size, size, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
-        val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(File(input))))
-            .setEffects(Effects(emptyList(), listOf(crop)))
-            .build()
-        transformer.start(item, output)
+        // Cropping every clip to the same square lets front and back camera clips (other sizes/rotations) join.
+        val items = inputs.map { input ->
+            EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(File(input))))
+                .setEffects(Effects(emptyList(), listOf(crop)))
+                .build()
+        }
+        val composition = Composition.Builder(EditedMediaItemSequence.withAudioAndVideoFrom(items)).build()
+        transformer.start(composition, output)
     }
 }

@@ -11,12 +11,17 @@ import '../../state/actions.dart';
 import '../../state/link_policy.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
+import '../../state/telegram.dart' show TelegramAccount;
 import '../../widgets/common.dart';
 import 'bot_keyboard.dart';
 import 'comments.dart';
 import 'link_preview_card.dart';
 import 'message_content.dart';
 import 'message_tools.dart';
+
+/// Narrowest a captioned photo/video bubble gets, so the caption under a tall portrait stays readable.
+const _captionMinWidth = 240.0;
+const _longCaptionChars = 80;
 
 /// The message a reply points to, resolved by TDLib from the reply itself (works across chats and threads).
 final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int, int)>((ref, key) async {
@@ -62,6 +67,93 @@ class _RevealedRisky extends Notifier<Set<String>> {
   Set<String> build() => const {};
 
   void reveal(String key) => state = {...state, key};
+}
+
+/// Every version of an edited message, oldest first, ending with the current one.
+Future<void> showEditHistory(BuildContext context, TelegramAccount account, td.Message message) {
+  final s = context.s;
+  final versions = [
+    ...account.archive.versionsOf(message.chatId, message.id),
+    (content: message.content, date: message.editDate > 0 ? message.editDate : message.date),
+  ];
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(s.t('edit_history')),
+      content: SizedBox(
+        width: 420,
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final (index, version) in versions.indexed)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: SelectableText(contentPreview(version.content, s) ?? ''),
+                subtitle: Text([
+                  index == versions.length - 1 ? s.t('edit_history_current') : s.t('edit_history_version', {'n': '${index + 1}'}),
+                  '${formatDayHeader(version.date, s)} ${formatTime(version.date, s.locale)}',
+                ].join(' · ')),
+              ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('ok')))],
+    ),
+  );
+}
+
+/// The text an edited message had before its last edit, inside the bubble; tapping it shows every version.
+class _PreviousVersion extends ConsumerWidget {
+  const _PreviousVersion({required this.message, required this.textColor});
+
+  final td.Message message;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final account = ref.watch(accountProvider);
+    final versions = account.archive.versionsOf(message.chatId, message.id);
+    if (versions.isEmpty) return const SizedBox.shrink();
+    final s = context.s;
+    final accent = Theme.of(context).brightness == Brightness.dark ? const Color(0xFFFFC857) : const Color(0xFFB7791F);
+    final label = versions.length > 1 ? '${s.t('edit_before')} · ${s.t('edit_versions', {'n': '${versions.length}'})}' : s.t('edit_before');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Material(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => showEditHistory(context, account, message),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: accent, width: 3))),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.history_rounded, size: 14, color: accent),
+                    const SizedBox(width: 4),
+                    Flexible(child: Text(label, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: accent))),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  contentPreview(versions.last.content, s) ?? '',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, height: 1.25, color: textColor.withValues(alpha: 0.75)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Placeholder for a folded message: why it is hidden and a button to show it.
@@ -173,7 +265,7 @@ class MessageBubble extends ConsumerWidget {
     final content = message.content;
     final bareMedia = content is td.MessageSticker || content is td.MessageAnimatedEmoji || content is td.MessageDice ||
         content is td.MessageVideoNote;
-    final isMediaBubble = content is td.MessagePhoto || content is td.MessageVideo || content is td.MessageAnimation;
+    final isMediaBubble = content is td.MessagePhoto || content is td.MessageVideo || content is td.MessageAnimation || isVideoDocument(content);
     final album = this.album;
     final text = album != null
         ? album.map((m) => captionOf(m.content)).firstWhere((c) => c != null && c.text.isNotEmpty, orElse: () => null)
@@ -182,6 +274,18 @@ class MessageBubble extends ConsumerWidget {
             _ => captionOf(content),
           };
     final hasText = text != null && text.text.isNotEmpty;
+    // Captioned photo/video: the bubble is as wide as the media and the caption wraps under it (Telegram);
+    // a narrow portrait one widens to a readable caption width and is cropped to fill it.
+    // A long caption takes the full bubble width instead of wrapping into a narrow column.
+    final naturalMedia = album == null && hasText ? mediaWidth(content, maxWidth) : null;
+    final captionedMediaWidth = naturalMedia == null
+        ? null
+        : (text?.text.length ?? 0) > _longCaptionChars
+            ? maxWidth
+            : naturalMedia < _captionMinWidth
+                ? (_captionMinWidth > maxWidth ? maxWidth : _captionMinWidth)
+                : naturalMedia;
+    final bubbleMaxWidth = captionedMediaWidth ?? maxWidth;
     // Time sits at the end of the last text line when it fits (Telegram layout).
     final policy = ref.watch(linkPolicyProvider);
     final linkRisk = text == null
@@ -206,13 +310,16 @@ class MessageBubble extends ConsumerWidget {
     );
 
     Widget? senderLabel;
-    if (showSender && !outgoing && (account.isGroup(chat) || isChannel && message.authorSignature != null)) {
+    if (showSender && !outgoing && (account.isGroup(chat) || isChannel && (message.authorSignature ?? '').isNotEmpty)) {
       final name = isChannel ? (message.authorSignature ?? '') : account.senderName(message.senderId);
       final seed = account.senderKey(message.senderId);
-      senderLabel = Text(
+      final label = Text(
         name,
         style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: _nameColors[seed.abs() % _nameColors.length]),
       );
+      senderLabel = isChannel
+          ? label
+          : GestureDetector(onTap: () => openSenderProfile(context, account, message.senderId), child: label);
     }
 
     final children = <Widget>[
@@ -230,7 +337,9 @@ class MessageBubble extends ConsumerWidget {
                 : BorderRadius.zero,
             child: Stack(
               children: [
-                album != null ? AlbumGrid(messages: album, maxWidth: maxWidth) : MessageMedia(message: message, maxWidth: maxWidth),
+                album != null
+                    ? AlbumGrid(messages: album, maxWidth: maxWidth)
+                    : MessageMedia(message: message, maxWidth: bubbleMaxWidth, fillWidth: captionedMediaWidth != null),
                 if (footerOnMedia)
                   Positioned(
                     right: 6,
@@ -241,6 +350,7 @@ class MessageBubble extends ConsumerWidget {
             ),
           ),
         ),
+      if (archived.hasVersions && !archived.deleted && !folded) _PreviousVersion(message: message, textColor: textColor),
       if (hasText && folded)
         _FoldedRiskyText(onShow: () => ref.read(_revealedRiskyProvider.notifier).reveal('${message.chatId}:${message.id}'))
       else if (hasText && inlineFooter)
@@ -331,7 +441,7 @@ class MessageBubble extends ConsumerWidget {
             ],
           )
         : Container(
-            constraints: BoxConstraints(maxWidth: maxWidth, minWidth: 80),
+            constraints: BoxConstraints(maxWidth: bubbleMaxWidth, minWidth: 80),
             decoration: BoxDecoration(
               color: outgoing ? colors.outgoingBubble : colors.incomingBubble,
               borderRadius: BorderRadius.only(
@@ -364,7 +474,10 @@ class MessageBubble extends ConsumerWidget {
               SizedBox(
                 width: 40,
                 child: showTail && message.senderId is td.MessageSenderUser
-                    ? UserAvatar(userId: (message.senderId as td.MessageSenderUser).userId, size: 34, showOnline: false)
+                    ? GestureDetector(
+                        onTap: () => openSenderProfile(context, account, message.senderId),
+                        child: UserAvatar(userId: (message.senderId as td.MessageSenderUser).userId, size: 34, showOnline: false),
+                      )
                     : null,
               ),
             Flexible(
@@ -495,21 +608,52 @@ class _ForwardHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
-    final name = switch (info.origin) {
-      td.MessageOriginUser(:final senderUserId) => account.userName(senderUserId),
-      td.MessageOriginChat(:final senderChatId) => account.chats[senderChatId]?.title ?? '',
-      td.MessageOriginChannel(:final chatId) => account.chats[chatId]?.title ?? '',
-      td.MessageOriginHiddenUser(:final senderName) => senderName,
-      _ => '',
+    final color = Theme.of(context).colorScheme.primary;
+    const avatarSize = 20.0;
+    // Name, avatar and where a tap leads: the person's profile, or the channel at the original post.
+    final (String name, Widget? avatar, VoidCallback? onTap) = switch (info.origin) {
+      td.MessageOriginUser(:final senderUserId) => (
+          account.userName(senderUserId),
+          UserAvatar(userId: senderUserId, size: avatarSize, showOnline: false),
+          () => openSenderProfile(context, account, td.MessageSenderUser(userId: senderUserId)),
+        ),
+      td.MessageOriginChat(:final senderChatId) => (
+          account.chats[senderChatId]?.title ?? '',
+          ChatAvatar(chatId: senderChatId, size: avatarSize, showOnline: false),
+          () => openChatFromContent(context, senderChatId),
+        ),
+      td.MessageOriginChannel(:final chatId, :final messageId) => (
+          account.chats[chatId]?.title ?? '',
+          ChatAvatar(chatId: chatId, size: avatarSize, showOnline: false),
+          () => openChatFromContent(context, chatId, messageId: messageId),
+        ),
+      td.MessageOriginHiddenUser(:final senderName) => (senderName, null, null),
+      _ => ('', null, null),
     };
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
-      child: Text.rich(
-        TextSpan(children: [
-          TextSpan(text: '${context.t('forwarded_from')}\n'),
-          TextSpan(text: name, style: const TextStyle(fontWeight: FontWeight.w600)),
-        ]),
-        style: TextStyle(fontSize: 13.5, color: Theme.of(context).colorScheme.primary),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(context.t('forwarded_from'), style: TextStyle(fontSize: 13.5, color: color)),
+          const SizedBox(height: 3),
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(avatarSize / 2),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (avatar != null) ...[avatar, const SizedBox(width: 6)],
+              Flexible(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color),
+                ),
+              ),
+            ]),
+          ),
+        ],
       ),
     );
   }
@@ -546,6 +690,20 @@ class _ReplyHeader extends ConsumerWidget {
             : (inlineContent != null
                 ? (contentPreview(inlineContent, s) ?? s.t('message'))
                 : (repliedState.isLoading ? '…' : s.t('deleted_message'))));
+    final thumb = replyThumb(replied?.content ?? inlineContent);
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (name.isNotEmpty)
+          Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 13.5)),
+        Text(
+          (thumb == null ? preview : withoutMediaEmoji(preview)).replaceAll('\n', ' '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13.5),
+        ),
+      ],
+    );
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -556,14 +714,9 @@ class _ReplyHeader extends ConsumerWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border(left: BorderSide(color: primary, width: 3)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (name.isNotEmpty)
-              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: primary, fontWeight: FontWeight.w600, fontSize: 13.5)),
-            Text(preview.replaceAll('\n', ' '), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5)),
-          ],
-        ),
+        child: thumb == null
+            ? text
+            : Row(mainAxisSize: MainAxisSize.min, children: [thumb, const SizedBox(width: 8), Flexible(child: text)]),
       ),
     );
   }

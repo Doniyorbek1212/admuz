@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
@@ -18,6 +19,7 @@ import '../../core/link_safety.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/live_location.dart';
+import '../../core/time_capsule.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -25,6 +27,7 @@ import '../../state/link_policy.dart';
 import '../../state/playback.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
+import '../../state/telegram.dart' show TelegramAccount;
 import '../../widgets/common.dart';
 import '../../widgets/custom_emoji.dart';
 import '../../widgets/map_thumbnail.dart';
@@ -39,11 +42,13 @@ import 'bot_keyboard.dart';
 import 'link_router.dart';
 import 'media_gallery.dart';
 import 'media_viewers.dart';
+import 'phone_chat_button.dart' show openPhoneNumber;
 import 'message_extras.dart';
 import 'message_tools.dart';
 import 'rich_message.dart';
 import '../calls/conference_calls.dart' show GroupCallMessageView;
 import 'sticker_sets.dart';
+import 'time_capsule_view.dart';
 import 'video_note_view.dart';
 
 /// Picks the photo size best suited for a bubble (around 800px wide).
@@ -52,6 +57,65 @@ td.PhotoSize? bestPhotoSize(td.Photo photo, {int target = 800}) {
   final sorted = [...photo.sizes]..sort((a, b) => a.width.compareTo(b.width));
   return sorted.firstWhere((s) => s.width >= target, orElse: () => sorted.last);
 }
+
+/// Small picture of a photo, video or GIF for reply quotes and the reply bar, as Telegram shows it;
+/// null for content without one.
+Widget? replyThumb(td.MessageContent? content, {double size = 36}) {
+  final (file, mini) = switch (content) {
+    td.MessagePhoto(:final photo) => (bestPhotoSize(photo, target: 160)?.photo, photo.minithumbnail),
+    td.MessageVideo(:final video) => (video.thumbnail?.file, video.minithumbnail),
+    td.MessageAnimation(:final animation) => (animation.thumbnail?.file, animation.minithumbnail),
+    _ => (null, null),
+  };
+  if (file == null && mini == null) return null;
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(4),
+    child: SizedBox.square(
+      dimension: size,
+      child: file == null
+          ? Image.memory(base64Decode(mini!.data), fit: BoxFit.cover, gaplessPlayback: true)
+          : TdImage(file: file, minithumbnail: mini, fit: BoxFit.cover),
+    ),
+  );
+}
+
+/// Share of a file sent or received so far (0..1); null while nothing is moving.
+double? transferProgress(td.File file) {
+  final total = file.size == 0 ? file.expectedSize : file.size;
+  if (total <= 0) return null;
+  if (file.remote.isUploadingActive) return (file.remote.uploadedSize / total).clamp(0.0, 1.0);
+  if (file.local.isDownloadingActive) return (file.local.downloadedSize / total).clamp(0.0, 1.0);
+  return null;
+}
+
+String percentText(double share) => '${(share * 100).floor()}%';
+
+/// Ring with the percentage over a photo or video while it uploads or downloads, as Telegram shows it.
+class _TransferOverlay extends ConsumerWidget {
+  const _TransferOverlay({required this.file});
+
+  final td.File file;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final progress = transferProgress(ref.watch(fileStateProvider(file.id)).value ?? file);
+    if (progress == null) return const SizedBox.shrink();
+    return Center(
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+        child: Stack(alignment: Alignment.center, children: [
+          SizedBox.square(dimension: 54, child: CircularProgressIndicator(value: progress, strokeWidth: 3, color: Colors.white)),
+          Text(percentText(progress), style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// The preview text without its leading 🖼/🎬/🎞, which [replyThumb] replaces.
+String withoutMediaEmoji(String preview) => preview.replaceFirst(RegExp(r'^(🖼|🎬|🎞) '), '');
 
 /// Renders a FormattedText with Telegram entities (links, mentions, bold, code, spoilers...).
 class FormattedTextView extends StatefulWidget {
@@ -71,6 +135,7 @@ class FormattedTextView extends StatefulWidget {
 class _FormattedTextViewState extends State<FormattedTextView> {
   final List<TapGestureRecognizer> _recognizers = [];
   final Set<int> _revealedSpoilers = {};
+  final Set<int> _openSections = {};
 
   @override
   void dispose() {
@@ -118,8 +183,14 @@ class _FormattedTextViewState extends State<FormattedTextView> {
       r.dispose();
     }
     _recognizers.clear();
-    final text = widget.text.text;
-    final entities = [...widget.text.entities]..sort((a, b) => a.offset.compareTo(b.offset));
+    final unlockAt = capsuleUnlockAt(widget.text);
+    if (unlockAt != null && DateTime.now().isBefore(unlockAt)) {
+      return CapsuleSealedView(unlockAt: unlockAt, onOpen: () => setState(() {}));
+    }
+    final formatted = unlockAt == null ? widget.text : capsuleBody(widget.text);
+    final text = formatted.text;
+    // Same start: the longer (outer) entity first, so a section keeps its bold headline inside it.
+    final entities = [...formatted.entities]..sort((a, b) => a.offset != b.offset ? a.offset.compareTo(b.offset) : b.length.compareTo(a.length));
     final linkColor = Theme.of(context).colorScheme.primary;
     final base = widget.style ?? DefaultTextStyle.of(context).style;
     final spans = <InlineSpan>[];
@@ -149,7 +220,7 @@ class _FormattedTextViewState extends State<FormattedTextView> {
       case td.TextEntityTypeEmailAddress():
         return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'mailto', path: part))));
       case td.TextEntityTypePhoneNumber():
-        return TextSpan(text: part, style: link, recognizer: _tap(() => launchUrl(Uri(scheme: 'tel', path: part))));
+        return TextSpan(text: part, style: link, recognizer: _tap(() => openPhoneNumber(context, part)));
       case td.TextEntityTypeBankCardNumber():
         return TextSpan(text: part, style: link, recognizer: _tap(() => showBankCardInfo(context, ProviderScope.containerOf(context, listen: false).read(accountProvider), part)));
       case td.TextEntityTypeMention():
@@ -190,7 +261,22 @@ class _FormattedTextViewState extends State<FormattedTextView> {
           style: revealed ? null : TextStyle(color: Colors.transparent, backgroundColor: base.color?.withValues(alpha: 0.35)),
           recognizer: _tap(() => setState(() => _revealedSpoilers.add(index))),
         );
-      case td.TextEntityTypeBlockQuote() || td.TextEntityTypeExpandableBlockQuote():
+      case td.TextEntityTypeExpandableBlockQuote():
+        // Collapsed section: its first line is the headline; a tap opens or closes the rest.
+        final cut = part.indexOf('\n');
+        final headline = cut < 0 ? part : part.substring(0, cut);
+        final rest = cut < 0 ? '' : part.substring(cut);
+        final open = _openSections.contains(index);
+        final toggle = _tap(() => setState(() => open ? _openSections.remove(index) : _openSections.add(index)));
+        return TextSpan(
+          recognizer: toggle,
+          children: [
+            TextSpan(text: headline, style: const TextStyle(fontWeight: FontWeight.w700), recognizer: toggle),
+            if (rest.isNotEmpty) TextSpan(text: open ? '  ▴' : '  ▾', style: TextStyle(color: linkColor, fontWeight: FontWeight.w700), recognizer: toggle),
+            if (open) TextSpan(text: rest, recognizer: toggle),
+          ],
+        );
+      case td.TextEntityTypeBlockQuote():
         return TextSpan(text: part, style: const TextStyle(fontStyle: FontStyle.italic));
       default:
         return TextSpan(text: part);
@@ -200,10 +286,13 @@ class _FormattedTextViewState extends State<FormattedTextView> {
 
 /// Media and special content of a message (text is rendered by the bubble).
 class MessageMedia extends ConsumerWidget {
-  const MessageMedia({super.key, required this.message, required this.maxWidth});
+  const MessageMedia({super.key, required this.message, required this.maxWidth, this.fillWidth = false});
 
   final td.Message message;
   final double maxWidth;
+
+  /// Photo/video takes the whole [maxWidth] (cropped to the height cap): a captioned bubble is as wide as its media.
+  final bool fillWidth;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -211,7 +300,8 @@ class MessageMedia extends ConsumerWidget {
     final verdict = ref.watch(settingsProvider.select((s) => s.fileGuard)).checkMessage(message, ref.read(accountProvider).myId);
     if (verdict != null) return _BlockedFileView(name: attachmentOf(content)!.name, verdict: verdict);
     return switch (content) {
-      td.MessagePhoto(:final photo, :final hasSpoiler) => _PhotoView(message: message, photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler),
+      td.MessagePhoto(:final photo, :final hasSpoiler) =>
+        _PhotoView(message: message, photo: photo, maxWidth: maxWidth, spoiler: hasSpoiler, fill: fillWidth),
       td.MessageVideo(:final video) => _VideoThumb(
           message: message,
           file: video.video,
@@ -221,6 +311,7 @@ class MessageMedia extends ConsumerWidget {
           height: video.height,
           duration: video.duration,
           maxWidth: maxWidth,
+          fill: fillWidth,
         ),
       td.MessageAnimation(:final animation) => _VideoThumb(
           file: animation.animation,
@@ -231,10 +322,22 @@ class MessageMedia extends ConsumerWidget {
           duration: animation.duration,
           maxWidth: maxWidth,
           isGif: true,
+          fill: fillWidth,
         ),
       td.MessageVideoNote(:final videoNote, :final isViewed) => VideoNoteView(message: message, videoNote: videoNote, isViewed: isViewed),
       td.MessageVoiceNote(:final voiceNote) => VoiceNoteView(message: message, voiceNote: voiceNote),
       td.MessageAudio(:final audio) => _AudioView(message: message, audio: audio),
+      // A video sent "as a file" shows and plays like a video (Telegram does the same); other formats stay files.
+      td.MessageDocument(:final document) when _playsInApp(document.mimeType) => _VideoThumb(
+          file: document.document,
+          thumbnail: document.thumbnail,
+          minithumbnail: document.minithumbnail,
+          width: document.thumbnail?.width ?? 0,
+          height: document.thumbnail?.height ?? 0,
+          duration: 0,
+          maxWidth: maxWidth,
+          fill: fillWidth,
+        ),
       td.MessageDocument(:final document) => _FileView(
           message: message,
           file: document.document,
@@ -257,6 +360,7 @@ class MessageMedia extends ConsumerWidget {
       td.MessageCall(:final isVideo, :final duration) => _CallView(isVideo: isVideo, duration: duration, outgoing: message.isOutgoing),
       td.MessageInvoice() => InvoiceView(message: message),
       td.MessageAnimatedEmoji(:final animatedEmoji) when animatedEmoji.sticker != null => _AnimatedEmojiView(message: message, sticker: animatedEmoji.sticker!),
+      td.MessageUnsupported() => _UnsupportedView(message: message),
       td.MessageAnimatedEmoji(:final emoji) || td.MessageDice(:final emoji) =>
         Text(emoji, style: const TextStyle(fontSize: 56)),
       _ => const SizedBox.shrink(),
@@ -304,8 +408,12 @@ class _BlockedFileView extends StatelessWidget {
   }
 }
 
-Size _fit(int width, int height, double maxWidth, {double maxHeight = 380}) {
+/// Video files the in-app player can open on this platform (Android's player also takes webm/mkv and others).
+bool _playsInApp(String mimeType) => mimeType == 'video/mp4' || mimeType == 'video/quicktime' || (Platform.isAndroid && mimeType.startsWith('video/'));
+
+Size _fit(int width, int height, double maxWidth, {double maxHeight = 380, bool fill = false}) {
   if (width <= 0 || height <= 0) return Size(maxWidth, maxWidth * 0.75);
+  if (fill) return Size(maxWidth, (maxWidth * height / width).clamp(80.0, maxHeight));
   var w = maxWidth;
   var h = w * height / width;
   if (h > maxHeight) {
@@ -315,14 +423,31 @@ Size _fit(int width, int height, double maxWidth, {double maxHeight = 380}) {
   return Size(max(w, 120), max(h, 80));
 }
 
+/// Width a single photo/video/GIF takes in its bubble on its own; null for other content.
+double? mediaWidth(td.MessageContent content, double maxWidth) => switch (content) {
+      td.MessagePhoto(:final photo) => switch (bestPhotoSize(photo)) {
+          final size? => _fit(size.width, size.height, maxWidth).width,
+          null => null,
+        },
+      td.MessageVideo(:final video) => _fit(video.width, video.height, maxWidth).width,
+      td.MessageAnimation(:final animation) => _fit(animation.width, animation.height, maxWidth).width,
+      td.MessageDocument(:final document) when _playsInApp(document.mimeType) =>
+        _fit(document.thumbnail?.width ?? 0, document.thumbnail?.height ?? 0, maxWidth).width,
+      _ => null,
+    };
+
+/// A video sent as a file that is shown as a video (edge-to-edge media bubble).
+bool isVideoDocument(td.MessageContent content) => content is td.MessageDocument && _playsInApp(content.document.mimeType);
+
 class _PhotoView extends StatefulWidget {
-  const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler});
+  const _PhotoView({required this.message, required this.photo, required this.maxWidth, required this.spoiler, this.fill = false});
 
   final td.Message message;
 
   final td.Photo photo;
   final double maxWidth;
   final bool spoiler;
+  final bool fill;
 
   @override
   State<_PhotoView> createState() => _PhotoViewState();
@@ -336,7 +461,7 @@ class _PhotoViewState extends State<_PhotoView> {
   Widget build(BuildContext context) {
     final size = bestPhotoSize(widget.photo);
     if (size == null) return const SizedBox.shrink();
-    final box = _fit(size.width, size.height, widget.maxWidth);
+    final box = _fit(size.width, size.height, widget.maxWidth, fill: widget.fill);
     return Consumer(builder: (context, ref, _) {
       final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
       final download = auto || _requested || size.photo.local.isDownloadingCompleted;
@@ -360,6 +485,7 @@ class _PhotoViewState extends State<_PhotoView> {
             fit: StackFit.expand,
             children: [
               _hidden ? ImageFiltered(imageFilter: _blur, child: image) : image,
+              _TransferOverlay(file: size.photo),
               if (!download)
                 Center(
                   child: Container(
@@ -392,6 +518,7 @@ class _VideoThumb extends ConsumerWidget {
     required this.duration,
     required this.maxWidth,
     this.isGif = false,
+    this.fill = false,
   });
 
   /// Set for videos in chats: opens the swipeable media viewer instead of the single-file player.
@@ -404,24 +531,30 @@ class _VideoThumb extends ConsumerWidget {
   final int duration;
   final double maxWidth;
   final bool isGif;
+  final bool fill;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final box = _fit(width, height, maxWidth);
+    final box = _fit(width, height, maxWidth, fill: fill);
     final thumb = thumbnail;
     Widget preview = thumb != null && thumb.format is! td.ThumbnailFormatMpeg4
         ? TdImage(file: thumb.file, minithumbnail: minithumbnail, width: box.width, height: box.height)
         : Container(width: box.width, height: box.height, color: Colors.black26);
+    // Auto-download off: nothing is fetched until tapped; files already on the device still play inline.
+    final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
+    td.File watchFile(bool download) => (download ? ref.watch(fileProvider(file.id)).value : ref.watch(fileStateProvider(file.id)).value) ?? file;
     if (isGif && ref.watch(motionProvider.select((m) => m.gifs))) {
       // GIFs are small MP4s: download and loop them inline like Telegram.
-      final current = ref.watch(fileProvider(file.id)).value ?? file;
+      final current = watchFile(auto);
       if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
         return GestureDetector(
           onTap: () => openVideoPlayer(context, file, loop: true),
           child: SizedBox(
             width: box.width,
             height: box.height,
-            child: ClipRect(child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview)),
+            child: ClipRect(
+              child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview, fit: BoxFit.cover),
+            ),
           ),
         );
       }
@@ -431,7 +564,7 @@ class _VideoThumb extends ConsumerWidget {
     if (!isGif && ref.watch(motionProvider.select((m) => m.videos))) {
       // Like Telegram/aka: videos play muted in the bubble; small ones download for it on their own.
       final small = (file.size == 0 ? file.expectedSize : file.size) <= _inlineAutoplayMaxBytes;
-      final current = (small ? ref.watch(fileProvider(file.id)).value : ref.watch(_fileStateProvider(file.id)).value) ?? file;
+      final current = watchFile(small && auto);
       if (current.local.isDownloadingCompleted && current.local.path.isNotEmpty) {
         return GestureDetector(
           onTap: open,
@@ -441,7 +574,11 @@ class _VideoThumb extends ConsumerWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ClipRect(child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview)),
+                ClipRect(
+                  child: LoopingVideo(key: ValueKey(current.local.path), path: current.local.path, fallback: preview, fit: BoxFit.cover),
+                ),
+                // A video being sent is already on the device: it plays here while the ring shows the upload.
+                _TransferOverlay(file: file),
                 Positioned(
                   left: 8,
                   top: 8,
@@ -451,8 +588,11 @@ class _VideoThumb extends ConsumerWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(formatDuration(Duration(seconds: duration)), style: const TextStyle(color: Colors.white, fontSize: 12.5)),
-                        const SizedBox(width: 4),
+                        // Video files carry no duration.
+                        if (duration > 0) ...[
+                          Text(formatDuration(Duration(seconds: duration)), style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                          const SizedBox(width: 4),
+                        ],
                         const Icon(Icons.volume_off_rounded, color: Colors.white, size: 15),
                       ],
                     ),
@@ -464,17 +604,21 @@ class _VideoThumb extends ConsumerWidget {
         );
       }
     }
+    final moving = transferProgress(watchFile(false)) != null;
     return GestureDetector(
       onTap: open,
       child: Stack(
         alignment: Alignment.center,
         children: [
           preview,
-          Container(
-            decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
-            padding: const EdgeInsets.all(10),
-            child: Icon(isGif ? Icons.gif_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 30),
-          ),
+          if (moving)
+            _TransferOverlay(file: file)
+          else
+            Container(
+              decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+              padding: const EdgeInsets.all(10),
+              child: Icon(isGif ? Icons.gif_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 30),
+            ),
           Positioned(
             left: 8,
             top: 8,
@@ -485,10 +629,15 @@ class _VideoThumb extends ConsumerWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Not on this device yet: the arrow says tapping downloads it (aka/Telegram pill).
-                  if (!isGif && !(ref.watch(fileProvider(file.id)).value ?? file).local.isDownloadingCompleted)
+                  if (!isGif && !watchFile(false).local.isDownloadingCompleted)
                     const Padding(padding: EdgeInsets.only(right: 3), child: Icon(Icons.arrow_downward_rounded, size: 14, color: Colors.white)),
                   Text(
-                    isGif ? 'GIF' : '${formatDuration(Duration(seconds: duration))}  ${formatFileSize(file.size == 0 ? file.expectedSize : file.size)}',
+                    isGif
+                        ? 'GIF'
+                        : [
+                            if (duration > 0) formatDuration(Duration(seconds: duration)),
+                            formatFileSize(file.size == 0 ? file.expectedSize : file.size),
+                          ].join('  '),
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ],
@@ -517,7 +666,8 @@ class _FileView extends ConsumerWidget {
     final total = current.size == 0 ? current.expectedSize : current.size;
     final done = current.local.isDownloadingCompleted;
     final downloading = current.local.isDownloadingActive;
-    final progress = total > 0 ? current.local.downloadedSize / total : null;
+    final progress = transferProgress(current);
+    final moved = current.remote.isUploadingActive ? current.remote.uploadedSize : current.local.downloadedSize;
     final primary = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: () async {
@@ -543,7 +693,7 @@ class _FileView extends ConsumerWidget {
                 alignment: Alignment.center,
                 children: [
                   CircleAvatar(radius: 24, backgroundColor: primary, child: Icon(done ? icon : (downloading ? Icons.close_rounded : Icons.download_rounded), color: Colors.white)),
-                  if (downloading) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
+                  if (progress != null) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
                 ],
               ),
             ),
@@ -555,7 +705,7 @@ class _FileView extends ConsumerWidget {
                   Text(name.isEmpty ? context.t('file') : name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(
-                    downloading ? '${formatFileSize(current.local.downloadedSize)} / ${formatFileSize(total)}' : formatFileSize(total),
+                    progress != null ? '${percentText(progress)} · ${formatFileSize(moved)} / ${formatFileSize(total)}' : formatFileSize(total),
                     style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor),
                   ),
                 ],
@@ -581,6 +731,8 @@ class _AnimatedEmojiView extends ConsumerWidget {
   final td.Sticker sticker;
 
   Future<void> _play(BuildContext context, WidgetRef ref) async {
+    // The click shows the partner "watching the emoji"; ghost mode keeps that activity hidden.
+    if (ref.read(settingsProvider).ghostMode) return;
     td.Sticker? effect;
     try {
       effect = await ref.read(accountProvider).send<td.Sticker>(td.ClickAnimatedEmojiMessage(chatId: message.chatId, messageId: message.id));
@@ -661,10 +813,11 @@ class _StickerView extends ConsumerWidget {
 
 /// Silent looping video (WebM stickers, GIF previews).
 class LoopingVideo extends StatefulWidget {
-  const LoopingVideo({super.key, required this.path, required this.fallback, this.autoplay = true});
+  const LoopingVideo({super.key, required this.path, required this.fallback, this.autoplay = true, this.fit = BoxFit.contain});
 
   final String path;
   final Widget fallback;
+  final BoxFit fit;
 
   /// false: shows the first frame without playing.
   final bool autoplay;
@@ -705,7 +858,7 @@ class _LoopingVideoState extends State<LoopingVideo> {
   Widget build(BuildContext context) {
     if (!_ready) return widget.fallback;
     return FittedBox(
-      fit: BoxFit.contain,
+      fit: widget.fit,
       child: SizedBox(width: _controller.value.size.width, height: _controller.value.size.height, child: VideoPlayer(_controller)),
     );
   }
@@ -841,7 +994,73 @@ class _ContactView extends ConsumerWidget {
 }
 
 /// Hook set by the chat screen so content widgets can open chats without importing navigation.
-void Function(BuildContext context, int chatId) openChatFromContent = (_, _) {};
+void Function(BuildContext context, int chatId, {int? messageId}) openChatFromContent = (_, _, {messageId}) {};
+
+/// Content this TDLib build does not know yet (e.g. Bot API HTML widgets): says so instead of an empty bubble,
+/// and opens the message in the Telegram app when it has a public link.
+class _UnsupportedView extends ConsumerWidget {
+  const _UnsupportedView({required this.message});
+
+  final td.Message message;
+
+  Future<void> _openInTelegram(BuildContext context, TelegramAccount account) async {
+    final link = await guard(
+      context,
+      () => account.send<td.MessageLink>(td.GetMessageLink(
+        chatId: message.chatId,
+        messageId: message.id,
+        mediaTimestamp: 0,
+        checklistTaskId: 0,
+        pollOptionId: '',
+        forAlbum: false,
+        inMessageThread: false,
+      )),
+    );
+    final uri = link == null ? null : Uri.tryParse(link.link);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final account = ref.read(accountProvider);
+    // Only supergroups and channels have message links; private and basic group chats do not.
+    final chat = account.chats[message.chatId];
+    final linkable = chat != null && chat.type is td.ChatTypeSupergroup;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(shape: BoxShape.circle, gradient: brandGradient(theme.colorScheme.primary, vertical: true)),
+                child: const Icon(Icons.widgets_rounded, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(s.t('unsupported_message'), style: const TextStyle(fontWeight: FontWeight.w700))),
+            ]),
+            const SizedBox(height: 6),
+            Text(s.t('unsupported_hint'), style: TextStyle(fontSize: 13, color: theme.hintColor)),
+            if (linkable)
+              TextButton.icon(
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                onPressed: () => _openInTelegram(context, account),
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: Text(s.t('unsupported_open')),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _CallView extends StatelessWidget {
   const _CallView({required this.isVideo, required this.duration, required this.outgoing});
@@ -893,7 +1112,9 @@ class VoiceNoteView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
-    final file = ref.watch(fileProvider(voiceNote.voice.id)).value ?? voiceNote.voice;
+    // Playing downloads it anyway (Playback.playMessage); fetch ahead only with auto-download on.
+    final auto = ref.watch(settingsProvider.select((s) => s.autoDownloadPhotos));
+    final file = (auto ? ref.watch(fileProvider(voiceNote.voice.id)).value : ref.watch(fileStateProvider(voiceNote.voice.id)).value) ?? voiceNote.voice;
     final primary = Theme.of(context).colorScheme.primary;
     final samples = decodeWaveform(voiceNote.waveform);
     final playback = Playback.instance;
@@ -1017,6 +1238,8 @@ class _AudioView extends ConsumerWidget {
     final file = ref.watch(_fileStateProvider(fileId)).value ?? account.files[fileId] ?? audio.audio;
     final downloading = file.local.isDownloadingActive;
     final total = file.size == 0 ? file.expectedSize : file.size;
+    final progress = transferProgress(file);
+    final moved = file.remote.isUploadingActive ? file.remote.uploadedSize : file.local.downloadedSize;
     final primary = Theme.of(context).colorScheme.primary;
     final hintStyle = TextStyle(fontSize: 13, color: Theme.of(context).hintColor);
     final playback = Playback.instance;
@@ -1058,8 +1281,7 @@ class _AudioView extends ConsumerWidget {
                           backgroundColor: primary,
                           child: Icon(downloading ? Icons.close_rounded : (playing ? Icons.pause_rounded : Icons.play_arrow_rounded), color: Colors.white, size: 28),
                         ),
-                        if (downloading)
-                          CircularProgressIndicator(value: total > 0 ? file.local.downloadedSize / total : null, strokeWidth: 2.5, color: Colors.white),
+                        if (progress != null) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: Colors.white),
                       ],
                     ),
                   ),
@@ -1096,8 +1318,8 @@ class _AudioView extends ConsumerWidget {
                               ),
                             ),
                           Text(
-                            downloading
-                                ? '${formatFileSize(file.local.downloadedSize)} / ${formatFileSize(total)}'
+                            progress != null
+                                ? '${percentText(progress)} · ${formatFileSize(moved)} / ${formatFileSize(total)}'
                                 : isCurrent
                                     ? [formatDuration(elapsed), if (totalMs > 0) formatDuration(duration)].join(' / ')
                                     : [if (totalMs > 0) formatDuration(duration), formatFileSize(total)].join(' · '),

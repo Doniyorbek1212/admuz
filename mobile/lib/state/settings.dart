@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/file_guard.dart';
 import '../core/keep_alive.dart';
+import '../core/message_tones.dart';
 import '../core/theme.dart' show isDesktop;
 
 /// Brand accents users can pick from (Plus Messenger style theming).
@@ -35,10 +36,12 @@ class AppSettings {
     this.bubbleRadius = 18,
     this.showTranslateButton = true,
     this.chatTypeTabs = false,
+    this.chatTabOrder = const [],
     this.keepMediaDays = 0,
-    this.autoDownloadPhotos = true,
+    this.autoDownloadPhotos = false,
     this.autoplayGifs = true,
     this.hiddenChatIds = const {},
+    this.hiddenHoldSeconds = 0,
     this.wallpaper = '',
     this.wallpaperPattern = true,
     this.fileGuard = const FileGuardSettings(),
@@ -59,6 +62,8 @@ class AppSettings {
     this.chatSounds = true,
     this.sendSound = 'swoosh',
     this.receiveSound = 'pop',
+    this.messageTone = 'default',
+    this.chatTones = const {},
   });
 
   final ThemeMode themeMode;
@@ -82,6 +87,9 @@ class AppSettings {
   /// Extra tabs filtering chats by type (users, groups, channels, bots, unread).
   final bool chatTypeTabs;
 
+  /// Chat list tab keys in the user's order ('main', 'type:private', 'folder:3'...); empty = the default order.
+  final List<String> chatTabOrder;
+
   /// Cached media not opened for this many days is deleted (0 = keep forever).
   final int keepMediaDays;
   final bool autoDownloadPhotos;
@@ -89,6 +97,10 @@ class AppSettings {
 
   /// Chats hidden from the chat lists (shown only in the passcode-protected "Hidden chats" screen).
   final Set<int> hiddenChatIds;
+
+  /// Secret way in: holding the chat list's search button this many seconds opens the hidden chats, and the
+  /// menu entries for them disappear; 0 = off (the menu shows them).
+  final int hiddenHoldSeconds;
 
   /// Chat background: '' default, 'color:AARRGGBB', 'gradient:N' or 'file:/path'.
   final String wallpaper;
@@ -134,6 +146,12 @@ class AppSettings {
   final String sendSound;
   final String receiveSound;
 
+  /// Notification tone for new messages (ids from MessageTones.ids) and per-chat overrides.
+  final String messageTone;
+  final Map<int, String> chatTones;
+
+  String toneFor(int chatId) => chatTones[chatId] ?? messageTone;
+
   Color get accent => accentPalette[accentIndex.clamp(0, accentPalette.length - 1)];
 
   AppSettings copyWith({
@@ -151,10 +169,12 @@ class AppSettings {
     double? bubbleRadius,
     bool? showTranslateButton,
     bool? chatTypeTabs,
+    List<String>? chatTabOrder,
     int? keepMediaDays,
     bool? autoDownloadPhotos,
     bool? autoplayGifs,
     Set<int>? hiddenChatIds,
+    int? hiddenHoldSeconds,
     String? wallpaper,
     bool? wallpaperPattern,
     FileGuardSettings? fileGuard,
@@ -175,6 +195,8 @@ class AppSettings {
     bool? chatSounds,
     String? sendSound,
     String? receiveSound,
+    String? messageTone,
+    Map<int, String>? chatTones,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -191,10 +213,12 @@ class AppSettings {
         bubbleRadius: bubbleRadius ?? this.bubbleRadius,
         showTranslateButton: showTranslateButton ?? this.showTranslateButton,
         chatTypeTabs: chatTypeTabs ?? this.chatTypeTabs,
+        chatTabOrder: chatTabOrder ?? this.chatTabOrder,
         keepMediaDays: keepMediaDays ?? this.keepMediaDays,
         autoDownloadPhotos: autoDownloadPhotos ?? this.autoDownloadPhotos,
         autoplayGifs: autoplayGifs ?? this.autoplayGifs,
         hiddenChatIds: hiddenChatIds ?? this.hiddenChatIds,
+        hiddenHoldSeconds: hiddenHoldSeconds ?? this.hiddenHoldSeconds,
         wallpaper: wallpaper ?? this.wallpaper,
         wallpaperPattern: wallpaperPattern ?? this.wallpaperPattern,
         fileGuard: fileGuard ?? this.fileGuard,
@@ -215,6 +239,8 @@ class AppSettings {
         chatSounds: chatSounds ?? this.chatSounds,
         sendSound: sendSound ?? this.sendSound,
         receiveSound: receiveSound ?? this.receiveSound,
+        messageTone: messageTone ?? this.messageTone,
+        chatTones: chatTones ?? this.chatTones,
       );
 }
 
@@ -245,10 +271,13 @@ class SettingsNotifier extends Notifier<AppSettings> {
       bubbleRadius: _prefs.getDouble('bubbleRadius') ?? 18,
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
       chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,
+      chatTabOrder: _prefs.getStringList('chatTabOrder') ?? const [],
       keepMediaDays: _prefs.getInt('keepMediaDays') ?? 0,
-      autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? true,
+      // Off until the user turns it on: saves traffic; photos load on tap.
+      autoDownloadPhotos: _prefs.getBool('autoDownloadPhotos') ?? false,
       autoplayGifs: _prefs.getBool('autoplayGifs') ?? true,
       hiddenChatIds: {for (final id in _prefs.getStringList('hiddenChats') ?? const <String>[]) ?int.tryParse(id)},
+      hiddenHoldSeconds: _prefs.getInt('hiddenHoldSeconds') ?? 0,
       wallpaper: _prefs.getString('wallpaper') ?? '',
       wallpaperPattern: _prefs.getBool('wallpaperPattern') ?? true,
       fileGuard: FileGuardSettings(
@@ -274,7 +303,24 @@ class SettingsNotifier extends Notifier<AppSettings> {
       chatSounds: _prefs.getBool('chatSounds') ?? true,
       sendSound: _prefs.getString('sendSound') ?? 'swoosh',
       receiveSound: _prefs.getString('receiveSound') ?? 'pop',
+      messageTone: _prefs.getString(MessageTones.globalKey) ?? 'default',
+      chatTones: {
+        for (final key in _prefs.getKeys().where((k) => k.startsWith(MessageTones.chatKeyPrefix)))
+          if (int.tryParse(key.substring(MessageTones.chatKeyPrefix.length)) case final int id) id: _prefs.getString(key) ?? 'default',
+      },
     );
+  }
+
+  void setMessageTone(String tone) {
+    _prefs.setString(MessageTones.globalKey, tone);
+    state = state.copyWith(messageTone: tone);
+  }
+
+  /// null = follow the global tone. Kept in SharedPreferences so the push isolate can read it.
+  void setChatTone(int chatId, String? tone) {
+    final key = MessageTones.chatKey(chatId);
+    tone == null ? _prefs.remove(key) : _prefs.setString(key, tone);
+    state = state.copyWith(chatTones: {...state.chatTones}..remove(chatId)..addAll({chatId: ?tone}));
   }
 
   void setChatSounds(bool value) {
@@ -341,6 +387,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
     'ghostMode',
     'quickReaction',
     'chatTypeTabs',
+    'chatTabOrder',
     'sendByEnter',
     'fontFamily',
   ];
@@ -466,6 +513,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     state = state.copyWith(hiddenChatIds: next);
   }
 
+  void setHiddenHoldSeconds(int seconds) {
+    _prefs.setInt('hiddenHoldSeconds', seconds);
+    state = state.copyWith(hiddenHoldSeconds: seconds);
+  }
+
   void setWallpaperPattern(bool value) {
     _prefs.setBool('wallpaperPattern', value);
     state = state.copyWith(wallpaperPattern: value);
@@ -479,6 +531,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
   void setChatTypeTabs(bool value) {
     _prefs.setBool('chatTypeTabs', value);
     state = state.copyWith(chatTypeTabs: value);
+  }
+
+  void setChatTabOrder(List<String> keys) {
+    _prefs.setStringList('chatTabOrder', keys);
+    state = state.copyWith(chatTabOrder: List.unmodifiable(keys));
   }
 
   void setShowTranslateButton(bool value) {

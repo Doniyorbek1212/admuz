@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/formatters.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../core/tdlib/td_client.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
@@ -103,7 +104,7 @@ class StoriesBar extends ConsumerWidget {
     final hasOwn = feed.any((e) => e.chatId == account.myId);
     return Container(
       height: 104,
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor, width: 0.5))),
+      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: brandGold, width: 1.2))),
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
@@ -564,14 +565,14 @@ class _StoryViewerState extends ConsumerState<StoryViewer> with SingleTickerProv
                     ),
                   if (story?.interactionInfo case final td.StoryInteractionInfo interaction when story!.canGetInteractions)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.visibility_rounded, color: Colors.white70, size: 18),
-                          const SizedBox(width: 6),
-                          Text(formatCount(interaction.viewCount), style: const TextStyle(color: Colors.white70)),
-                        ],
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: TextButton(
+                        onPressed: () async {
+                          _pause();
+                          await showStoryViewers(context, _account, story);
+                          if (mounted) _resume();
+                        },
+                        child: StoryStats(interaction: interaction, color: Colors.white70, size: 18),
                       ),
                     ),
                 ],

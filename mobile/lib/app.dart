@@ -8,21 +8,25 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import 'core/app_lock.dart';
 import 'core/calls/call_service.dart';
+import 'core/calls/call_session.dart' show CallPhase;
 import 'core/chat_sounds.dart';
 import 'core/file_guard.dart';
 import 'core/formatters.dart';
 import 'core/live_location.dart';
 import 'core/media_saver.dart';
+import 'core/message_tones.dart';
 import 'core/notifications.dart';
 import 'core/push.dart';
 import 'core/tdlib/td_client.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screens.dart';
+import 'features/calls/call_overlay.dart';
 import 'features/calls/call_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/home/home_shell.dart';
 import 'l10n/strings.dart';
 import 'state/actions.dart';
+import 'state/banned_channels.dart';
 import 'state/providers.dart';
 import 'state/settings.dart';
 import 'state/telegram.dart';
@@ -55,7 +59,7 @@ class SadoApp extends ConsumerWidget {
         data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(settings.textScale.clamp(0.85, 1.2))),
         child: CallbackShortcuts(
           bindings: {const SingleActivator(LogicalKeyboardKey.escape): () => _closeTopPage(ref)},
-          child: AppLockGate(child: child!),
+          child: AppLockGate(child: CallOverlay(child: child!)),
         ),
       ),
       home: const AuthGate(),
@@ -179,21 +183,38 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   Route<void>? _callRoute;
 
   /// Opens the call screen over everything when a call starts and closes it when the call is gone.
+  /// Back on the call screen only hides it; the "return to call" bar ([CallOverlay]) brings it back.
   void _onCallChanged() {
     final session = CallService.instance.current.value;
     final navigator = navigatorKey.currentState;
     if (navigator == null) return;
+    CallPresence.instance
+      ..onOpen = _openCallScreen
+      ..track(session, navigator.context.s);
     if (session != null && _callRoute == null) {
-      final route = MaterialPageRoute<void>(builder: (_) => CallScreen(session: session), fullscreenDialog: true);
-      _callRoute = route;
-      unawaited(navigator.push(route).whenComplete(() {
-        if (_callRoute == route) _callRoute = null;
-      }));
+      _openCallScreen();
     } else if (session == null && _callRoute != null) {
       final route = _callRoute!;
       _callRoute = null;
+      CallPresence.instance.screenOpen.value = false;
       if (route.isActive) navigator.removeRoute(route);
     }
+  }
+
+  void _openCallScreen() {
+    final session = CallService.instance.current.value;
+    final navigator = navigatorKey.currentState;
+    if (session == null || navigator == null || _callRoute != null) return;
+    final route = MaterialPageRoute<void>(builder: (_) => CallScreen(session: session), fullscreenDialog: true);
+    _callRoute = route;
+    CallPresence.instance.screenOpen.value = true;
+    unawaited(navigator.push(route).whenComplete(() {
+      if (_callRoute != route) return;
+      _callRoute = null;
+      CallPresence.instance.screenOpen.value = false;
+      // Back on the "call ended" / rating screen skips it instead of leaving a finished call behind.
+      if (session.phase == CallPhase.ended) CallService.instance.close(session);
+    }));
   }
 
   void _configureArchive(AppSettings settings) => _account.archive
@@ -226,9 +247,23 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
       return;
     }
     if (!mounted) return;
+    unawaited(_notify(message, settings, inForeground: inForeground));
+  }
+
+  Future<void> _notify(td.Message message, AppSettings settings, {required bool inForeground}) async {
+    // One message rings once: a push for it may have been shown already (or comes later and stays quiet),
+    // and the backlog TDLib delivers after a reconnect is not news.
+    final serverId = NotifiedMessages.serverId(message.id);
+    if (serverId > 0 && !await NotifiedMessages.claim(message.chatId, serverId)) return;
+    if (!mounted) return;
+    final tone = settings.toneFor(message.chatId);
+    // MIUI and others mute the notification of the app on screen; ring from the app instead.
+    if (inForeground) unawaited(MessageTones.play(tone));
     unawaited(MessageNotifier.instance.showMessage(
       account: _account,
       message: message,
+      tone: tone,
+      silent: inForeground,
       strings: Strings(settings.localeCode),
       // While a passcode is set, notifications never show message text.
       showPreview: settings.messagePreview && !ref.read(appLockProvider).enabled && !settings.hiddenChatIds.contains(message.chatId),
@@ -243,7 +278,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
     try {
       await _account.send<td.Ok>(td.CancelDownloadFile(fileId: attachment.file.id, onlyIfPending: false));
       if (attachment.file.local.downloadedSize > 0) await _account.send<td.Ok>(td.DeleteFile(fileId: attachment.file.id));
-      if (guard.autoDelete) {
+      // Scripts, macro documents and custom extensions are only folded: deleting those surprised people.
+      if (guard.autoDelete && (guard.checkMessage(message, _account.myId)?.deletable ?? false)) {
         final props = await _account.send<td.MessageProperties>(td.GetMessageProperties(chatId: message.chatId, messageId: message.id));
         if (props.canBeDeletedOnlyForSelf) {
           // Through the account so the archive does not keep the blocked file as "deleted".
@@ -286,6 +322,8 @@ class _SessionScopeState extends ConsumerState<_SessionScope> with WidgetsBindin
   @override
   Widget build(BuildContext context) {
     ref.listen(settingsProvider, (_, settings) => _configureArchive(settings));
+    // Loaded (and refreshed from the server) at start, so the first search is already filtered.
+    ref.listen(bannedChannelsProvider, (_, _) {});
     ref.listen(meProvider, (_, me) {
       if (me != null) {
         ref.read(accountSlotsProvider.notifier).setLabel(_account.slot, '${me.firstName} ${me.lastName}'.trim());

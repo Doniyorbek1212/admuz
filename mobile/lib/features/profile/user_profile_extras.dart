@@ -215,5 +215,5 @@ Future<String?> _askPassword(BuildContext context) {
         TextButton(onPressed: () => Navigator.pop(context, controller.text), child: Text(s.t('ok'))),
       ],
     ),
-  ).whenComplete(controller.dispose);
+  ); // controller not disposed: the dialog still rebuilds its field during the close animation; GC frees it.
 }

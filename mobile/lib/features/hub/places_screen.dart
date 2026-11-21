@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api/place_models.dart';
 import '../../core/api/sado_api.dart';
+import '../../core/interests.dart';
 import '../../l10n/strings.dart';
 import '../../state/settings.dart';
 import '../../widgets/common.dart';
@@ -38,6 +39,26 @@ class PlacesDistrictNotifier extends Notifier<String?> {
     district == null ? prefs.remove(key) : prefs.setString(key, district);
     state = district;
   }
+}
+
+/// Selects the region and district (tuman) the user stands in and returns them as "District, Region";
+/// null when the position is outside Uzbekistan. The server knows districts from nearby places; offline or
+/// in an area without known places only the region is picked, from the nearest regional centre.
+Future<String?> locateArea(WidgetRef ref, Position position) async {
+  ({String? region, String? district}) found = (region: null, district: null);
+  final api = ref.read(sadoApiProvider);
+  if (api.configured) {
+    try {
+      found = await api.locate(position.latitude, position.longitude);
+    } on ApiException catch (error) {
+      debugPrint('locate failed, using regional centres: $error');
+    }
+  }
+  final region = found.region ?? regionForPosition(position.latitude, position.longitude);
+  if (region == null) return null;
+  if (region != ref.read(hubRegionProvider)) ref.read(hubRegionProvider.notifier).select(region);
+  ref.read(placesDistrictProvider.notifier).select(found.region == null ? null : found.district);
+  return [if (found.region != null) ?found.district, region].join(', ');
 }
 
 final _regionsProvider = FutureProvider<List<PlaceRegion>>((ref) => ref.watch(sadoApiProvider).placeRegions());
@@ -153,7 +174,12 @@ class _PlacesScreenState extends ConsumerState<PlacesScreen> {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium, timeLimit: Duration(seconds: 15)),
       );
+      // Nearest means around the user, not inside the area picked earlier (Tashkent while standing in Chust):
+      // switch to the real region and district (tuman) of the position.
+      final area = await locateArea(ref, position);
       if (!mounted) return;
+      if (area == null) return showToast(context, s.t('hub_region_outside'));
+      showToast(context, s.t('hub_region_detected', {'region': area}));
       setState(() => _here = position);
       await _reload();
     } on Exception catch (error) {
@@ -296,6 +322,7 @@ class _PlacesScreenState extends ConsumerState<PlacesScreen> {
                       count: _counts[item.placeCategory],
                       selected: _category == item.placeCategory,
                       onTap: () {
+                        trackInterest(ref, item.placeCategory);
                         setState(() => _category = item.placeCategory);
                         _reload();
                       },
@@ -434,13 +461,13 @@ class PlaceIcon extends StatelessWidget {
 
 Future<void> callPlace(String phone) => launchUrl(Uri(scheme: 'tel', path: phone.replaceAll(RegExp(r'[^\d+]'), '')));
 
-class PlaceCard extends StatelessWidget {
+class PlaceCard extends ConsumerWidget {
   const PlaceCard({super.key, required this.place});
 
   final Place place;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final s = context.s;
     final theme = Theme.of(context);
     final hint = theme.hintColor;
@@ -454,7 +481,10 @@ class PlaceCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PlaceDetailScreen(place: place))),
+        onTap: () {
+          trackInterest(ref, place.category, kind: 'view');
+          Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PlaceDetailScreen(place: place)));
+        },
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(children: [

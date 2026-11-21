@@ -149,8 +149,9 @@ class PremiumInfoScreen extends ConsumerWidget {
           ),
           SettingsGroup(children: [for (final (icon, color, key) in _features) _Feature(icon, color, key)]),
           const PremiumCatalogSection(),
-          // Telegram's own Premium bot (name from the app config) also sells and gifts Premium.
-          FutureBuilder<Object?>(
+          // Telegram's own Premium bot (name from the app config) also sells and gifts Premium; a store build
+          // may not point to it (outside payment for a digital good).
+          if (!storeBlocksExternalPayments) FutureBuilder<Object?>(
             future: appConfigValue(ref.read(accountProvider), 'premium_bot_username'),
             builder: (context, snapshot) => switch (snapshot.data) {
               final String bot when bot.isNotEmpty => SettingsGroup(children: [

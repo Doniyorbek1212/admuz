@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -67,16 +68,25 @@ Map<String, String> _themeJson(td.ThemeParameters t) => {
       'button_text_color': _hex(t.buttonTextColor),
     };
 
+/// webview_flutter exists only on Android and iOS; elsewhere (Windows) a Mini App opens in the browser.
+bool get hasWebView => Platform.isAndroid || Platform.isIOS;
+
+/// Shows a Mini App page, or the page in the browser where there is no web view.
+Future<void> pushWebApp(BuildContext context, String url, WidgetBuilder screen) async {
+  if (!hasWebView) {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    return;
+  }
+  await Navigator.of(context).push(MaterialPageRoute<void>(fullscreenDialog: true, builder: screen));
+}
+
 /// Opens a Mini App from an inline keyboard button or a bot link.
 Future<void> openInlineWebApp(BuildContext context, WidgetRef ref, {required int chatId, required int botUserId, required String url}) async {
   final account = ref.read(accountProvider);
   final theme = themeParametersOf(context);
   final info = await guard(context, () => account.openWebApp(chatId, botUserId, url, theme));
   if (info == null || !context.mounted) return;
-  await Navigator.of(context).push(MaterialPageRoute<void>(
-    fullscreenDialog: true,
-    builder: (_) => WebAppScreen(url: info.url.url, botUserId: botUserId, launchId: info.launchId),
-  ));
+  await pushWebApp(context, info.url.url, (_) => WebAppScreen(url: info.url.url, botUserId: botUserId, launchId: info.launchId));
 }
 
 /// Opens a Mini App from a reply keyboard button; it may send data back to the bot.
@@ -85,10 +95,7 @@ Future<void> openKeyboardWebApp(BuildContext context, WidgetRef ref, {required i
   final theme = themeParametersOf(context);
   final appUrl = await guard(context, () => account.webAppUrl(botUserId, url, theme));
   if (appUrl == null || !context.mounted) return;
-  await Navigator.of(context).push(MaterialPageRoute<void>(
-    fullscreenDialog: true,
-    builder: (_) => WebAppScreen(url: appUrl, botUserId: botUserId, keyboardButtonText: buttonText),
-  ));
+  await pushWebApp(context, appUrl, (_) => WebAppScreen(url: appUrl, botUserId: botUserId, keyboardButtonText: buttonText));
 }
 
 /// Hosts a Telegram Mini App. Implements the subset of the WebView bridge most apps rely on: close,

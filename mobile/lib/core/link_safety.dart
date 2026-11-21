@@ -44,7 +44,27 @@ const _paymentHosts = {
 };
 
 /// Installable programs: fake "Payme"/"Click" APKs are the most common account and card theft in Uzbekistan.
-final _installerFile = RegExp(r'\.(apk|apks|xapk|exe|msi|scr|bat)$', caseSensitive: false);
+final _installerFile = RegExp(r'\.(apk|apks|xapk|apkm|exe|msi|scr|bat|vbs|hta|jar)$', caseSensitive: false);
+
+/// Government, marketplace, social and crypto brands that phishing domains imitate, with their real domains.
+final _otherBrand = RegExp(
+  r'my-?gov|gov-?uz|soliq|davxizmat|olx|uzum-?market|instagram|facebook|whatsapp|google|gmail|apple-?id|icloud|youtube|'
+  r'tonkeeper|binance|bybit|trustwallet|metamask|steam(?!ed)',
+);
+const _otherBrandHosts = {
+  'my.gov.uz', 'gov.uz', 'soliq.uz', 'olx.uz', 'uzum.uz', 'instagram.com', 'facebook.com', 'fb.com', 'whatsapp.com', 'whatsapp.net',
+  'google.com', 'google.co.uz', 'gmail.com', 'youtube.com', 'youtu.be', 'apple.com', 'icloud.com', 'tonkeeper.com', 'binance.com',
+  'bybit.com', 'trustwallet.com', 'metamask.io', 'steampowered.com', 'steamcommunity.com',
+};
+
+/// Words of prize, bonus and "verify your account" bait; on a throwaway zone they make the link dangerous.
+final _baitWords = RegExp(
+  r'login|signin|verify|secure|account|update|bonus|prize|gift|free|airdrop|promo|claim|reward|cashback|lottery|'
+  r'yutuq|sovga|sovrin|aksiya|bepul|tolov|karta|pul',
+);
+
+/// Schemes that run code or open other apps straight from a link.
+const _codeSchemes = {'javascript', 'data', 'vbscript', 'file', 'intent', 'content'};
 
 /// Short-link services hide where a link really goes.
 const _shorteners = {
@@ -127,6 +147,9 @@ LinkRisk assessLink(String url, {String? shownText, LinkPolicy policy = LinkPoli
 
 LinkRisk _baseRisk(String url, String? shownText) {
   final raw = url.trim();
+  // "javascript:…" has no "//", so it must be caught before a bare "domain.uz" gets an https:// prefix below.
+  final leading = RegExp(r'^([a-z][a-z0-9+.-]*):', caseSensitive: false).firstMatch(raw)?.group(1)?.toLowerCase();
+  if (_codeSchemes.contains(leading)) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_code_scheme');
   final uri = Uri.tryParse(raw.contains('://') ? raw : 'https://$raw');
   if (uri == null) return LinkRisk.safe;
   final scheme = uri.scheme.toLowerCase();
@@ -134,11 +157,17 @@ LinkRisk _baseRisk(String url, String? shownText) {
 
   if (scheme == 'tg') return _assessTelegram(host, uri.pathSegments, uri.queryParameters);
   if (_isTelegramShort(host)) return _assessTelegram(_tmeAction(uri), uri.pathSegments.skip(1).toList(), uri.queryParameters, firstSegment: uri.pathSegments.firstOrNull);
+  if (_codeSchemes.contains(scheme)) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_code_scheme');
   if (scheme != 'http' && scheme != 'https') {
     return const LinkRisk(LinkRiskLevel.caution, 'link_risk_scheme');
   }
 
-  if (host.contains('xn--')) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_punycode');
+  // "https://payme.uz@evil.site": everything before @ is a user name, the browser goes to evil.site.
+  if (uri.userInfo.isNotEmpty) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_userinfo');
+  // Punycode, or Cyrillic/Greek letters that look Latin ("раyme.uz"; Uri percent-encodes them in the host).
+  if (host.contains('xn--') || host.contains('%') || RegExp(r'[^\x00-\x7F]').hasMatch(host)) {
+    return const LinkRisk(LinkRiskLevel.danger, 'link_risk_punycode');
+  }
   if (!_telegramHosts.contains(host) && _telegramLookalike.hasMatch(host)) {
     return const LinkRisk(LinkRiskLevel.danger, 'link_risk_fake_telegram');
   }
@@ -149,10 +178,18 @@ LinkRisk _baseRisk(String url, String? shownText) {
       return const LinkRisk(LinkRiskLevel.danger, 'link_risk_mismatch');
     }
   }
-  if (_installerFile.hasMatch(uri.path)) return const LinkRisk(LinkRiskLevel.danger, 'link_risk_installer');
+  if (_installerFile.hasMatch(uri.path) || uri.queryParameters.values.any(_installerFile.hasMatch)) {
+    return const LinkRisk(LinkRiskLevel.danger, 'link_risk_installer');
+  }
   final bare = _bareHost(host);
   if (_paymentBrand.hasMatch(bare) && !_inDomains(bare, _paymentHosts)) {
     return const LinkRisk(LinkRiskLevel.danger, 'link_risk_fake_bank');
+  }
+  if (_otherBrand.hasMatch(bare) && !_inDomains(bare, _otherBrandHosts)) {
+    return const LinkRisk(LinkRiskLevel.danger, 'link_risk_fake_brand');
+  }
+  if (_throwawayZone.hasMatch(bare) && _baitWords.hasMatch(bare.replaceAll(RegExp('[^a-z]'), ''))) {
+    return const LinkRisk(LinkRiskLevel.danger, 'link_risk_bait');
   }
   if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host)) return const LinkRisk(LinkRiskLevel.caution, 'link_risk_ip');
   if (_shorteners.contains(bare)) return const LinkRisk(LinkRiskLevel.caution, 'link_risk_shortener');

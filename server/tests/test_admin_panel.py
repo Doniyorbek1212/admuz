@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import select
 
@@ -109,6 +110,8 @@ async def test_stats_count_users_shops_and_revenue(client, new_customer, session
     assert stats["revenue_uzs"]["total"] == 0
     assert len(stats["daily"]) == 30
     assert stats["daily"][-1]["new_users"] == 1
+    disk = stats["disk"]
+    assert disk["total_bytes"] > 0 and disk["used_bytes"] + disk["free_bytes"] <= disk["total_bytes"]
 
 
 async def test_support_hides_a_product_and_sees_shop_detail(client, new_customer, session_factory):
@@ -147,10 +150,10 @@ async def test_release_and_download_follow_the_uploaded_apk(client, session_fact
     assert "&lt;b&gt;" in page.text and "<b>tez orada</b>" not in page.text
 
 
-async def test_privacy_policy_is_public_html(client):
+async def test_privacy_policy_redirects_to_the_website(client):
     page = await client.get("/privacy")
-    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
-    assert "Privacy Policy" in page.text and "Maxfiylik siyosati" in page.text
+    assert page.status_code == 301
+    assert page.headers["location"] == "https://uzaromessenger.uz/privacy"
 
 
 async def test_admin_panel_is_served_with_strict_headers(client):
@@ -164,14 +167,14 @@ async def test_admin_panel_is_served_with_strict_headers(client):
 async def test_login_password_gives_a_session_that_logout_ends(client, session_factory):
     owner = await _admin(session_factory, name="boss")
     me = next(a for a in (await client.get("/v1/admin/admins", headers=owner)).json() if a["name"] == "boss")
-    resp = await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json={"login": "949392250", "password": "949392250"})
+    resp = await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json={"login": "949392250", "password": "Sado-Admin-2026"})
     assert resp.status_code == 200, resp.text
     async with session_factory() as db:
         stored = await db.scalar(select(AdminUser.password_hash).where(AdminUser.name == "boss"))
     assert stored.startswith("scrypt$") and "949392250" not in stored
 
     assert (await client.post("/v1/admin/login", json={"login": "949392250", "password": "wrong"})).status_code == 401
-    login = await client.post("/v1/admin/login", json={"login": "949392250", "password": "949392250"})
+    login = await client.post("/v1/admin/login", json={"login": "949392250", "password": "Sado-Admin-2026"})
     assert login.status_code == 200, login.text
     session = {"X-Admin-Key": login.json()["token"]}
     assert (await client.get("/v1/admin/me", headers=session)).json() == {"name": "boss", "role": "owner"}
@@ -179,11 +182,67 @@ async def test_login_password_gives_a_session_that_logout_ends(client, session_f
     assert (await client.post("/v1/admin/logout", headers=session)).status_code == 204
     assert (await client.get("/v1/admin/me", headers=session)).status_code == 401
 
+    # A password change ends the sessions opened with the old password.
+    session = {"X-Admin-Key": (await client.post("/v1/admin/login", json={"login": "949392250", "password": "Sado-Admin-2026"})).json()["token"]}
+    changed = await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json={"login": "949392250", "password": "new-pass-1"})
+    assert changed.status_code == 200, changed.text
+    assert (await client.get("/v1/admin/me", headers=session)).status_code == 401
+
 
 async def test_password_guessing_is_rate_limited(client, session_factory):
     statuses = [(await client.post("/v1/admin/login", json={"login": "949392250", "password": f"p{i}"})).status_code for i in range(11)]
     assert statuses[:10] == [401] * 10
     assert statuses[-1] == 429
+
+
+async def test_strangers_cannot_lock_an_admin_out_of_a_known_address(client, session_factory):
+    from app.main import app
+
+    owner = await _admin(session_factory, name="boss")
+    me = next(a for a in (await client.get("/v1/admin/admins", headers=owner)).json() if a["name"] == "boss")
+    good = {"login": "949392250", "password": "Sado-Admin-2026"}
+    await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json=good)
+    assert (await client.post("/v1/admin/login", json=good)).status_code == 200  # this address is now known
+
+    async def from_address(ip: str) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(ip, 4000)), base_url="http://test")
+
+    async with await from_address("203.0.113.9") as stranger, await from_address("198.51.100.4") as new_place:
+        # Other spellings of the same phone login share one counter.
+        for i, spelling in enumerate(["+998 94 939 22 50", "998949392250"] * 5):
+            assert (await stranger.post("/v1/admin/login", json={"login": spelling, "password": f"guess-{i}"})).status_code == 401
+        assert (await stranger.post("/v1/admin/login", json=good)).status_code == 429
+        assert (await new_place.post("/v1/admin/login", json=good)).status_code == 429
+    assert (await client.post("/v1/admin/login", json=good)).status_code == 200
+
+
+async def test_admin_passwords_must_be_long_and_not_the_login(client, session_factory):
+    owner = await _admin(session_factory, name="boss")
+    me = next(a for a in (await client.get("/v1/admin/admins", headers=owner)).json() if a["name"] == "boss")
+    for creds in ({"login": "949392250", "password": "short-pw"}, {"login": "+998949392250", "password": "998949392250"}):
+        resp = await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json=creds)
+        assert resp.status_code == 422, (creds, resp.text)
+
+
+async def test_admin_api_can_be_limited_to_networks(client, session_factory, monkeypatch):
+    owner = await _admin(session_factory, name="boss")
+    monkeypatch.setattr(get_settings(), "admin_allowed_ips", ["10.8.0.0/24"])
+    assert (await client.get("/v1/admin/me", headers=owner)).status_code == 403
+    assert (await client.post("/v1/admin/login", json={"login": "boss", "password": "Sado-Admin-2026"})).status_code == 403
+    monkeypatch.setattr(get_settings(), "admin_allowed_ips", ["10.8.0.0/24", "127.0.0.1"])
+    assert (await client.get("/v1/admin/me", headers=owner)).status_code == 200
+
+
+async def test_without_permanent_keys_only_login_sessions_work(client, session_factory, monkeypatch):
+    owner = await _admin(session_factory, name="boss")
+    me = next(a for a in (await client.get("/v1/admin/admins", headers=owner)).json() if a["name"] == "boss")
+    good = {"login": "boss-login", "password": "Sado-Admin-2026"}
+    await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json=good)
+    monkeypatch.setattr(get_settings(), "admin_permanent_keys", False)
+    assert (await client.get("/v1/admin/me", headers=owner)).status_code == 401
+    session = {"X-Admin-Key": (await client.post("/v1/admin/login", json=good)).json()["token"]}
+    created = await client.post("/v1/admin/admins", headers=session, json={"name": "helper", "role": "viewer"})
+    assert created.status_code == 201 and "key" not in created.json()
 
 
 async def test_deactivated_admin_cannot_log_in(client, session_factory):
@@ -197,9 +256,9 @@ async def test_deactivated_admin_cannot_log_in(client, session_factory):
 async def test_successful_logins_do_not_use_up_attempts_and_phone_spellings_match(client, session_factory):
     owner = await _admin(session_factory, name="boss")
     me = next(a for a in (await client.get("/v1/admin/admins", headers=owner)).json() if a["name"] == "boss")
-    await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json={"login": "949392250", "password": "949392250"})
+    await client.put(f"/v1/admin/admins/{me['id']}/credentials", headers=owner, json={"login": "949392250", "password": "Sado-Admin-2026"})
     for spelling in ["949392250", "+998 94 939 22 50", "998949392250"] * 5:
-        resp = await client.post("/v1/admin/login", json={"login": spelling, "password": "949392250"})
+        resp = await client.post("/v1/admin/login", json={"login": spelling, "password": "Sado-Admin-2026"})
         assert resp.status_code == 200, (spelling, resp.text)
 
 

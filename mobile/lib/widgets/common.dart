@@ -247,14 +247,43 @@ Widget? panelCloseButton(BuildContext context) => Navigator.canPop(context)
         onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
       );
 
+/// First 64 KB of a file: enough for executable headers and a ZIP's first entry names.
+Future<List<int>> _head(String path) async {
+  RandomAccessFile? file;
+  try {
+    file = await File(path).open();
+    return await file.read(64 * 1024);
+  } on FileSystemException {
+    return const [];
+  } finally {
+    await file?.close();
+  }
+}
+
 /// Every blockable kind except archives: files that run code when opened.
 const _programGuard = FileGuardSettings(categories: {'android', 'windows', 'apple', 'linux', 'scripts', 'macros'});
 
 /// Opens a downloaded file in the system's default app (desktop has no open_filex implementation).
 /// Programs and scripts ask first: on a PC "opening" one means running it.
 Future<void> openLocalFile(BuildContext context, String path, {String mimeType = ''}) async {
-  if (_programGuard.checkFile(path.split(RegExp(r'[\\/]')).last, mimeType) != null) {
-    final s = context.s;
+  final s = context.s;
+  final byName = _programGuard.checkFile(path.split(RegExp(r'[\\/]')).last, mimeType);
+  // A program under a harmless name ("Payme.pdf" that is really an APK) is the classic card-theft trap: never open it.
+  final byContent = byName == null ? sniffProgram(await _head(path)) : null;
+  if (!context.mounted) return;
+  if (byContent != null) {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(Icons.gpp_bad_rounded, color: Theme.of(context).colorScheme.error, size: 40),
+        title: Text(s.t('file_fake_program_title')),
+        content: Text(s.t('file_fake_program')),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(s.t('ok')))],
+      ),
+    );
+    return;
+  }
+  if (byName != null) {
     final ok = await confirm(context, title: s.t('open_program'), message: s.t('open_program_confirm'), destructive: true);
     if (!ok) return;
   }

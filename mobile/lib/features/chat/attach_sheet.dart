@@ -44,20 +44,22 @@ class AttachAction extends AttachChoice {
 
 /// Telegram's attach menu: recent photos and videos in a grid with numbered multi-select and a caption,
 /// the other attachment kinds in a bottom row.
-Future<AttachChoice?> showAttachSheet(BuildContext context, {List<td.AttachmentMenuBot> bots = const []}) =>
+/// With [asFiles] (the file tab's "Gallery") only the grid shows and the picks go out as files, uncompressed.
+Future<AttachChoice?> showAttachSheet(BuildContext context, {List<td.AttachmentMenuBot> bots = const [], bool asFiles = false}) =>
     showModalBottomSheet<AttachChoice>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _AttachSheet(bots: bots),
+      builder: (_) => _AttachSheet(bots: bots, asFiles: asFiles),
     );
 
 class _AttachSheet extends StatefulWidget {
-  const _AttachSheet({required this.bots});
+  const _AttachSheet({required this.bots, required this.asFiles});
 
   /// Mini Apps shown as extra tabs (Wallet and the like).
   final List<td.AttachmentMenuBot> bots;
+  final bool asFiles;
 
   @override
   State<_AttachSheet> createState() => _AttachSheetState();
@@ -97,7 +99,11 @@ class _AttachSheetState extends State<_AttachSheet> {
       return;
     }
     // The first path is "Recent" (all media); the rest are the device's folders.
-    final albums = await PhotoManager.getAssetPathList(type: RequestType.common);
+    // Newest first: without an explicit order some ROMs (MIUI) list the oldest photos first.
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.common,
+      filterOption: FilterOptionGroup(orders: const [OrderOption(type: OrderOptionType.createDate, asc: false)]),
+    );
     if (!mounted) return;
     setState(() {
       _hasAccess = true;
@@ -144,7 +150,7 @@ class _AttachSheetState extends State<_AttachSheet> {
     if (send == true) await _send();
   }
 
-  Future<void> _send({bool asFiles = false, bool silent = false}) async {
+  Future<void> _send({bool? asFiles, bool silent = false}) async {
     setState(() => _sending = true);
     final media = <PickedMedia>[];
     for (final asset in _selection.selected) {
@@ -161,7 +167,7 @@ class _AttachSheetState extends State<_AttachSheet> {
       ));
     }
     if (!mounted) return;
-    Navigator.pop(context, AttachMedia(media: media, caption: _selection.caption.text.trim(), asFiles: asFiles, silent: silent));
+    Navigator.pop(context, AttachMedia(media: media, caption: _selection.caption.text.trim(), asFiles: asFiles ?? widget.asFiles, silent: silent));
   }
 
   Future<void> _sendOptions() async {
@@ -214,7 +220,11 @@ class _AttachSheetState extends State<_AttachSheet> {
             Expanded(child: _gallery(scroll)),
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
-              child: _selection.selected.isEmpty ? _actionRow() : _captionBar(),
+              child: _selection.selected.isNotEmpty
+                  ? _captionBar()
+                  : widget.asFiles
+                      ? const SizedBox(key: ValueKey('none'), height: 12)
+                      : _actionRow(),
             ),
           ],
         ),
@@ -273,9 +283,14 @@ class _AttachSheetState extends State<_AttachSheet> {
       child: GridView.builder(
         controller: scroll,
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2),
-        itemCount: _assets.length + 1,
-        itemBuilder: (context, index) => index == 0 ? _cameraTile() : _assetTile(_assets[index - 1]),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 160, mainAxisSpacing: 2, crossAxisSpacing: 2),
+        // Sending files has no camera tile: a fresh shot would go out compressed.
+        itemCount: _assets.length + (widget.asFiles ? 0 : 1),
+        itemBuilder: (context, index) => widget.asFiles
+            ? _assetTile(_assets[index])
+            : index == 0
+                ? _cameraTile()
+                : _assetTile(_assets[index - 1]),
       ),
     );
   }

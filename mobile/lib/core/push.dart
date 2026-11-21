@@ -11,6 +11,7 @@ import 'package:tdlib_ex/td_api.dart' as td;
 
 import '../l10n/strings.dart';
 import '../state/telegram.dart';
+import 'message_tones.dart';
 import 'tdlib/td_client.dart';
 
 /// Telegram push notifications over Firebase Cloud Messaging (Android).
@@ -89,11 +90,14 @@ class PushService {
 
 /// Text of a Telegram push payload ({loc_key, loc_args, custom}) for a local notification.
 class PushContent {
-  const PushContent({required this.title, required this.body, required this.chatId});
+  const PushContent({required this.title, required this.body, required this.chatId, this.messageId});
 
   final String title;
   final String body;
   final int? chatId;
+
+  /// Server message id (Telegram's msg_id), for [NotifiedMessages].
+  final int? messageId;
 
   static Map<String, dynamic> _payload(Map<String, dynamic> data) {
     final nested = data['data'];
@@ -182,12 +186,10 @@ class PushContent {
     } else if (fromId != null) {
       chatId = fromId;
     }
-    return PushContent(title: title, body: body, chatId: chatId);
+    return PushContent(title: title, body: body, chatId: chatId, messageId: int.tryParse('${custom['msg_id'] ?? ''}'));
   }
 }
 
-/// Runs in a background isolate when a push arrives while the app is not in the foreground.
-@pragma('vm:entry-point')
 /// Which signed-in account a push notification belongs to (several accounts share one device token).
 int? pushReceiverId(String payloadJson) {
   final result = TdClient.executeStatic(td.GetPushReceiverId(payload: payloadJson));
@@ -195,14 +197,22 @@ int? pushReceiverId(String payloadJson) {
   return id is int ? id : (id is String ? int.tryParse(id) : null);
 }
 
+/// Runs in a background isolate when a push arrives while the app is not in the foreground.
+/// The pragma must sit on this function: without it the isolate cannot find it and every push fails.
+@pragma('vm:entry-point')
 Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   final prefs = await SharedPreferences.getInstance();
+  // This isolate may outlive a tone change made in the app.
+  await prefs.reload();
   if (!(prefs.getBool('notifications') ?? true)) return;
   final strings = Strings(prefs.getString('locale') ?? 'uz');
   // A locked app never reveals message text in notifications.
   final showPreview = (prefs.getBool('messagePreview') ?? true) && !(prefs.getBool('lock.enabled') ?? false);
   final content = PushContent.parse(message.data, strings, showPreview: showPreview);
   if (content == null) return;
+  // The app may still be running and have shown this message from TDLib's live update already.
+  final chatId = content.chatId, messageId = content.messageId;
+  if (chatId != null && messageId != null && !await NotifiedMessages.claim(chatId, messageId)) return;
   final plugin = FlutterLocalNotificationsPlugin();
   await plugin.initialize(settings: const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')));
   await plugin.show(
@@ -211,15 +221,29 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
     title: content.title,
     body: content.body,
     payload: content.chatId?.toString(),
-    notificationDetails: const NotificationDetails(
-      android: AndroidNotificationDetails(
-        'messages',
-        'Messages',
-        channelDescription: 'New messages',
-        importance: Importance.high,
-        priority: Priority.high,
-        category: AndroidNotificationCategory.message,
-      ),
-    ),
+    notificationDetails: NotificationDetails(android: MessageTones.android(MessageTones.fromPrefs(prefs, content.chatId))),
   );
+}
+
+/// The newest message per chat that already rang. The push isolate and the running app can both see the same
+/// message (the push, and TDLib's live update), so whichever comes second stays quiet; older messages
+/// delivered after a reconnect stay quiet too.
+abstract final class NotifiedMessages {
+  static String _key(int chatId) => 'notified.$chatId';
+
+  /// True when [serverMessageId] is newer than anything notified in [chatId] (and records it).
+  static Future<bool> claim(int chatId, int serverMessageId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload(); // the other isolate may have written since
+      if ((prefs.getInt(_key(chatId)) ?? 0) >= serverMessageId) return false;
+      await prefs.setInt(_key(chatId), serverMessageId);
+    } on Exception catch (error) {
+      debugPrint('notified-message check failed: $error'); // better a second ring than a lost notification
+    }
+    return true;
+  }
+
+  /// Telegram's server id of a TDLib message id; 0 for local (not yet sent) messages.
+  static int serverId(int tdMessageId) => tdMessageId % (1 << 20) == 0 ? tdMessageId >> 20 : 0;
 }

@@ -1,9 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
+import '../../core/theme.dart' show brandGold;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../widgets/common.dart';
 import '../business/profile_sharing.dart';
 import '../contacts/contacts_screen.dart';
@@ -33,15 +39,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) askProfileSharingOnce(context, ref);
     });
+    _recordActivity('app_open');
   }
 
   /// Tabs are built on first visit, then kept alive.
   final Set<int> _visited = {0};
 
-  void _select(int index) => setState(() {
-        _index = index;
-        _visited.add(index);
-      });
+  void _select(int index) {
+    if (index == 1) _recordActivity('hub_open');
+    setState(() {
+      _index = index;
+      _visited.add(index);
+    });
+  }
+
+  /// Anonymous daily-active counts for the admin statistics (once per day per event).
+  void _recordActivity(String event) => unawaited(ref.read(sadoApiProvider).recordActivity(ref.read(sharedPreferencesProvider), event));
 
   static const _tabs = <Widget>[
     HomeScreen(inShell: true),
@@ -72,7 +85,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         body: IndexedStack(
           index: _index,
           children: [
-            for (var i = 0; i < _tabs.length; i++) _visited.contains(i) ? _tabs[i] : const SizedBox.shrink(),
+            // Hidden tabs stay alive but their animations stop (IndexedStack alone keeps them ticking: battery).
+            for (var i = 0; i < _tabs.length; i++)
+              _visited.contains(i) ? TickerMode(enabled: i == _index, child: _tabs[i]) : const SizedBox.shrink(),
           ],
         ),
         bottomNavigationBar: _BottomBar(index: _index, onSelect: _select),
@@ -102,7 +117,7 @@ class _BottomBar extends ConsumerWidget {
         decoration: BoxDecoration(
           color: dark ? const Color(0xF21E2A36) : const Color(0xF7FFFFFF),
           borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: dark ? Colors.white10 : Colors.black.withValues(alpha: 0.06), width: 0.8),
+          border: Border.all(color: brandGold, width: 1.4),
           boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.35 : 0.1), blurRadius: 22, offset: const Offset(0, 8))],
         ),
         child: Row(
@@ -133,6 +148,19 @@ class _BottomBar extends ConsumerWidget {
               label: s.t('tab_profile'),
               selected: index == 3,
               onTap: () => onSelect(3),
+              onLongPress: () {
+                HapticFeedback.mediumImpact();
+                showModalBottomSheet<void>(
+                  context: context,
+                  showDragHandle: true,
+                  builder: (_) => const SafeArea(
+                    child: Padding(padding: EdgeInsets.fromLTRB(12, 0, 12, 12), child: AccountSwitcherList()),
+                  ),
+                );
+              },
+              onDoubleTap: () {
+                if (ref.read(accountSlotsProvider.notifier).switchToNext()) HapticFeedback.selectionClick();
+              },
               icon: (color) => me == null
                   ? Icon(Icons.person_rounded, color: color)
                   : Container(
@@ -149,11 +177,13 @@ class _BottomBar extends ConsumerWidget {
 }
 
 class _BarItem extends StatelessWidget {
-  const _BarItem({required this.label, required this.selected, required this.onTap, required this.icon});
+  const _BarItem({required this.label, required this.selected, required this.onTap, required this.icon, this.onLongPress, this.onDoubleTap});
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
   final Widget Function(Color color) icon;
 
   @override
@@ -168,6 +198,8 @@ class _BarItem extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(27),
           onTap: onTap,
+          onLongPress: onLongPress,
+          onDoubleTap: onDoubleTap,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

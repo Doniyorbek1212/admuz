@@ -6,6 +6,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/config.dart';
 import '../../core/formatters.dart';
 import '../../core/theme.dart';
+import '../../core/api/sado_api.dart';
+import '../gifts/gift_widgets.dart';
+import '../gifts/profile_background.dart';
+import '../gifts/uzaro_badge.dart' show showUzaroBadgeSheet;
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -137,6 +141,8 @@ class SettingsScreen extends ConsumerWidget {
       children: [
         // Same set and order as aka Messenger's own section.
         _row(context, Icons.settings_rounded, const Color(0xFF2E9BF0), s.t('uzaro_settings'), screen: const UzaroSettingsScreen()),
+        if (ref.read(sadoApiProvider).configured)
+          _row(context, Icons.verified_rounded, const Color(0xFFD4A94E), s.t('uzaro_badge'), onTap: () => showUzaroBadgeSheet(context, ref)),
         _row(context, Icons.wifi_tethering_rounded, const Color(0xFF2EAD5B), s.t('online_contacts'), screen: const OnlineContactsScreen()),
         _row(context, Icons.cleaning_services_rounded, const Color(0xFF4A6CF7), s.t('cache_cleaner'), screen: const StorageUsageScreen()),
         _row(context, Icons.manage_accounts_rounded, const Color(0xFF2E9BF0), s.t('contact_changes'), screen: const ContactChangesScreen()),
@@ -222,6 +228,9 @@ class SettingsScreen extends ConsumerWidget {
         // Telegram's own app opens the @TelegramTips channel here.
         _row(context, Icons.lightbulb_rounded, const Color(0xFF7C4DFF), s.t('telegram_features'), onTap: () => openUsername(context, ref, 'TelegramTips')),
         _row(context, Icons.policy_rounded, const Color(0xFF2EAD5B), s.t('privacy_policy'), onTap: () => open(AppConfig.apiUrl.isEmpty ? 'https://telegram.org/privacy' : '${AppConfig.apiUrl}/privacy')),
+        // Open-source packages plus the gift models and sounds whose CC BY licences require credit (main.dart).
+        _row(context, Icons.description_rounded, const Color(0xFF8E8E93), s.t('licenses'),
+            onTap: () => showLicensePage(context: context, applicationName: AppConfig.appName, applicationVersion: AppConfig.appVersion)),
         ListTile(
           leading: TileIcon(Icons.logout_rounded, error),
           title: Text(s.t('log_out'), style: TextStyle(color: error)),
@@ -288,11 +297,21 @@ class _ProfileHeader extends ConsumerWidget {
     if (me == null) return const SizedBox(height: 8);
     final theme = Theme.of(context);
     final username = me.usernames?.activeUsernames.firstOrNull;
-    return Padding(
+    // The background UZARO users see on this profile, shown here as a card.
+    final background = ref.watch(userGiftsProvider(me.id)).value?.background;
+    final onHeader = background == null ? null : Colors.white;
+    return Container(
+      margin: background == null ? EdgeInsets.zero : const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      decoration: background == null
+          ? null
+          : BoxDecoration(borderRadius: BorderRadius.circular(28), gradient: profileGradient(background, groupedBackground(context))),
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 14),
       child: Column(
         children: [
-          Stack(
+          GiftOrbit(
+            telegramId: me.id,
+            avatarSize: 100,
+            child: Stack(
             children: [
               GestureDetector(
                 onTap: me.profilePhoto == null ? null : () => openPhotoViewer(context, me.profilePhoto!.big, me.profilePhoto!.minithumbnail),
@@ -315,19 +334,27 @@ class _ProfileHeader extends ConsumerWidget {
                 ),
               ),
             ],
+            ),
           ),
           const SizedBox(height: 12),
           Text(
             '${me.firstName} ${me.lastName}'.trim(),
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: onHeader),
           ),
           const SizedBox(height: 4),
           Text(
             ['+${me.phoneNumber}', if (username != null) '@$username'].join('  •  '),
             textAlign: TextAlign.center,
-            style: TextStyle(color: theme.hintColor, fontSize: 14.5),
+            style: TextStyle(color: background == null ? theme.hintColor : Colors.white70, fontSize: 14.5),
           ),
+          if (ref.watch(sadoApiProvider).configured)
+            TextButton.icon(
+              onPressed: () => showProfileBackgroundPicker(context, ref),
+              style: TextButton.styleFrom(foregroundColor: onHeader),
+              icon: const Icon(Icons.palette_rounded, size: 18),
+              label: Text(context.t('gifts_background')),
+            ),
         ],
       ),
     );

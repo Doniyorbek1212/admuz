@@ -196,3 +196,5 @@ async def test_secrets_are_redacted_from_logs():
     message = record.getMessage()
     assert "abc123secret" not in message and "payload12345" not in message
     assert redact('{"api_hash": "0123456789abcdef"}') == '{"api_hash": "[REDACTED]"}'
+    url = 'HTTP Request: POST https://api.telegram.org/bot123456:AAH-x_9secret/sendMessage "HTTP/1.1 200 OK"'
+    assert "AAH-x_9secret" not in redact(url) and "/bot[REDACTED]/sendMessage" in redact(url)

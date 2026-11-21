@@ -11,12 +11,12 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, StringConstraints
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.config import get_settings
 from app.deps import CustomerDep, DbDep, client_ip, get_redis, rate_limit
 from app.errors import bad_request, unauthorized
-from app.models import Customer, Device
+from app.models import Customer, CustomerProfile, Device, ListingStatus, ProfileStyle, Shop, TelegramLink
 from app.security import create_access_token, new_link_code, new_secret, sha256_hex
 from app.services import credits
 from app.services.audit import audit
@@ -132,6 +132,16 @@ async def delete_account(current: CustomerDep, db: DbDep) -> None:
     now = datetime.now(UTC)
     await db.execute(update(Device).where(Device.customer_id == current.id).values(revoked_at=now))
     current.customer.deleted_at = now
+    # Personal data goes with the account: the shared name/phone, and shops that publish a phone and Telegram.
+    await db.execute(delete(CustomerProfile).where(CustomerProfile.customer_id == current.id))
+    linked_ids = select(TelegramLink.telegram_user_id).where(TelegramLink.customer_id == current.id)
+    await db.execute(delete(ProfileStyle).where(ProfileStyle.telegram_user_id.in_(linked_ids)))
+    await db.execute(delete(TelegramLink).where(TelegramLink.customer_id == current.id))
+    await db.execute(
+        update(Shop)
+        .where(Shop.owner_id == current.id, Shop.status != ListingStatus.CLOSED)
+        .values(status=ListingStatus.CLOSED, close_reason="account_deleted")
+    )
     balance = await credits.get_balance(db, current.id)
     if balance.available:
         await credits.add_purchased(db, current.id, -balance.available, f"deletion:{now.isoformat()}", kind="adjust")

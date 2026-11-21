@@ -1,0 +1,92 @@
+rose_bloom: "Red rose" by Lassi Kaukonen, CC BY 4.0, https://sketchfab.com/3d-models/74520e87c3ed46898668c83356dd9cfa
+rose_bloom: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+rose_bloom: "Swoosh 15 Windy" by qubodup, CC0 1.0, https://freesound.org/s/60002/
+heart_balloons: "Balloon Pop" by Lukeo135, CC0 1.0, https://freesound.org/s/563197/
+heart_balloons: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+love_letter: "Paper Rustle" by BenjaminNelan, CC0 1.0, https://freesound.org/s/353125/
+love_letter: "Glimmer.wav" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/
+love_letter: "Wood block hit" by thomasjaunism, CC0 1.0, https://freesound.org/s/218460/
+love_letter: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+kitten: "Stripe the Cat Rigged and Animated" by DreamNoms, CC BY 4.0, https://sketchfab.com/3d-models/2e3030b71a6d4b219fdc7304f8e58013
+kitten: "Cute Kitten Meow" by Breviceps, CC0 1.0, https://freesound.org/s/448084/
+puppy: "Golden Retriever Dog 🐕 3d model free" by iRahulRajput, CC BY 4.0, https://sketchfab.com/3d-models/4d32f856099c4baca05da2da485c24c1
+puppy: "Chihuahua Puppy Bark" by AustinXYZ, CC0 1.0, https://freesound.org/s/350591/
+puppy: "Chihuahua Puppy Whine" by AustinXYZ, CC0 1.0, https://freesound.org/s/350593/
+butterflies: "Animated Flying Fluttering Butterfly Loop" by LasquetiSpice, CC BY 4.0, https://sketchfab.com/3d-models/80f8d9a6dadc411e89ca366cb0cfb0d9
+butterflies: "Light Wing Flap" by TurboFool, CC0 1.0, https://freesound.org/s/561009/
+butterflies: "Glimmer.wav" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/
+fireworks: "Firework Explosion 1" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212678/
+fireworks: "Firework Explosion 3" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212683/
+fireworks: "Firework Explosion 4" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212684/
+champagne: "Bottle of Champagne" by Sirolalo, CC BY 4.0, https://sketchfab.com/3d-models/a3947c1c74484bc2940e60ffd2e84b9a
+champagne: "Champagne Cork" by KenRT, CC0 1.0, https://freesound.org/s/392624/
+champagne: "Pouring Champagne" by snakebarney, CC0 1.0, https://freesound.org/s/138125/
+champagne: "Wine glass clink deeper.wav" by lmr9, CC0 1.0, https://freesound.org/s/178178/
+birthday_cake: "Birthday Cake !" by Vie Dinh, CC BY 4.0, https://sketchfab.com/3d-models/87f446798bb544c6b0dca2504b1f9d50
+birthday_cake: "Match - Strike and Light 02.wav" by JarredGibb, CC0 1.0, https://freesound.org/s/248236/
+birthday_cake: "Party horn.wav" by audiosmedia, CC0 1.0, https://freesound.org/s/170583/
+birthday_cake: "Balloon Pop" by Lukeo135, CC0 1.0, https://freesound.org/s/563197/
+teddy_bear: "Teddy Bear" by Schmoldt5000, CC BY 4.0, https://sketchfab.com/3d-models/f7f6c575184e4b95b43f2e5fd9cebe4c
+teddy_bear: "Squeaky Toy #4" by Breviceps, CC0 1.0, https://freesound.org/s/483922/
+sports_car: "Generic Sport Coupé Car" by MMC Works, CC BY 4.0, https://sketchfab.com/3d-models/generic-sport-coupe-car-820a13c4831c41959ce75e6c2014e882
+sports_car: "V8 Supercar Acceleration" by FFKoenigsegg20012017, CC0 1.0, https://freesound.org/s/339137/
+sports_car: "Nissan Maxima burnout (04-25-2009).wav" by audible-edge, CC0 1.0, https://freesound.org/s/71740/
+motorbike: "Cafe Racer" by Andrei Milin, CC BY 4.0, https://sketchfab.com/3d-models/c02dec85ac0541b8ab6dd56098706b50
+motorbike: "STE-007_Motorcycle_01.wav" by crop_circles, CC0 1.0, https://freesound.org/s/74384/
+motorbike: "Impact" by chriskalos, CC0 1.0, https://freesound.org/s/172779/
+helicopter: "Helicopter" by mohamed ouartassi, CC BY 4.0, https://sketchfab.com/3d-models/1172f6d424964e6388068076738be429
+helicopter: "Helicopter Flyby" by Wonko_7, CC0 1.0, https://freesound.org/s/723158/
+plane: "Luxury Private Jet 3D Model Business Aircraft" by pranavy94, CC BY 4.0, https://sketchfab.com/3d-models/luxury-private-jet-3d-model-business-aircraft-7fdfa52cb61a4ad09f0b218045400e9d
+plane: "Airplane flyby" by chungus43A, CC0 1.0, https://freesound.org/s/705381/
+yacht: "Yacht II" by gogiart, CC BY 4.0, https://sketchfab.com/3d-models/dadc775d1d044aee9f6744fa7b47648e
+yacht: "Ocean Waves Rough.mp3" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/
+horse: "Horse" by victorberdugo1, CC BY 4.0, https://sketchfab.com/3d-models/2f4639623e684c44acb68922585d7a09
+horse: "Horse_neighing.wav" by Lydmakeren, CC0 1.0, https://freesound.org/s/510903/
+horse: "Horse Gallop - Loopable.mp3" by HebronTheatre, CC0 1.0, https://freesound.org/s/197212/
+horse: "Impact" by chriskalos, CC0 1.0, https://freesound.org/s/172779/
+eagle: "Free Eagle" by Filip, CC BY 4.0, https://sketchfab.com/3d-models/9f25e7c83840435396225970ba47b75e
+eagle: "Hawk,Cry,Bird,Ext.wav" by Framing_Noise, CC0 1.0, https://freesound.org/s/319619/
+eagle: "Swoosh 15 Windy" by qubodup, CC0 1.0, https://freesound.org/s/60002/
+dolphin: "Dolphin - animated - marine mammals series" by nolanfa, CC BY 4.0, https://sketchfab.com/3d-models/f4abb460956240f98b7a6f19cc3037a1
+dolphin: "Dolphin Noise-.wav" by jfournier18, CC0 1.0, https://freesound.org/s/456151/
+dolphin: "water splash" by audiosmedia, CC0 1.0, https://freesound.org/s/243519/
+dolphin: "Ocean Waves Rough.mp3" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/
+rocket: "Tomahawk Missile Rocket Launch 2" by qubodup, CC0 1.0, https://freesound.org/s/162379/
+lion: "Realistic Lion 3D Model" by Tarun.Teja, CC BY 4.0, https://sketchfab.com/3d-models/realistic-lion-3d-model-6da45f5d5a9f4733b195c6f03c92d33c
+lion: "Golden crown" by Pieter Ferreira (@Badboy17Aiden), CC BY 4.0, https://sketchfab.com/3d-models/golden-crown-5689a9525a2c425d93f7d483b93d8cfa
+lion: "lion roar" by bkyte, CC0 1.0, https://freesound.org/s/510476/
+tiger: "White Tiger (RIGGED ANIMATED)" by MotionStreamStudios, CC BY 4.0, https://sketchfab.com/3d-models/9dd099d283e54f99b7cbd40b531b1a29
+tiger: "Tiger Roar" by lauramellis, CC0 1.0, https://freesound.org/s/263115/
+tiger: "lion roar" by bkyte, CC0 1.0, https://freesound.org/s/510476/
+tiger: "Swosh swoosh whoosh air sound, free, high quality" by qubodup, CC0 1.0, https://freesound.org/s/60026/
+dragon: "European Dragon" by Regina Cachoa, CC BY 4.0, https://sketchfab.com/3d-models/european-dragon-82f393a2e6c048ad80c171ce3b3a7b87
+dragon: "Dragon Roar" by frasbr, CC0 1.0, https://freesound.org/s/145729/
+dragon: "flamewind.wav" by scarbelly25, CC0 1.0, https://freesound.org/s/33943/
+phoenix: "Phoenix" by NORBERTO-3D, CC BY 4.0, https://sketchfab.com/3d-models/243fea4f846f44d18d37bf371272b7ec
+phoenix: "fire-whoosh.wav" by hnhnh, CC0 1.0, https://freesound.org/s/244926/
+phoenix: "Kea screaming" by Breviceps, CC0 1.0, https://freesound.org/s/456802/
+castle: "Floating Castle" by Shahriar Shahrabi, CC BY 4.0, https://sketchfab.com/3d-models/1e157bab3a4042eb834ca07d73aa28ce
+castle: "Church Bell 1" by nomiqbomi, CC0 1.0, https://freesound.org/s/578543/
+castle: "Firework Explosion 1" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212678/
+golden_crown: "Golden crown" by Pieter Ferreira (@Badboy17Aiden), CC BY 4.0, https://sketchfab.com/3d-models/golden-crown-5689a9525a2c425d93f7d483b93d8cfa
+golden_crown: "Shimmery.wav" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/
+golden_crown: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+diamond_ring: "Diamond Ring - Day 1 #3DInktober2019-Ring" by MMKH, CC BY 4.0, https://sketchfab.com/3d-models/7482e3dcb4a8495cb5dc87689ecd045c
+diamond_ring: "Glove Box Open and Close.mp3" by Yin_Yang_Jake007, CC0 1.0, https://freesound.org/s/415302/
+diamond_ring: "Shimmer" by adh.dreaming, CC0 1.0, https://freesound.org/s/632344/
+diamond_ring: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+pegasus: "Horse" by victorberdugo1, CC BY 4.0, https://sketchfab.com/3d-models/2f4639623e684c44acb68922585d7a09
+pegasus: "Horse_neighing.wav" by Lydmakeren, CC0 1.0, https://freesound.org/s/510903/
+pegasus: "GLEAM-GLOW-SFX-CHIME.wav" by newagesoup, CC0 1.0, https://freesound.org/s/351408/
+pegasus: "Swoosh 15 Windy" by qubodup, CC0 1.0, https://freesound.org/s/60002/
+pegasus: "Impact" by chriskalos, CC0 1.0, https://freesound.org/s/172779/
+universe: "Realistic Earth 8K" by Shady Tex, CC BY 4.0, https://sketchfab.com/3d-models/899b7a8202ed48f0a0903c33cb5501b6
+universe: "Low spacey sound" by User391915396, CC0 1.0, https://freesound.org/s/495010/
+universe: "Deep Boom" by Za-Games, CC0 1.0, https://freesound.org/s/539968/
+universe: "Space Swoosh - brighter" by GameAudio, CC0 1.0, https://freesound.org/s/220191/
+treasure_chest: "Medieval Treasure Chest - animated" by Theo Kain, CC BY 4.0, https://sketchfab.com/3d-models/719d7c1639a64cdebb878fdf1ce26dcf
+treasure_chest: "Foley_Object_Metal_Chest_Open&Close_Mono.wav" by Nox_Sound, CC0 1.0, https://freesound.org/s/570484/
+treasure_chest: "coin fall 2.wav" by FenrirFangs, CC0 1.0, https://freesound.org/s/213986/
+treasure_chest: "coin falling on floor.wav" by sethlind, CC0 1.0, https://freesound.org/s/265011/
+hot_air_balloon: "Hot Air Balloon" by Anton Krupnov, CC BY 4.0, https://sketchfab.com/3d-models/0794a171bc7d45949a8bd5f13ab3dd71
+hot_air_balloon: "Burner Gas Flame Sound" by neilraouf, CC0 1.0, https://freesound.org/s/435643/

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
@@ -13,17 +14,32 @@ import 'telegram.dart';
 /// What the shared player has loaded; drives the mini player and the media notification.
 @immutable
 class NowPlaying {
-  const NowPlaying({required this.message, required this.fileId, required this.title, this.performer = '', this.artPath});
+  const NowPlaying({required this.message, required this.fileId, required this.title, this.performer = '', this.artPath, this.track});
 
-  final td.Message message;
+  /// Null for a song from the hub's music section ([track]).
+  final td.Message? message;
+
+  /// TDLib file id; -1 for a hub song, so it never matches a chat's audio.
   final int fileId;
   final String title;
   final String performer;
   final String? artPath;
+  final HubTrack? track;
 
-  bool get isMusic => message.content is td.MessageAudio;
+  bool get isMusic => message == null || message?.content is td.MessageAudio;
 
-  NowPlaying withArt(String path) => NowPlaying(message: message, fileId: fileId, title: title, performer: performer, artPath: path);
+  NowPlaying withArt(String path) => NowPlaying(message: message, fileId: fileId, title: title, performer: performer, artPath: path, track: track);
+}
+
+/// A song streamed from the UZARO server (hub "Music"), played in a list so next/previous move through it.
+@immutable
+class HubTrack {
+  const HubTrack({required this.id, required this.title, required this.artist, required this.url});
+
+  final String id;
+  final String title;
+  final String artist;
+  final Uri url;
 }
 
 /// Single shared player for voice notes and music, so starting one stops the other.
@@ -70,12 +86,53 @@ class Playback {
     if (path != null) await _load(message, file.id, path, title);
   }
 
+  List<HubTrack> _queue = const [];
+
+  /// Plays [queue]'s song number [index] from the server (pauses/resumes it when already loaded); next/previous and
+  /// the end of a song move through [queue].
+  Future<void> playTracks(List<HubTrack> queue, int index) async {
+    if (index < 0 || index >= queue.length) return;
+    if (nowPlaying.value?.track?.id == queue[index].id) return togglePlay();
+    _queue = List.unmodifiable(queue);
+    await _loadTrack(index);
+  }
+
+  Future<bool> _loadTrack(int index) async {
+    if (index < 0 || index >= _queue.length) return false;
+    final track = _queue[index];
+    nowPlaying.value = NowPlaying(message: null, fileId: -1, title: track.title, performer: track.artist, track: track);
+    try {
+      await player.setUrl(track.url.toString());
+    } on PlayerInterruptedException {
+      return true; // Another song was picked while this one loaded.
+    } on PlayerException catch (error) {
+      debugPrint('song playback failed: $error');
+      await stop();
+      return false;
+    }
+    unawaited(_play());
+    return true;
+  }
+
+  /// iOS keeps music and voice notes playing with the screen locked only in the playback audio category
+  /// (Info.plist declares the audio background mode). Set before every play: a call switches the session away.
+  Future<void> _play() async {
+    if (Platform.isIOS) {
+      try {
+        await (await AudioSession.instance).configure(const AudioSessionConfiguration.music());
+      } on PlatformException catch (error) {
+        debugPrint('audio session not configured: $error');
+      }
+    }
+    return player.play();
+  }
+
   Future<void> togglePlay() async {
     if (isPlaying) {
       await player.pause();
     } else {
       // play() completes only when playback stops, so it is not awaited.
-      unawaited(player.play());
+      unawaited(_play());
     }
   }
 
@@ -127,7 +184,7 @@ class Playback {
       await stop();
       return;
     }
-    unawaited(player.play());
+    unawaited(_play());
     if (content is td.MessageAudio) unawaited(_loadCover(content.audio, fileId));
   }
 
@@ -143,13 +200,15 @@ class Playback {
   /// Loads the neighbouring message of the same kind (music or voice) in the chat; false when there is none.
   Future<bool> _skip({required bool newer}) async {
     final current = nowPlaying.value;
+    if (current?.track case final track?) return _loadTrack(_queue.indexWhere((t) => t.id == track.id) + (newer ? 1 : -1));
+    final message = current?.message;
     final account = _account;
-    if (current == null || account == null) return false;
-    final id = current.message.id;
+    if (current == null || message == null || account == null) return false;
+    final id = message.id;
     try {
       // A window around the current track; neighbours are picked by id, so the window's exact edges don't matter.
       final found = await account.send<td.FoundChatMessages>(td.SearchChatMessages(
-        chatId: current.message.chatId,
+        chatId: message.chatId,
         query: '',
         fromMessageId: id,
         offset: -2,
@@ -174,7 +233,7 @@ class Playback {
   Future<void> _onCompleted() async {
     // Music listened to the end counts for the track (Telegram uses it for profile audio statistics).
     final playing = nowPlaying.value;
-    if (playing != null && playing.message.content is td.MessageAudio) {
+    if (playing != null && playing.message?.content is td.MessageAudio) {
       unawaited(_account
           ?.send<td.Ok>(td.ListenToAudio(audioFileId: playing.fileId, duration: player.duration?.inSeconds ?? 0))
           .catchError((Object _) => const td.Ok()));
@@ -187,7 +246,7 @@ class Playback {
   Future<void> _onSystemControl(MethodCall call) async {
     switch (call.method) {
       case 'play':
-        unawaited(player.play());
+        unawaited(_play());
       case 'pause':
         await player.pause();
       case 'next':

@@ -1,16 +1,18 @@
 """What the web admin panel needs beyond review: dashboard stats, editable settings, admin accounts, shop detail.
 Changes are audited like every other admin action."""
 
+import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import Date, cast, func, literal_column, select
 
-from app.deps import DbDep, require_admin
+from app.config import get_settings
+from app.deps import DbDep, require_admin, revoke_admin_sessions
 from app.errors import bad_request, conflict, not_found
 from app.market import product_out, profile_out, shop_out
 from app.models import (
@@ -25,6 +27,7 @@ from app.models import (
     Product,
     Shop,
 )
+from app.routers.admin_auth import login_candidates
 from app.security import hash_password, new_secret, sha256_hex
 from app.services.audit import audit
 from app.services.market_settings import load_market_settings
@@ -89,7 +92,17 @@ async def stats(admin: Viewer, db: DbDep) -> dict[str, Any]:
         "ads_live": live_ads,
         "revenue_uzs": {"ads": int(ad_revenue), "shops": int(shop_revenue), "total": int(ad_revenue) + int(shop_revenue)},
         "daily": [{"date": d.isoformat(), "new_users": new_users.get(d, 0), "ad_income_uzs": int(ad_income.get(d) or 0)} for d in days],
+        "disk": _disk(),
     }
+
+
+def _disk() -> dict[str, int] | None:
+    """The server disk holding uploads (receipts, product media, movies): how full it is."""
+    try:
+        usage = shutil.disk_usage(get_settings().media_dir)
+    except OSError:
+        return None
+    return {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free}
 
 
 # ------------------------------------------------------------------ settings
@@ -104,6 +117,20 @@ class SettingsIn(BaseModel):
     app_version: Annotated[str, StringConstraints(strip_whitespace=True, max_length=20, pattern=r"^[0-9A-Za-z.+-]*$")] | None = None
     app_build: Annotated[int, Field(ge=0, le=1_000_000)] | None = None
     app_release_notes: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] | None = None
+    ads_personalization: Annotated[int, Field(ge=0, le=1)] | None = None
+    ads_interest_weight: Annotated[int, Field(ge=0, le=100)] | None = None
+    ads_interest_half_life_days: Annotated[int, Field(ge=1, le=365)] | None = None
+    ads_topic_picker: Annotated[int, Field(ge=0, le=1)] | None = None
+    username_price_2_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    username_price_3_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    username_price_4_uzs: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    badge_price_uzs: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    welcome_bonus_uzs: Annotated[int, Field(ge=0, le=10_000_000)] | None = None
+    topup_bonus_percent: Annotated[int, Field(ge=0, le=100)] | None = None
+    stars_uzs_per_star: Annotated[int, Field(ge=0, le=100_000)] | None = None
+    ton_uzs_per_ton: Annotated[int, Field(ge=0, le=1_000_000_000)] | None = None
+    # A TON address (user-friendly base64url or raw "0:<hex>"); empty switches TON off.
+    ton_wallet: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80, pattern=r"^([A-Za-z0-9_-]{48}|-?\d:[0-9a-fA-F]{64})?$")] | None = None
 
 
 @router.get("/settings")
@@ -152,7 +179,14 @@ def _admin_out(admin: AdminUser) -> dict[str, Any]:
 
 class CredentialsIn(BaseModel):
     login: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._@+-]+$")]
-    password: Annotated[str, StringConstraints(min_length=6, max_length=128)]
+    password: Annotated[str, StringConstraints(min_length=10, max_length=128)]
+
+    @model_validator(mode="after")
+    def _password_is_not_the_login(self) -> "CredentialsIn":
+        # A phone-number login used as the password is the first thing a guesser tries.
+        if self.password.lower() in {c.lower() for c in login_candidates(self.login)}:
+            raise ValueError("the password must differ from the login")
+        return self
 
 
 @router.get("/admins")
@@ -170,8 +204,8 @@ async def create_admin(body: AdminIn, admin: Owner, db: DbDep) -> dict[str, Any]
     audit(db, f"admin:{admin.name}", "admin_created", body.name, role=body.role.value)
     await db.commit()
     await db.refresh(created)
-    # The key is shown once; only its hash is stored.
-    return _admin_out(created) | {"key": key}
+    # The key is shown once; only its hash is stored. Without permanent keys it would not work: set a login instead.
+    return _admin_out(created) | ({"key": key} if get_settings().admin_permanent_keys else {})
 
 
 @router.patch("/admins/{admin_id}")
@@ -204,6 +238,8 @@ async def set_admin_credentials(admin_id: uuid.UUID, body: CredentialsIn, admin:
     target.password_hash = hash_password(body.password)
     audit(db, f"admin:{admin.name}", "admin_credentials_set", target.name, login=body.login)
     await db.commit()
+    # A new password is often a reaction to a leak: sessions opened with the old one end now, not in 12 hours.
+    await revoke_admin_sessions(target.id)
     return _admin_out(target)
 
 

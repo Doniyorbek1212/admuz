@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import func, select
 
+from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import bad_request, not_found
 from app.market import Region
@@ -82,7 +83,7 @@ async def list_places(
     if active is not None:
         stmt = stmt.where(Place.active.is_(active))
     if q:
-        stmt = stmt.where(Place.name.ilike(f"%{q.replace('%', '').replace('_', '')}%"))
+        stmt = stmt.where(Place.name.ilike(like_pattern(q)))
     total = await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = await db.scalars(stmt.order_by(Place.updated_at.desc()).offset(offset).limit(limit))
     return {"items": [place_out(p) | {"active": p.active, "featured": p.featured, "sort_order": p.sort_order} for p in rows], "total": total}

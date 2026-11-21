@@ -38,7 +38,8 @@ void main() {
     expect(assessLink('https://paymentwall.com').level, LinkRiskLevel.safe);
     expect(assessLink('https://humor.uz').level, LinkRiskLevel.safe);
     expect(assessLink('https://bit.ly/3xYz').level, LinkRiskLevel.caution);
-    expect(assessLink('https://win-prize.top').level, LinkRiskLevel.caution);
+    expect(assessLink('https://win-prize.top').level, LinkRiskLevel.danger);
+    expect(assessLink('https://kino-uz.top').level, LinkRiskLevel.caution);
     expect(assessLink('https://kun.uz').level, LinkRiskLevel.safe);
   });
 
@@ -66,5 +67,31 @@ void main() {
     expect(assessLink('https://t.me/+AbCdEf').level, LinkRiskLevel.safe);
     expect(assessLink('https://google.com').level, LinkRiskLevel.safe);
     expect(assessLink('google.com').level, LinkRiskLevel.safe);
+  });
+
+  test('catches tricks that hide the real destination', () {
+    expect(assessLink('https://payme.uz@evil.site/login').level, LinkRiskLevel.danger);
+    expect(assessLink('https://раyme.uz').level, LinkRiskLevel.danger); // Cyrillic "р" and "а"
+    expect(assessLink('javascript:alert(1)').level, LinkRiskLevel.danger);
+    expect(assessLink('intent://scan#Intent;scheme=x;end').level, LinkRiskLevel.danger);
+    expect(assessLink('https://cdn.example.com/get?file=Payme.apk').level, LinkRiskLevel.danger);
+  });
+
+  test('flags fake government, social and crypto sites but not the real ones', () {
+    expect(assessLink('https://my-gov-uz.com/subsidiya').level, LinkRiskLevel.danger);
+    expect(assessLink('https://instagram-verify.net').level, LinkRiskLevel.danger);
+    expect(assessLink('https://tonkeeper-airdrop.org').level, LinkRiskLevel.danger);
+    expect(assessLink('https://login.olx-uz.info').level, LinkRiskLevel.danger);
+    expect(assessLink('https://my.gov.uz/oz').level, LinkRiskLevel.safe);
+    expect(assessLink('https://www.instagram.com/p/x').level, LinkRiskLevel.safe);
+    expect(assessLink('https://accounts.google.com').level, LinkRiskLevel.safe);
+    expect(assessLink('https://olx.uz/d/obyavlenie').level, LinkRiskLevel.safe);
+    expect(assessLink('https://steamed-buns.com').level, LinkRiskLevel.safe);
+  });
+
+  test('bait words on throwaway zones are dangerous', () {
+    expect(assessLink('https://bepul-sovga.site').level, LinkRiskLevel.danger);
+    expect(assessLink('https://claim-reward.xyz/abc').level, LinkRiskLevel.danger);
+    expect(assessLink('https://bonus.uz').level, LinkRiskLevel.safe);
   });
 }

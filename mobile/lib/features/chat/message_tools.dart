@@ -99,6 +99,17 @@ Future<void> showPollOptionMenu(BuildContext context, TelegramAccount account, t
   }
 }
 
+/// The sender's profile: a user (through their private chat, which creating sends nothing) or a chat posting as itself.
+Future<void> openSenderProfile(BuildContext context, TelegramAccount account, td.MessageSender sender) async {
+  final chatId = switch (sender) {
+    td.MessageSenderChat(:final chatId) => chatId,
+    td.MessageSenderUser(:final userId) => (await guard(context, () => account.openPrivateChat(userId)))?.id,
+    _ => null,
+  };
+  if (chatId == null || !context.mounted) return;
+  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chatId)));
+}
+
 /// The real person behind a channel post or anonymous admin message, when the chat reveals it.
 Future<void> showMessageAuthor(BuildContext context, TelegramAccount account, td.Message message) async {
   final user = await guard(context, () => account.send<td.User>(td.GetMessageAuthor(chatId: message.chatId, messageId: message.id)));
@@ -294,47 +305,6 @@ Future<void> moderateReaction(BuildContext context, TelegramAccount account, td.
     return true;
   });
   if (done == true && context.mounted) showToast(context, s.t(action == 'report' ? 'report_sent' : 'done'));
-}
-
-/// Returned by [pickRecentDocument] when the user wants the system file picker instead.
-const pickFromDevice = 'device';
-
-/// Files the user sent recently anywhere, to resend without picking them again. Pops a [td.Document] or [pickFromDevice].
-Future<Object?> pickRecentDocument(BuildContext context, TelegramAccount account) async {
-  var recent = const <td.Message>[];
-  try {
-    recent = (await account.send<td.FoundMessages>(const td.SearchOutgoingDocumentMessages(query: '', limit: 20))).messages;
-  } on TdException catch (error) {
-    debugPrint('recent documents failed: $error');
-  }
-  final documents = [for (final m in recent) if (m.content case td.MessageDocument(:final document)) document];
-  if (documents.isEmpty || !context.mounted) return pickFromDevice;
-  final s = context.s;
-  return showModalBottomSheet<Object>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) => SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
-        child: ListView(shrinkWrap: true, children: [
-          ListTile(
-            leading: const Icon(Icons.folder_open_rounded),
-            title: Text(s.t('choose_from_device'), style: const TextStyle(fontWeight: FontWeight.w600)),
-            onTap: () => Navigator.pop(context, pickFromDevice),
-          ),
-          SectionHeader(s.t('recent_files')),
-          for (final document in documents)
-            ListTile(
-              leading: const Icon(Icons.insert_drive_file_outlined),
-              title: Text(document.fileName.isEmpty ? s.t('file') : document.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(formatFileSize(document.document.size)),
-              onTap: () => Navigator.pop(context, document),
-            ),
-        ]),
-      ),
-    ),
-  );
 }
 
 /// Group members currently sharing their live location; tapping one jumps to that message.

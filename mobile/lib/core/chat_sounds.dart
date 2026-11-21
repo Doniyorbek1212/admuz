@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -18,8 +19,15 @@ class ChatSounds {
   static const defaultReceive = 'pop';
   static const _sampleRate = 44100;
 
+  /// Looping call tones, not in the picker: the caller's ringback ("tuut... tuut...") and the incoming ringtone.
+  static const callTones = ['ringback', 'ringtone'];
+
   // Its own player without audio focus, so a cue never pauses music or a voice note.
   AudioPlayer? _player;
+
+  // Call tones take audio focus: a ringing call should pause music.
+  AudioPlayer? _loopPlayer;
+  String? _looping;
   final Map<String, Future<String>> _files = {};
 
   Future<void> play(String id) async {
@@ -31,6 +39,36 @@ class ChatSounds {
       await player.play();
     } on Exception catch (error) {
       debugPrint('chat sound failed: $error');
+    }
+  }
+
+  /// Repeats one of [callTones] until [stopLoop]; starting the tone already playing does nothing.
+  /// shortcut: plays as media, so it ignores the phone's silent mode; a native ringtone stream comes with full-screen incoming calls.
+  Future<void> loop(String id) async {
+    if (!callTones.contains(id) || _looping == id) return;
+    _looping = id;
+    try {
+      final player = _loopPlayer ??= AudioPlayer();
+      final path = await _files.putIfAbsent(id, () => _write(id));
+      if (_looping != id) return;
+      await player.setVolume(id == 'ringback' ? 0.5 : 1);
+      await player.setLoopMode(LoopMode.all);
+      await player.setFilePath(path);
+      if (_looping != id) return;
+      // play() completes only when playback stops, so don't await it.
+      unawaited(player.play());
+    } on Exception catch (error) {
+      debugPrint('call tone failed: $error');
+    }
+  }
+
+  Future<void> stopLoop() async {
+    if (_looping == null) return;
+    _looping = null;
+    try {
+      await _loopPlayer?.stop();
+    } on Exception catch (error) {
+      debugPrint('call tone stop failed: $error');
     }
   }
 
@@ -51,8 +89,27 @@ class ChatSounds {
         'ding' => _tone(0.5, (_) => 1318.5, attack: 0.002, decay: 9, overtone: 0.35),
         'chime' => _concat([_tone(0.13, (_) => 880, attack: 0.003, decay: 22), _tone(0.3, (_) => 1174.7, attack: 0.003, decay: 12)]),
         'click' => _tone(0.025, (_) => 3200, attack: 0.0005, decay: 160, noise: 0.5),
+        // One 4 s cycle of the standard 425 Hz ringback: 1 s tone, 3 s silence.
+        'ringback' => _concat([_beep(1, 425), Float64List(3 * _sampleRate)]),
+        // One ~2.6 s cycle: two bell arpeggios, then a pause.
+        'ringtone' => _concat([
+            for (var i = 0; i < 2; i++) ...[
+              for (final hz in [1318.5, 1046.5, 1568.0, 2093.0]) _tone(0.16, (_) => hz, attack: 0.003, decay: 9, overtone: 0.3),
+              Float64List(_sampleRate ~/ 5),
+            ],
+            Float64List(_sampleRate),
+          ]),
         _ => Float64List(0),
       };
+
+  /// A steady sine with 10 ms fades, so a looped tone doesn't click.
+  static Float64List _beep(double seconds, double frequency) {
+    final count = (seconds * _sampleRate).round();
+    const fade = _sampleRate ~/ 100;
+    return Float64List.fromList([
+      for (var i = 0; i < count; i++) 0.8 * min(1.0, min(i, count - 1 - i) / fade) * sin(2 * pi * frequency * i / _sampleRate),
+    ]);
+  }
 
   /// A sine whose frequency follows [frequency] over time, with an exponential decay envelope.
   static Float64List _tone(double seconds, double Function(double t) frequency,

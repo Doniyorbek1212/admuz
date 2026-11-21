@@ -14,7 +14,7 @@ from app.uploads import PUBLIC_NAME_PATTERN, public_dir, save_public
 router = APIRouter(tags=["media"])
 
 _NAME = re.compile(PUBLIC_NAME_PATTERN)
-_TYPES = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "mp4": "video/mp4"}
+_TYPES = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif", "mp4": "video/mp4", "mp3": "audio/mpeg", "m4a": "audio/mp4"}
 
 
 @router.post("/v1/media", status_code=status.HTTP_201_CREATED)

@@ -4,15 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/api/sado_api.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
 import '../../state/actions.dart';
+import '../../state/banned_channels.dart';
 import '../../state/providers.dart';
 import '../../widgets/common.dart';
 import '../chat/sponsored_bubble.dart' show reportSponsored;
 import '../home/home_screen.dart';
+import '../profile/uzaro_username.dart' show chatForUzaroName;
 import '../stories/story_extras.dart' show openStoriesByTag;
 import '../webapp/bot_extras.dart' show popularWebAppBotsProvider, recentInlineBotsProvider;
 
@@ -24,17 +27,21 @@ class _SearchResults {
     this.sponsored = const [],
     this.hashtags = const [],
     this.postLimits,
+    this.uzaroNames = const {},
   });
 
   final List<int> chats;
   final List<int> global;
+
+  /// Chat id → UZARO @name, for people found by their UZARO username.
+  final Map<int, String> uzaroNames;
   final List<td.Message> messages;
   final List<td.SponsoredChat> sponsored;
   final List<String> hashtags;
   final td.PublicPostSearchLimits? postLimits;
 
   _SearchResults withPostLimits(td.PublicPostSearchLimits limits) =>
-      _SearchResults(chats: chats, global: global, messages: messages, sponsored: sponsored, hashtags: hashtags, postLimits: limits);
+      _SearchResults(chats: chats, global: global, messages: messages, sponsored: sponsored, hashtags: hashtags, postLimits: limits, uzaroNames: uzaroNames);
 }
 
 class SearchScreen extends ConsumerStatefulWidget {
@@ -155,6 +162,23 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     }
 
+    // UZARO usernames (our own @names, next to Telegram's): chat id → name.
+    Future<Map<int, String>> byUzaroName() async {
+      final prefix = query.replaceFirst('@', '').toLowerCase();
+      final api = ref.read(sadoApiProvider);
+      if (!api.configured || !RegExp(r'^[a-z0-9_]{2,32}$').hasMatch(prefix)) return const {};
+      try {
+        final found = <int, String>{};
+        for (final name in await api.searchUzaroUsernames(prefix)) {
+          final chatId = await chatForUzaroName(account, name);
+          if (chatId != null) found[chatId] = name.username;
+        }
+        return found;
+      } on ApiException {
+        return const {};
+      }
+    }
+
     Future<T?> optional<T extends td.TdObject>(td.TdFunction request) async {
       try {
         return await account.send<T>(request);
@@ -169,17 +193,24 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       tagPrefix == null ? Future.value() : optional<td.Hashtags>(td.SearchHashtags(prefix: tagPrefix, limit: 10)),
       query.length >= 2 ? optional<td.PublicPostSearchLimits>(td.GetPublicPostSearchLimits(query: query)) : Future.value(),
     ]);
+    final uzaro = byUzaroName();
     final results = await Future.wait([local, server, public, byPhone()]);
     final foundMessages = await messages();
     final extra = await extras;
+    final uzaroNames = await uzaro;
     if (!mounted || generation != _generation) return;
-    final mine = {...results[0], ...results[1]}.toList();
+    // Sources on the banned list never show up, whichever search found them.
+    final banned = ref.read(bannedChannelsProvider);
+    bool allowed(int chatId) => !banned.hidesId(account, chatId);
+    final mine = {...results[0], ...results[1]}.where(allowed).toList();
     setState(() {
       _loading = false;
       _results = _SearchResults(
         chats: mine,
-        global: {...results[3], ...results[2]}.where((id) => !mine.contains(id)).toList(),
-        messages: foundMessages,
+        uzaroNames: uzaroNames,
+        // UZARO names first: they are exact hits on what people chose to be found by.
+        global: {...uzaroNames.keys, ...results[3], ...results[2]}.where((id) => !mine.contains(id) && allowed(id)).toList(),
+        messages: foundMessages.where((m) => allowed(m.chatId)).toList(),
         sponsored: (extra[0] as td.SponsoredChats?)?.chats ?? const [],
         hashtags: [for (final tag in (extra[1] as td.Hashtags?)?.hashtags ?? const <String>[]) if ('#$tag' != query) tag],
         postLimits: extra[2] as td.PublicPostSearchLimits?,
@@ -334,12 +365,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final chat = account.chats[chatId];
     if (chat == null) return const SizedBox.shrink();
     final s = context.s;
-    final username = account.usernameOf(chat);
+    final uzaroName = _results.uzaroNames[chatId];
+    final username = uzaroName != null ? '$uzaroName · UZARO' : account.usernameOf(chat);
     return ListTile(
       leading: ChatAvatar(chatId: chatId, size: 46),
       title: Text(chatTitle(chat, account, s), maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        showUsername && username != null ? '@$username, ${chatSubtitle(chat, account, s)}' : chatSubtitle(chat, account, s),
+        (showUsername || uzaroName != null) && username != null ? '@$username, ${chatSubtitle(chat, account, s)}' : chatSubtitle(chat, account, s),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
