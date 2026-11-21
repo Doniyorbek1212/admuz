@@ -31,6 +31,9 @@ class CallSession extends ChangeNotifier {
   bool muted = false;
   bool speaker = false;
   bool videoOn = false;
+
+  /// Every camera opens facing the user; only [switchCamera] turns it around.
+  bool frontCamera = true;
   bool remoteMuted = false;
   bool remoteVideo = false;
   DateTime? startedAt;
@@ -242,6 +245,7 @@ class CallSession extends ChangeNotifier {
       if (pc != null) await pc.addTrack(track, local);
       localRenderer.srcObject = local;
       videoOn = true;
+      frontCamera = true;
       _cameraPaused = false;
     }
     _sendMediaState();
@@ -252,7 +256,9 @@ class CallSession extends ChangeNotifier {
     final tracks = _local?.getVideoTracks() ?? const <MediaStreamTrack>[];
     if (tracks.isEmpty) return;
     try {
-      await Helper.switchCamera(tracks.first);
+      // The plugin answers whether the front camera is now the active one.
+      frontCamera = await Helper.switchCamera(tracks.first);
+      _notify();
     } on PlatformException catch (error) {
       // A phone with a single camera, or one another app holds.
       debugPrint('camera switch failed: $error');

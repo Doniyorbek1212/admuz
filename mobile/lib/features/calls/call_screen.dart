@@ -173,10 +173,12 @@ class _CallScreenState extends ConsumerState<CallScreen> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          _RoundButton(icon: session.speaker ? Icons.volume_up_rounded : Icons.volume_down_rounded, active: session.speaker, label: s.t('call_speaker'), onTap: session.toggleSpeaker),
-                          _RoundButton(icon: session.videoOn ? Icons.videocam_rounded : Icons.videocam_off_rounded, active: session.videoOn, label: s.t('call_video_short'), onTap: session.toggleVideo),
-                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: session.toggleMute),
-                          _RoundButton(icon: Icons.call_end_rounded, color: const Color(0xFFE5484D), label: s.t('call_end'), onTap: session.hangUp),
+                          // Five buttons only fit a narrow phone at the smaller size.
+                          if (session.videoOn) _RoundButton(icon: Icons.flip_camera_ios_rounded, label: s.t('call_flip'), onTap: session.switchCamera, size: 56),
+                          _RoundButton(icon: session.speaker ? Icons.volume_up_rounded : Icons.volume_down_rounded, active: session.speaker, label: s.t('call_speaker'), onTap: session.toggleSpeaker, size: session.videoOn ? 56 : 64),
+                          _RoundButton(icon: session.videoOn ? Icons.videocam_rounded : Icons.videocam_off_rounded, active: session.videoOn, label: s.t('call_video_short'), onTap: session.toggleVideo, size: session.videoOn ? 56 : 64),
+                          _RoundButton(icon: session.muted ? Icons.mic_off_rounded : Icons.mic_rounded, active: session.muted, label: s.t('call_mute'), onTap: session.toggleMute, size: session.videoOn ? 56 : 64),
+                          _RoundButton(icon: Icons.call_end_rounded, color: const Color(0xFFE5484D), label: s.t('call_end'), onTap: session.hangUp, size: session.videoOn ? 56 : 64),
                         ],
                       ),
                     ),
@@ -193,7 +195,8 @@ class _CallScreenState extends ConsumerState<CallScreen> {
                   onTap: session.switchCamera,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: RTCVideoView(session.localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
+                    // The rear camera is shown as the world sees it; only the selfie view is mirrored.
+                    child: RTCVideoView(session.localRenderer, mirror: session.frontCamera, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
                   ),
                 ),
               ),
@@ -205,8 +208,9 @@ class _CallScreenState extends ConsumerState<CallScreen> {
 }
 
 class _RoundButton extends StatelessWidget {
-  const _RoundButton({required this.icon, required this.label, required this.onTap, this.color, this.active = false});
+  const _RoundButton({required this.icon, required this.label, required this.onTap, this.color, this.active = false, this.size = 64});
 
+  final double size;
   final IconData icon;
   final String label;
   final Future<void> Function() onTap;
@@ -225,7 +229,7 @@ class _RoundButton extends StatelessWidget {
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: onTap,
-            child: SizedBox.square(dimension: 64, child: Icon(icon, color: color == null && active ? Colors.black87 : Colors.white, size: 30)),
+            child: SizedBox.square(dimension: size, child: Icon(icon, color: color == null && active ? Colors.black87 : Colors.white, size: size * 0.47)),
           ),
         ),
         const SizedBox(height: 6),
