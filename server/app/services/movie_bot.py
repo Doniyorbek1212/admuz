@@ -1,5 +1,6 @@
 """The movies bot: an admin sends (or forwards) a video, answers a few button questions, and the bot copies the video
-into the public movies channel and lists it in the app's Movies section.
+into the public movies channel and lists it in the app's Movies section. On the content bot a song goes to Music
+(services/music_bot.py) the same way.
 
 Nothing is downloaded: copyMessage reuses Telegram's own file, so any size Telegram accepts works and the server disk
 is never touched. Only Telegram ids in settings.movies_bot_admins may use it. Each video gets its own draft in Redis,
@@ -21,6 +22,7 @@ from app.config import get_settings
 from app.deps import get_redis
 from app.errors import ApiError
 from app.models import MovieKind, MovieTitle, MovieVideo, VideoStatus
+from app.services import music_bot
 from app.services import telegram_api as tg
 from app.services.audit import audit
 from app.services.movies import episode_label
@@ -41,6 +43,7 @@ HELP = (
     "🎬 Kino yoki serial qismini shu yerga <b>video qilib</b> yuboring yoki forward qiling.\n"
     "Bot bir nechta savol beradi va videoni kanalga joylaydi: u darhol UZARO ilovasining «Kinolar» bo'limida ko'rinadi."
 )
+HELP_WITH_MUSIC = HELP + "\n\n🎵 Qo'shiq (MP3 yoki M4A) yuborsangiz, bo'limini tanlaysiz va u «Musiqa» bo'limiga qo'shiladi."
 NOT_A_VIDEO = (
     "Bu video «fayl» qilib yuborilgan, ilovada ochilmaydi. Uni oddiy video qilib yuboring "
     "(yuborishda «Fayl sifatida» belgisini olib tashlang)."
@@ -51,16 +54,25 @@ _SEASON = re.compile(r"(\d{1,3})\s*-?\s*fasl|\bs(\d{1,2})\s*e\d", re.IGNORECASE)
 _EPISODE = re.compile(r"(\d{1,4})\s*-?\s*qism|qism\s*(\d{1,4})|\bs\d{1,2}\s*e(\d{1,4})|\bep?(?:isode)?\s*(\d{1,4})\b", re.IGNORECASE)
 
 
+def bot_token() -> str:
+    """The bot admins talk to: the dedicated content bot, else the movies bot (when it is the gifts bot)."""
+    settings = get_settings()
+    return settings.content_bot_token or settings.movies_bot_token
+
+
 def configured() -> bool:
     settings = get_settings()
-    # The movies bot is the gifts bot (@uzaro_uzbot): it hears admins through the gifts webhook.
-    return bool(settings.movies_bot_token and settings.movies_channel and settings.movies_bot_token == settings.gifts_bot_token)
+    if not settings.movies_channel:
+        return False
+    # Without the content bot, the movies bot is the gifts bot (@uzaro_uzbot): it hears admins through the gifts webhook.
+    return bool(settings.content_bot_token or (settings.movies_bot_token and settings.movies_bot_token == settings.gifts_bot_token))
 
 
 def wants(update: dict[str, Any]) -> bool:
     """Whether a gifts-webhook update belongs here: any button press (the gifts bot has none), and an admin's
-    messages except slash commands with arguments (/start <code> links accounts, username commands)."""
-    if not configured():
+    messages except slash commands with arguments (/start <code> links accounts, username commands).
+    Never once the content bot is on: then admins publish there."""
+    if not configured() or get_settings().content_bot_token:
         return False
     if isinstance(update.get("callback_query"), dict):
         return True
@@ -72,7 +84,7 @@ def wants(update: dict[str, Any]) -> bool:
 
 
 async def _api(method: str, **params: Any) -> Any:
-    return await tg.call(method, bot_token=get_settings().movies_bot_token, **params)
+    return await tg.call(method, bot_token=bot_token(), **params)
 
 
 def _button(text: str, data: str) -> dict[str, str]:
@@ -160,10 +172,13 @@ async def _message(db: AsyncSession, message: dict[str, Any]) -> None:
         return
     if user_id not in get_settings().movies_bot_admins:
         return await _say(user_id, NOT_ALLOWED)
+    music = bool(get_settings().content_bot_token)  # songs only on the dedicated bot, the gifts bot stays movies-only
     if isinstance(video := message.get("video"), dict):
         return await _new_draft(user_id, message, video)
     if str((message.get("document") or {}).get("mime_type") or "").startswith("video/"):
         return await _say(user_id, NOT_A_VIDEO)
+    if music and (song := music_bot.song_of(message)):
+        return await music_bot.new_draft(user_id, message, song)
     draft = await _awaited(user_id, message)
     text = (message.get("text") or "").strip()
     if draft and draft["step"] == "poster" and message.get("photo"):
@@ -173,7 +188,9 @@ async def _message(db: AsyncSession, message: dict[str, Any]) -> None:
             return await _got_name(db, draft, text)
         if draft["step"] == "episode":
             return await _got_episode_text(db, draft, text)
-    await _say(user_id, HELP)
+        if draft["step"] == music_bot.RENAME_STEP:
+            return await music_bot.got_name(draft, text)
+    await _say(user_id, HELP_WITH_MUSIC if music else HELP)
 
 
 async def _new_draft(user_id: int, message: dict[str, Any], video: dict[str, Any]) -> None:
@@ -218,7 +235,8 @@ async def _route(db: AsyncSession, user_id: int, data: str) -> str | None:
         await _show(draft, "✖ Bekor qilindi.", [])
         await _drop(draft)
         return None
-    handlers = {"k": _picked_kind, "s": _picked_series, "c": _picked_category, "e": _picked_episode, "p": _skipped_poster}
+    handlers = {"k": _picked_kind, "s": _picked_series, "c": _picked_category, "e": _picked_episode, "p": _skipped_poster,
+                "m": music_bot.picked}
     if kind not in handlers:
         return None
     return await handlers[kind](db, draft, choice)
@@ -375,7 +393,7 @@ async def _poster_photo(db: AsyncSession, draft: dict[str, Any], message: dict[s
     file_id = (message.get("photo") or [{}])[-1].get("file_id")
     try:
         draft["poster"] = await save_public_image_bytes(await tg.download(
-            str(file_id), get_settings().max_image_bytes, bot_token=get_settings().movies_bot_token
+            str(file_id), get_settings().max_image_bytes, bot_token=bot_token()
         ))
     except (tg.TelegramError, ApiError):
         return await _say(draft["u"], "Rasmni o'qib bo'lmadi. Posterni JPG yoki PNG rasm qilib qayta yuboring.")
@@ -390,7 +408,7 @@ async def _frame_poster(draft: dict[str, Any]) -> str | None:
         return None
     try:
         return await save_public_image_bytes(await tg.download(
-            draft["thumb"], get_settings().max_image_bytes, bot_token=get_settings().movies_bot_token
+            draft["thumb"], get_settings().max_image_bytes, bot_token=bot_token()
         ))
     except (tg.TelegramError, ApiError):
         return None

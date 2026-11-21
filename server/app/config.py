@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # the bot copies it to the channel). It works when the movies bot is the gifts bot (same token): its updates
     # arrive at /v1/telegram/webhook. Env: SADO_BILLING_MOVIES_BOT_ADMINS='[860723328]'.
     movies_bot_admins: list[int] = Field(default_factory=list)
+    # The admins' own upload bot: a video goes to Movies (as above), a song to Music. It must be an admin of
+    # movies_channel too. Telegram calls POST /v1/telegram/content-webhook; register it with
+    # `python -m app.cli set-content-webhook <https://host>`. Set, it takes the movie questions over from the gifts bot.
+    content_bot_token: str = ""
     movie_max_upload_bytes: int = 8 * 1024 * 1024 * 1024
     movie_chunk_bytes: int = 16 * 1024 * 1024
     # Uploads are refused when they would leave less free disk than this (the compressed copy needs room too).

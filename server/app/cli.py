@@ -31,6 +31,7 @@ from app.db import SessionFactory
 from app.deps import get_redis, revoke_admin_sessions
 from app.market import REGIONS
 from app.models import AdminRole, AdminUser, GiftItem
+from app.routers import content_bot
 from app.routers.gifts import webhook_secret
 from app.security import hash_password, new_secret, sha256_hex
 from app.services import credits, gift_catalog, osm_import, pay_bot
@@ -267,6 +268,24 @@ def set_gifts_webhook(host: str) -> None:
     }))
 
 
+def set_content_webhook(host: str) -> None:
+    """Points the admins' content bot at <host>/v1/telegram/content-webhook."""
+    token = get_settings().content_bot_token
+    if not token or not host.startswith("https://"):
+        print("needs SADO_BILLING_CONTENT_BOT_TOKEN and an https:// host")
+        sys.exit(1)
+    print(_bot_call(token, "setWebhook", {
+        "url": f"{host.rstrip('/')}/v1/telegram/content-webhook",
+        "secret_token": content_bot.webhook_secret(),
+        "allowed_updates": ["message", "callback_query"],
+        "drop_pending_updates": True,
+    }))
+    print(_bot_call(token, "setMyCommands", {"commands": [{"command": "start", "description": "Kino yoki qo'shiq yuklash"}]}))
+    print(_bot_call(token, "setMyDescription", {
+        "description": "UZARO adminlari uchun: kino, serial qismi yoki qo'shiq yuboring, bot uni ilovaga joylaydi.",
+    }))
+
+
 def set_pay_webhook(host: str) -> None:
     """Points the pay bot at <host>/v1/telegram/pay-webhook and gives it its command menu."""
     token = get_settings().pay_bot_token
@@ -295,6 +314,8 @@ def main() -> None:
             set_gifts_webhook(host)
         case ["set-pay-webhook", host]:
             set_pay_webhook(host)
+        case ["set-content-webhook", host]:
+            set_content_webhook(host)
         case ["import-gift-renders", folder]:
             asyncio.run(import_gift_renders(Path(folder)))
         case ["create-admin", name, role]:

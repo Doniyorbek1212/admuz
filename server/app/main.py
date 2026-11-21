@@ -30,6 +30,7 @@ from app.routers import (
     badges,
     banned_channels,
     billing,
+    content_bot,
     customers,
     games,
     gifts,
@@ -105,7 +106,7 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
     routers = (customers, profile, billing, admin, market, ads, media, places, movies, music, activity, gifts, badges, interests,
-               usernames, banned_channels, quick_links, payme, store_topup, pay_bot, games, ai)
+               usernames, banned_channels, quick_links, payme, store_topup, pay_bot, content_bot, games, ai)
     admin_routers = (admin_ai, admin_games, admin_gifts, admin_market, admin_places, admin_movies, admin_music, admin_panel, admin_auth, public)
     for module in routers + admin_routers:
         app.include_router(module.router)

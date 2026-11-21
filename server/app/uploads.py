@@ -96,7 +96,11 @@ def sniff_audio(data: bytes) -> str | None:
 
 async def save_audio(file: UploadFile) -> tuple[str, int]:
     """Stores a song publicly; returns (name, size)."""
-    data = await read_limited(file, get_settings().max_audio_bytes)
+    return await save_audio_bytes(await read_limited(file, get_settings().max_audio_bytes))
+
+
+async def save_audio_bytes(data: bytes) -> tuple[str, int]:
+    """Like [save_audio] for a song already in memory (one sent to the content bot)."""
     ext = sniff_audio(data[:16])
     if ext is None:
         raise bad_request("NOT_AN_AUDIO")
