@@ -84,8 +84,15 @@ def sent_out(sent: SentGift, gift: GiftItem, viewer: int | None) -> dict[str, An
         "hidden": sent.hidden,
         "anonymous": sent.anonymous,
         "sender_hidden": sent.sender_hidden,
+        "wrapped": sent.wrapped,
+        "opened": sent.opened_at is not None,
         "created_at": sent.created_at.isoformat(),
     }
+
+
+def _on_profile() -> Any:
+    """Gifts profile visitors see: not hidden by the recipient, and not still wrapped."""
+    return SentGift.hidden.is_(False) & (SentGift.wrapped.is_(False) | SentGift.opened_at.is_not(None))
 
 
 async def _viewer(db: DbDep, customer_id: uuid.UUID) -> int | None:
@@ -204,6 +211,8 @@ class SendIn(BaseModel):
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=140)] = ""
     # "Hide my name": only the recipient learns who sent it.
     anonymous: bool = False
+    # Wrapped: the recipient pulls a ribbon to open it; until then it stays off their profile.
+    wrapped: bool = False
 
 
 @router.post("/gifts/send", status_code=status.HTTP_201_CREATED)
@@ -219,6 +228,8 @@ async def send_gift(body: SendIn, current: CustomerDep, db: DbDep) -> dict[str, 
         id=uuid.uuid4(), gift_id=gift.id, sender_customer_id=current.id, sender_telegram_id=link.telegram_user_id,
         recipient_telegram_id=body.recipient_telegram_id, text=body.text, price_uzs=gift.price_uzs,
         anonymous=body.anonymous,
+        # A gift bought for one's own profile has nobody to surprise.
+        wrapped=body.wrapped and body.recipient_telegram_id != link.telegram_user_id,
     )
     db.add(sent)
     await wallet.record(db, current.id, -gift.price_uzs, "gift", str(sent.id))
@@ -238,7 +249,7 @@ async def _gifts_of(
         stmt = stmt.order_by(SentGift.created_at.desc(), SentGift.id)
     else:
         # On a profile the dearest gifts lead: they get the bubbles and the dearest premium one plays.
-        stmt = stmt.where(SentGift.hidden.is_(False)).order_by(
+        stmt = stmt.where(_on_profile()).order_by(
             GiftItem.price_uzs.desc(), SentGift.created_at.desc(), SentGift.id
         )
     rows = await db.execute(stmt.limit(limit))
@@ -257,9 +268,7 @@ async def user_gifts(
     if style is not None and style.hide_gifts:
         return {"items": [], "total": 0, "background": background, "pattern": pattern}
     total = await db.scalar(
-        select(func.count()).select_from(SentGift).where(
-            SentGift.recipient_telegram_id == telegram_user_id, SentGift.hidden.is_(False)
-        )
+        select(func.count()).select_from(SentGift).where(SentGift.recipient_telegram_id == telegram_user_id, _on_profile())
     ) or 0
     return {
         "items": await _gifts_of(
@@ -294,7 +303,7 @@ async def top_gifts(
             func.count().over(partition_by=SentGift.recipient_telegram_id).label("total"),
         )
         .join(GiftItem, GiftItem.id == SentGift.gift_id)
-        .where(SentGift.recipient_telegram_id.in_(wanted), SentGift.hidden.is_(False))
+        .where(SentGift.recipient_telegram_id.in_(wanted), _on_profile())
         .subquery()
     )
     # A few spare rows each, so repeats of one gift can be skipped and three different ones still shown.
@@ -368,6 +377,24 @@ async def set_visibility(sent_id: uuid.UUID, body: VisibilityIn, current: Custom
     sent.hidden = body.hidden
     await db.commit()
     return {"id": str(sent.id), "hidden": sent.hidden}
+
+
+@router.post("/gifts/{sent_id}/open")
+async def open_gift(sent_id: uuid.UUID, current: CustomerDep, db: DbDep) -> dict[str, Any]:
+    """The recipient pulled the ribbon: the gift is unwrapped (once) and shows on the profile like any other."""
+    link = await _link(db, current.id)
+    row = (await db.execute(
+        select(SentGift, GiftItem).join(GiftItem, GiftItem.id == SentGift.gift_id).where(SentGift.id == sent_id).with_for_update(of=SentGift)
+    )).first()
+    if row is None or row[0].recipient_telegram_id != link.telegram_user_id:
+        raise not_found("GIFT_NOT_FOUND")
+    sent, gift = row
+    if sent.opened_at is None:
+        sent.opened_at = func.now()
+        audit(db, f"customer:{current.id}", "gift_opened", str(sent.id))
+        await db.commit()
+        await db.refresh(sent)
+    return sent_out(sent, gift, link.telegram_user_id)
 
 
 @router.post("/gifts/{sent_id}/sender-visibility")

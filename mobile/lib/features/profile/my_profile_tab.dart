@@ -17,7 +17,9 @@ import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart' show apiGuard, formatUzs;
 import '../chat/message_content.dart' show FormattedTextView;
 import '../chat/marked_messages_screen.dart';
+import '../../core/api/gift_models.dart' show SentGift;
 import '../gifts/gift_showcase.dart' show giftShowcaseProvider;
+import '../gifts/gift_unwrap.dart';
 import '../gifts/gift_widgets.dart';
 import '../gifts/gifts_screen.dart';
 import '../gifts/my_gifts_screen.dart';
@@ -48,12 +50,64 @@ final _myStoriesProvider = FutureProvider.autoDispose<List<td.Story>>((ref) asyn
   return stories.stories;
 });
 
-/// Whether profile visitors see none of the user's UZARO gifts; null when gifts are off or the account is not linked.
-final _giftsHiddenProvider = FutureProvider.autoDispose<bool?>((ref) async {
+/// The user's received UZARO gifts and whether profile visitors see none of them; null when gifts are off or the
+/// account is not linked.
+final _receivedProvider = FutureProvider.autoDispose<(List<SentGift>, bool)?>((ref) async {
   final api = ref.watch(sadoApiProvider);
   if (!api.configured || await api.telegramId() != ref.watch(accountProvider).myId) return null;
-  return (await api.receivedGifts()).$2;
+  return api.receivedGifts();
 });
+
+/// Whether profile visitors see none of the user's UZARO gifts; null when gifts are off or the account is not linked.
+final _giftsHiddenProvider = FutureProvider.autoDispose<bool?>((ref) async => (await ref.watch(_receivedProvider.future))?.$2);
+
+/// Shown while someone's gift is still wrapped: the orb and a tap to open it.
+class _WrappedGiftsCard extends ConsumerWidget {
+  const _WrappedGiftsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final waiting = [...?ref.watch(_receivedProvider).value?.$1.where((g) => g.waiting)];
+    if (waiting.isEmpty) return const SizedBox.shrink();
+    final s = context.s;
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Material(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () async {
+            if (await showGiftUnwrap(context, waiting.first)) {
+              ref.invalidate(_receivedProvider);
+              ref.invalidate(userGiftsProvider(ref.read(accountProvider).myId));
+              ref.invalidate(giftShowcaseProvider(ref.read(accountProvider).myId));
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            child: Row(children: [
+              const SizedBox(width: 48, height: 64, child: FittedBox(child: WrappedGiftOrb(size: 48))),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                    waiting.length == 1 ? s.t('gifts_wrapped_arrived') : s.t('gifts_wrapped_arrived_n', {'count': '${waiting.length}'}),
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(s.t('gifts_tap_to_unwrap'), style: TextStyle(color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.75))),
+                ]),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// "Profile" tab of the bottom bar: the signed-in user's card, quick actions and personal spaces.
 class MyProfileTab extends ConsumerWidget {
@@ -74,6 +128,7 @@ class MyProfileTab extends ConsumerWidget {
               child: RefreshIndicator(
                 onRefresh: () async {
                   ref.invalidate(walletProvider);
+                  ref.invalidate(_receivedProvider);
                   ref.invalidate(_myStoriesProvider);
                   ref.invalidate(_myFullInfoProvider);
                   await ref.read(_myStoriesProvider.future).catchError((Object _) => const <td.Story>[]);
@@ -84,6 +139,7 @@ class MyProfileTab extends ConsumerWidget {
                   children: [
                     _header(context, ref, me),
                     const SizedBox(height: 12),
+                    const _WrappedGiftsCard(),
                     _actions(context, ref),
                     if (ref.watch(sadoApiProvider).configured) const _WalletCard(),
                     _infoCard(context, ref, me),

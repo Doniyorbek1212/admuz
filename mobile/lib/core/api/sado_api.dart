@@ -392,13 +392,17 @@ class SadoApi {
       [for (final g in (await _get('/v1/gifts/catalog') as Map<String, dynamic>)['items'] as List) GiftItem.fromJson(g as Map<String, dynamic>)];
 
   /// Sends [giftId] to Telegram user [recipientId]; returns the balance left.
-  Future<int> sendGift(String giftId, int recipientId, String text, {bool anonymous = false}) async {
+  Future<int> sendGift(String giftId, int recipientId, String text, {bool anonymous = false, bool wrapped = false}) async {
     final result = await _post(
       '/v1/gifts/send',
-      data: {'gift_id': giftId, 'recipient_telegram_id': recipientId, 'text': text, 'anonymous': anonymous},
+      data: {'gift_id': giftId, 'recipient_telegram_id': recipientId, 'text': text, 'anonymous': anonymous, 'wrapped': wrapped},
     ) as Map<String, dynamic>;
     return result['balance_uzs'] as int? ?? 0;
   }
+
+  /// The recipient pulled the ribbon of a wrapped gift; returns it opened.
+  Future<SentGift> openGift(String sentId) async =>
+      SentGift.fromJson(await _post('/v1/gifts/$sentId/open') as Map<String, dynamic>);
 
   /// Dearest gifts of each of these users/groups/channels (at most 100); ones without gifts are absent.
   Future<Map<int, GiftShowcase>> topGifts(List<int> ids) async {

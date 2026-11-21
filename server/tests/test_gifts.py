@@ -97,6 +97,41 @@ async def test_link_send_list_and_hide(client, session_factory, new_customer):
     assert (await client.delete(f"/v1/admin/gifts/{rose['id']}", headers=admin)).json()["detail"]["code"] == "GIFT_IN_USE"
 
 
+async def test_wrapped_gift_stays_off_the_profile_until_the_recipient_opens_it(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    rose = await _gift(client, admin)
+    alice, bob = await new_customer(), await new_customer()
+    await _link(client, alice, 131)
+    await _link(client, bob, 232)
+    await _top_up(client, admin, alice, 10_000)
+    sent = await alice.post("/v1/gifts/send", json={"gift_id": rose["id"], "recipient_telegram_id": 232, "wrapped": True})
+    assert sent.status_code == 201, sent.text
+    gift_id = sent.json()["gift"]["id"]
+    assert (sent.json()["gift"]["wrapped"], sent.json()["gift"]["opened"]) == (True, False)
+
+    # Wrapped: not on the profile, not in the chat list showcase, but waiting in the recipient's own list.
+    assert (await alice.get("/v1/gifts/users/232")).json() | {"background": None} == {
+        "items": [], "total": 0, "background": None, "pattern": None
+    }
+    assert (await alice.get("/v1/gifts/top", params={"ids": [232]})).json()["items"] == {}
+    waiting = (await bob.get("/v1/gifts/received")).json()["items"]
+    assert [(g["id"], g["wrapped"], g["opened"]) for g in waiting] == [(gift_id, True, False)]
+
+    # Only the recipient opens it, once; then it shows like any gift.
+    assert (await alice.post(f"/v1/gifts/{gift_id}/open")).status_code == 404
+    opened = await bob.post(f"/v1/gifts/{gift_id}/open")
+    assert opened.status_code == 200 and opened.json()["opened"] is True and opened.json()["gift"]["title"] == "Atirgul"
+    assert (await bob.post(f"/v1/gifts/{gift_id}/open")).json()["opened"] is True
+    assert (await alice.get("/v1/gifts/users/232")).json()["total"] == 1
+    async with session_factory() as db:
+        first = (await db.get(SentGift, uuid.UUID(gift_id))).opened_at
+    assert first is not None
+
+    # A gift for one's own profile is never wrapped.
+    mine = await alice.post("/v1/gifts/send", json={"gift_id": rose["id"], "recipient_telegram_id": 131, "wrapped": True})
+    assert mine.json()["gift"]["wrapped"] is False
+
+
 async def test_gift_bought_for_oneself(client, session_factory, new_customer):
     admin = await _admin(session_factory)
     rose = await _gift(client, admin)

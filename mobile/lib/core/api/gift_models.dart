@@ -115,6 +115,8 @@ class SentGift {
     required this.createdAt,
     this.anonymous = false,
     this.senderHidden = false,
+    this.wrapped = false,
+    this.opened = true,
   });
 
   factory SentGift.fromJson(Map<String, dynamic> j) => SentGift(
@@ -127,6 +129,8 @@ class SentGift {
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.now(),
         anonymous: j['anonymous'] as bool? ?? false,
         senderHidden: j['sender_hidden'] as bool? ?? false,
+        wrapped: j['wrapped'] as bool? ?? false,
+        opened: j['opened'] as bool? ?? true,
       );
 
   final String id;
@@ -144,6 +148,13 @@ class SentGift {
 
   /// The recipient hid the sender's name from people opening their profile.
   final bool senderHidden;
+
+  /// Sent wrapped: the recipient pulls a ribbon to open it, and it stays off the profile until then.
+  final bool wrapped;
+  final bool opened;
+
+  /// Still wrapped, waiting for the recipient to open it.
+  bool get waiting => wrapped && !opened;
 }
 
 class WalletTopup {

@@ -7,6 +7,7 @@ import '../../l10n/strings.dart';
 import '../../state/providers.dart';
 import '../../widgets/settings_group.dart';
 import '../business/business_widgets.dart';
+import 'gift_unwrap.dart';
 import 'gift_widgets.dart';
 
 /// Profile ⋮ → My gifts: every gift the user received, with who sees each one and its sender.
@@ -88,7 +89,21 @@ class _ReceivedGiftsState extends ConsumerState<ReceivedGifts> {
             onChanged: (hide) => _changeVisibility(() => api.setAllGiftsHidden(hide)),
           ),
           if (received.isEmpty) ListTile(title: Text(s.t('gifts_received_empty'))),
-          for (final gift in received)
+          // Still-wrapped gifts first: only their sender and words show until the ribbon is pulled.
+          for (final gift in received.where((g) => g.waiting))
+            ListTile(
+              leading: const SizedBox(width: 44, height: 56, child: FittedBox(child: WrappedGiftOrb(size: 44))),
+              title: Text(s.t('gifts_wrapped_title'), style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(s.t('gifts_tap_to_unwrap')),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                if (await showGiftUnwrap(context, gift) && mounted) {
+                  ref.invalidate(userGiftsProvider(ref.read(accountProvider).myId));
+                  _reload();
+                }
+              },
+            ),
+          for (final gift in received.where((g) => !g.waiting))
             ListTile(
               leading: GiftImage(gift.gift, size: 44),
               title: Text(gift.gift.titleFor(s.locale), style: const TextStyle(fontWeight: FontWeight.w600)),

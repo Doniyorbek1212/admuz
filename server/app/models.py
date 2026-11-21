@@ -715,6 +715,9 @@ class SentGift(Base):
     anonymous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # The recipient hid the sender's name from people opening their profile.
     sender_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Sent wrapped: nobody sees it on the profile until the recipient pulls the ribbon (opened_at set).
+    wrapped: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

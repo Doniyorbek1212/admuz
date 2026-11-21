@@ -21,6 +21,16 @@ void main() {
     expect(gift.titleFor('en'), 'Yurak');
   });
 
+  test('a wrapped gift waits until opened; older servers send gifts already open', () {
+    Map<String, dynamic> sent([Map<String, dynamic> extra = const {}]) => {
+          'id': 's1', 'gift': {'id': 'b', 'title': 'Yurak', 'price_uzs': 1000, 'animation_url': '/media/h.webp'},
+          'created_at': '2026-11-21T10:00:00+00:00', ...extra,
+        };
+    expect(SentGift.fromJson(sent({'wrapped': true, 'opened': false})).waiting, isTrue);
+    expect(SentGift.fromJson(sent({'wrapped': true, 'opened': true})).waiting, isFalse);
+    expect(SentGift.fromJson(sent()).waiting, isFalse);
+  });
+
   test('wallet history parses, and older servers without it give an empty list', () {
     final wallet = Wallet.fromJson({
       'balance_uzs': 2000,

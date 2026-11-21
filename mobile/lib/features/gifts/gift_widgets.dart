@@ -18,6 +18,7 @@ import '../../widgets/common.dart';
 import '../business/business_widgets.dart';
 import 'gift_effects.dart';
 import 'gift_showcase.dart' show giftShowcaseProvider;
+import 'gift_unwrap.dart';
 import 'topup_screen.dart';
 
 /// UZARO gifts a Telegram user received (visible ones) and their profile background. Empty when the server is unreachable.
@@ -62,15 +63,23 @@ Future<void> playArrivedGift(BuildContext context, WidgetRef ref, int chatId) as
   if (fresh.isEmpty) return;
   final kept = [...seen, ...fresh.map((g) => g.id)];
   await prefs.setStringList(_seenGiftsKey, kept.sublist(math.max(0, kept.length - _seenGiftsKept)));
+  if (!context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
+  // A wrapped gift waits to be opened here, in the sender's chat; its show must not give it away first.
   // Received gifts come newest first.
+  final wrapped = fresh.where((g) => g.waiting).firstOrNull;
+  if (wrapped != null) {
+    if (await showGiftUnwrap(context, wrapped)) _receivedCache = null;
+    return;
+  }
   final premium = fresh.where((g) => g.gift.premium).firstOrNull;
-  if (premium == null || !context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
+  if (premium == null) return;
   await showPremiumGift(context, premium.gift, sent: premium);
 }
 
-/// The premium gifts in [gifts], one per kind, dearest first: the own profile's show order.
+/// The premium gifts in [gifts], one per kind, dearest first: the own profile's show order. Still-wrapped
+/// gifts are left out so their show does not give them away.
 List<SentGift> premiumShowOrder(Iterable<SentGift> gifts) {
-  final premium = gifts.where((g) => g.gift.premium).toList()..sort((a, b) => b.gift.priceUzs.compareTo(a.gift.priceUzs));
+  final premium = gifts.where((g) => g.gift.premium && !g.waiting).toList()..sort((a, b) => b.gift.priceUzs.compareTo(a.gift.priceUzs));
   final kinds = <String>{};
   return [for (final g in premium) if (kinds.add(g.gift.id)) g];
 }
@@ -348,6 +357,16 @@ class _GiftOrbitState extends ConsumerState<GiftOrbit> with TickerProviderStateM
   }
 }
 
+/// Who sent [sent], as this viewer may know it: a hidden sender (0) reads "anonymous"; when known to this viewer,
+/// the hiding is noted next to the name. Empty when the sender is not loaded.
+String giftSenderName(BuildContext context, WidgetRef ref, SentGift sent) {
+  final s = context.s;
+  final sender = ref.watch(accountProvider).users[sent.senderTelegramId];
+  final known = sender == null ? '' : '${sender.firstName} ${sender.lastName}'.trim();
+  if (sent.senderTelegramId == 0) return s.t('gifts_anonymous');
+  return sent.anonymous && known.isNotEmpty ? '$known · ${s.t('gifts_anonymous')}' : known;
+}
+
 /// One received gift, opened from its bubble: a big bubble, who sent it, their words and the date.
 Future<void> showGiftDetails(BuildContext context, SentGift sent) => showGeneralDialog<void>(
       context: context,
@@ -361,14 +380,7 @@ Future<void> showGiftDetails(BuildContext context, SentGift sent) => showGeneral
       ),
       pageBuilder: (context, _, _) => Consumer(builder: (context, ref, _) {
         final s = context.s;
-        final sender = ref.watch(accountProvider).users[sent.senderTelegramId];
-        // A hidden sender (0) reads "anonymous"; when known to this viewer, the hiding is noted next to the name.
-        final known = sender == null ? '' : '${sender.firstName} ${sender.lastName}'.trim();
-        final name = sent.senderTelegramId == 0
-            ? s.t('gifts_anonymous')
-            : sent.anonymous && known.isNotEmpty
-                ? '$known · ${s.t('gifts_anonymous')}'
-                : known;
+        final name = giftSenderName(context, ref, sent);
         return Material(
           type: MaterialType.transparency,
           // The profile behind is blurred so the gift and its words read on any background.
@@ -436,6 +448,7 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
   final _text = TextEditingController();
   bool _sending = false;
   bool _anonymous = false;
+  bool _wrapped = false;
 
   /// Bought for the user's own profile rather than sent to someone.
   bool get _forMe => widget.recipientId == ref.read(accountProvider).myId;
@@ -462,17 +475,18 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
     final self = _forMe;
     final balance = await apiGuard(
       context,
-      () => ref.read(sadoApiProvider).sendGift(gift.id, widget.recipientId, self ? '' : _text.text.trim(), anonymous: !self && _anonymous),
+      () => ref.read(sadoApiProvider).sendGift(
+            gift.id, widget.recipientId, self ? '' : _text.text.trim(), anonymous: !self && _anonymous, wrapped: !self && _wrapped),
     );
     if (!mounted) return;
     setState(() => _sending = false);
     if (balance == null) return;
     ref.invalidate(userGiftsProvider(widget.recipientId));
     ref.invalidate(giftShowcaseProvider(widget.recipientId));
-    showToast(context, context.t(self ? 'gifts_bought' : 'gifts_sent'));
+    showToast(context, context.t(self ? 'gifts_bought' : (_wrapped ? 'gifts_sent_wrapped' : 'gifts_sent')));
     final navigator = Navigator.of(context);
     navigator.pop(true);
-    // The sender sees the premium show they just bought.
+    // The sender sees the premium show they just bought (a wrapped one too: the surprise is for the recipient).
     if (gift.premium) unawaited(showPremiumGift(navigator.context, gift));
   }
 
@@ -549,6 +563,15 @@ class _GiftShopSheetState extends ConsumerState<_GiftShopSheet> {
                       subtitle: Text(s.t('gifts_hide_my_name_hint')),
                       value: _anonymous,
                       onChanged: _sending ? null : (value) => setState(() => _anonymous = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      secondary: const Icon(Icons.redeem_rounded),
+                      title: Text(s.t('gifts_wrap')),
+                      subtitle: Text(s.t('gifts_wrap_hint')),
+                      value: _wrapped,
+                      onChanged: _sending ? null : (value) => setState(() => _wrapped = value),
                     ),
                     ],
                     // A store build whose balance could only be topped up outside the store may send free gifts
