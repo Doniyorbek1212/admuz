@@ -10,7 +10,7 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import GiftItem, SentGift, TelegramLink, WalletEntry
+from app.models import FrameItem, GiftItem, SentGift, TelegramLink, WalletEntry
 from app.services.market_settings import load_market_settings
 
 Direction = Literal["all", "in", "out"]
@@ -87,7 +87,9 @@ async def history(
     more = len(rows) > limit
     entries = rows[:limit]
     gifts = await _gifts_by_reference(db, [e.reference for e in entries if e.kind == "gift"])
-    return [_entry_out(e, gifts.get(e.reference)) for e in entries], more
+    frame_keys = {e.reference.split(":", 1)[0] for e in entries if e.kind == "frame"}
+    frames = {f.key: f for f in await db.scalars(select(FrameItem).where(FrameItem.key.in_(frame_keys)))} if frame_keys else {}
+    return [_entry_out(e, gifts.get(e.reference), frames.get(e.reference.split(":", 1)[0])) for e in entries], more
 
 
 async def _gifts_by_reference(db: AsyncSession, references: list[str]) -> dict[str, tuple[SentGift, GiftItem]]:
@@ -103,7 +105,7 @@ async def _gifts_by_reference(db: AsyncSession, references: list[str]) -> dict[s
     return {str(sent.id): (sent, gift) for sent, gift in rows.all()}
 
 
-def _entry_out(entry: WalletEntry, gift: tuple[SentGift, GiftItem] | None) -> dict[str, Any]:
+def _entry_out(entry: WalletEntry, gift: tuple[SentGift, GiftItem] | None, frame: FrameItem | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {
         "delta_uzs": entry.delta_uzs,
         "kind": entry.kind,
@@ -122,6 +124,9 @@ def _entry_out(entry: WalletEntry, gift: tuple[SentGift, GiftItem] | None) -> di
         out["method"] = methods.get(prefix, "card")
     elif entry.kind == "username":
         out["title"] = entry.reference.split(":", 1)[0]
+    elif frame is not None:
+        out["title"] = frame.title
+        out["titles"] = {"uz": frame.title, "ru": frame.title_ru or frame.title, "en": frame.title_en or frame.title}
     elif gift is not None:
         sent, item = gift
         out["title"] = item.title

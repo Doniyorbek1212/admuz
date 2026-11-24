@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
+import 'frame_models.dart';
 import 'gift_models.dart';
 import 'market_models.dart';
 import 'movie_models.dart';
@@ -452,6 +453,22 @@ class SadoApi {
     return {
       for (final entry in (json['badges'] as Map<String, dynamic>).entries) int.parse(entry.key): int.parse(entry.value as String),
     };
+  }
+
+  // ------------------------------------------------------------------ avatar frames
+
+  Future<FrameShop> frameShop() async => FrameShop.fromJson(await _get('/v1/frames/catalog') as Map<String, dynamic>);
+
+  /// Buys a frame for good and puts it on.
+  Future<void> buyFrame(String key) => _post('/v1/frames/buy', data: {'key': key});
+
+  /// Puts on an owned frame, or takes the worn one off ([key] null); free.
+  Future<void> wearFrame(String? key) => _put('/v1/frames/me', {'key': key});
+
+  /// Worn frames of these Telegram users (at most 100): user id -> frame key.
+  Future<Map<int, String>> framesOf(List<int> ids) async {
+    final json = await _get('/v1/frames/of', query: {'ids': ids}) as Map<String, dynamic>;
+    return {for (final entry in (json['frames'] as Map<String, dynamic>).entries) int.parse(entry.key): entry.value as String};
   }
 
   Future<void> requestTopup(int amountUzs, String receiptPath) async {

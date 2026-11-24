@@ -13,6 +13,7 @@ import 'gift_widgets.dart' show buyUzaroGiftForMe;
 import 'gifts_screen.dart';
 import 'topup_screen.dart';
 import 'wallet_history_screen.dart';
+import 'avatar_frames.dart' show FrameShopScreen;
 import 'uzaro_badge.dart' show showUzaroBadgeSheet;
 
 /// The UZARO balance with its history; refreshed after every purchase or top-up.
@@ -76,6 +77,8 @@ class WalletScreen extends ConsumerWidget {
           () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const GiftsScreen()))),
       row(Icons.shopping_bag_rounded, brandGold, s.t('gifts_buy_for_me'), s.t('gifts_for_me_hint'), () => buyUzaroGiftForMe(context, ref)),
       row(Icons.verified_rounded, const Color(0xFF2E9BF0), s.t('uzaro_badge'), s.t('wallet_badge_sub'), () => showUzaroBadgeSheet(context, ref)),
+      row(Icons.filter_frames_rounded, const Color(0xFFFF8A3D), s.t('frames_title'), s.t('frames_sub'),
+          () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const FrameShopScreen()))),
       row(Icons.alternate_email_rounded, const Color(0xFF7E57C2), s.t('uzaro_username'), s.t('wallet_username_sub'), () async {
         final current = await ref.read(myUzaroNameProvider.future).catchError((Object _) => null);
         if (!context.mounted) return;

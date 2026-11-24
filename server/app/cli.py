@@ -12,6 +12,7 @@
     python -m app.cli set-gifts-webhook <https://host>   (points the gifts bot at <host>/v1/telegram/webhook)
     python -m app.cli set-pay-webhook <https://host>     (points the pay bot at <host>/v1/telegram/pay-webhook)
     python -m app.cli import-gift-renders <folder>  (rendered gifts from <folder>/manifest.json; adds or upgrades, keeps prices)
+    python -m app.cli import-frame-renders <folder>  (avatar frames from <folder>/manifest.json; adds or upgrades, keeps prices)
 """
 
 import asyncio
@@ -34,7 +35,7 @@ from app.models import AdminRole, AdminUser, GiftItem
 from app.routers import content_bot
 from app.routers.gifts import webhook_secret
 from app.security import hash_password, new_secret, sha256_hex
-from app.services import credits, gift_catalog, osm_import, pay_bot
+from app.services import credits, frame_catalog, gift_catalog, osm_import, pay_bot
 from app.services.audit import audit
 from app.uploads import public_dir
 
@@ -246,6 +247,15 @@ async def import_gift_renders(folder: Path) -> None:
     print(f"rendered gifts: {added} added, {updated} updated")
 
 
+async def import_frame_renders(folder: Path) -> None:
+    frames = frame_catalog.parse_manifest(folder / "manifest.json")
+    async with SessionFactory() as db:
+        added, updated = await frame_catalog.import_rendered_frames(db, frames)
+        audit(db, "cli", "frame_renders_imported", folder.name, added=added, updated=updated)
+        await db.commit()
+    print(f"avatar frames: {added} added, {updated} updated")
+
+
 def _bot_call(token: str, method: str, params: dict[str, object]) -> str:
     request = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/{method}", data=json.dumps(params).encode(), headers={"Content-Type": "application/json"}
@@ -318,6 +328,8 @@ def main() -> None:
             set_content_webhook(host)
         case ["import-gift-renders", folder]:
             asyncio.run(import_gift_renders(Path(folder)))
+        case ["import-frame-renders", folder]:
+            asyncio.run(import_frame_renders(Path(folder)))
         case ["create-admin", name, role]:
             asyncio.run(create_admin(name, role, None))
         case ["create-admin", name, role, "--key-file", path]:

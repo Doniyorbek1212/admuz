@@ -157,7 +157,7 @@ class ChatTile extends ConsumerWidget {
                 onTap: ref.watch(settingsProvider.select((st) => st.avatarOpensProfile))
                     ? () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id)))
                     : null,
-                child: _StoryRing(chatId: chat.id, size: isDesktop ? 48 : 56, child: ChatAvatar(chatId: chat.id, size: isDesktop ? 48 : 56)),
+                child: _StoryRing(chatId: chat.id, size: isDesktop ? 48 : 56),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -406,22 +406,22 @@ class _DividerPainter extends BoxPainter {
   }
 }
 
-/// Telegram's story ring around chat avatars while the chat has stories; none otherwise.
+/// The chat's avatar with Telegram's story ring while the chat has stories; otherwise the plain avatar with the
+/// person's UZARO frame (the ring and a frame would cover each other).
 class _StoryRing extends ConsumerWidget {
-  const _StoryRing({required this.chatId, required this.size, required this.child});
+  const _StoryRing({required this.chatId, required this.size});
 
   final int chatId;
 
   /// Outer diameter; the avatar shrinks to fit inside the ring.
   final double size;
-  final Widget child;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final feed = ref.watch(storyFeedProvider);
     final stories = feed.where((e) => e.chatId == chatId).firstOrNull;
     // No stories: the plain full-size avatar, as in Telegram.
-    if (stories == null) return SizedBox.square(dimension: size, child: child);
+    if (stories == null) return SizedBox.square(dimension: size, child: ChatAvatar(chatId: chatId, size: size));
     final unread = stories.stories.any((s) => s.storyId > stories.maxReadStoryId);
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
@@ -434,7 +434,7 @@ class _StoryRing extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.all(1.6),
         decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).colorScheme.surface),
-        child: SizedBox.square(dimension: size - 7.2, child: FittedBox(child: child)),
+        child: SizedBox.square(dimension: size - 7.2, child: FittedBox(child: ChatAvatar(chatId: chatId, size: size, showFrame: false))),
       ),
     );
   }

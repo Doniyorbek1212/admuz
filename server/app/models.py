@@ -809,6 +809,36 @@ class ProfileBadge(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class FrameItem(Base):
+    """An animated avatar frame in the UZARO shop, imported from frame_renders/manifest.json and bought once for good."""
+
+    __tablename__ = "frame_items"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    title: Mapped[str] = mapped_column(String(64))  # uz
+    title_ru: Mapped[str] = mapped_column(String(64), default="")
+    title_en: Mapped[str] = mapped_column(String(64), default="")
+    tier: Mapped[int] = mapped_column(Integer, default=1)
+    price_uzs: Mapped[int] = mapped_column(Integer)
+    animation: Mapped[str] = mapped_column(String(64))  # public media: profile size, with the UZARO plate
+    small: Mapped[str] = mapped_column(String(64))  # public media: chat-list size, without the plate
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OwnedFrame(Base):
+    """A frame a Telegram user bought (the account proven through the gifts bot); at most one is worn (equipped)."""
+
+    __tablename__ = "owned_frames"
+
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    frame_key: Mapped[str] = mapped_column(ForeignKey("frame_items.key", ondelete="CASCADE"), primary_key=True)
+    equipped: Mapped[bool] = mapped_column(Boolean, default=False)
+    price_uzs: Mapped[int] = mapped_column(Integer)  # what was paid
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # Game tables live in their own module; importing it here registers them with Base for Alembic and the app.
 from app.ai import models as _ai_models  # noqa: E402, F401
 from app.games import models as _game_models  # noqa: E402, F401

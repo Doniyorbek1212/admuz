@@ -38,6 +38,7 @@ import '../gifts/profile_background.dart';
 import '../gifts/gift_showcase.dart' show giftRecipientOf;
 import '../../widgets/emoji_pattern.dart';
 import '../gifts/uzaro_badge.dart' show NameBadges;
+import '../gifts/avatar_frames.dart' show userFrameProvider;
 import '../../state/settings.dart';
 import '../settings/message_tone_picker.dart';
 import 'profile_business.dart';
@@ -218,7 +219,13 @@ class ChatInfoScreen extends ConsumerWidget {
                             : () => openPhotoViewer(context, chat.photo!.big, chat.photo!.minithumbnail),
                     child: Hero(
                       tag: 'avatar_$chatId',
-                      child: GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
+                      // A worn UZARO frame replaces the gold ring and needs room for its plate below.
+                      child: user != null && ref.watch(userFrameProvider(user.id)).value != null
+                          ? Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              child: ChatAvatar(chatId: chatId, size: 116, showOnline: false),
+                            )
+                          : GoldRing(width: 2.5, child: ChatAvatar(chatId: chatId, size: 116, showOnline: false)),
                     ),
                   ),
                 ),

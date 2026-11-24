@@ -14,6 +14,7 @@ import '../core/file_guard.dart';
 import '../core/formatters.dart';
 import '../core/tdlib/td_client.dart';
 import '../core/theme.dart';
+import '../features/gifts/avatar_frames.dart' show UserFrame;
 import '../l10n/strings.dart';
 import '../state/providers.dart';
 
@@ -161,11 +162,14 @@ class Avatar extends StatelessWidget {
 
 /// Avatar for a chat, resolving Saved Messages, user presence and photos.
 class ChatAvatar extends ConsumerWidget {
-  const ChatAvatar({super.key, required this.chatId, this.size = 48, this.showOnline = true});
+  const ChatAvatar({super.key, required this.chatId, this.size = 48, this.showOnline = true, this.showFrame = true});
 
   final int chatId;
   final double size;
   final bool showOnline;
+
+  /// The UZARO avatar frame the person wears; off where something else rings the avatar (stories).
+  final bool showFrame;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -174,7 +178,7 @@ class ChatAvatar extends ConsumerWidget {
     if (chat == null) return SizedBox.square(dimension: size);
     final saved = account.isSavedMessages(chat);
     final user = account.privateUser(chat);
-    return Avatar(
+    final avatar = Avatar(
       name: chat.title,
       seed: user?.id ?? chat.id,
       photo: chat.photo?.small,
@@ -183,6 +187,8 @@ class ChatAvatar extends ConsumerWidget {
       online: showOnline && !saved && isOnline(user) && !account.isBot(user),
       icon: saved ? Icons.bookmark_rounded : null,
     );
+    if (!showFrame || user == null || saved || account.isBot(user)) return avatar;
+    return UserFrame(userId: user.id, size: size, child: avatar);
   }
 }
 
@@ -197,13 +203,17 @@ class UserAvatar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(userProvider(userId));
     if (user == null) return SizedBox.square(dimension: size);
-    return Avatar(
-      name: '${user.firstName} ${user.lastName}',
-      seed: user.id,
-      photo: user.profilePhoto?.small,
-      minithumbnail: user.profilePhoto?.minithumbnail,
+    return UserFrame(
+      userId: user.id,
       size: size,
-      online: showOnline && isOnline(user),
+      child: Avatar(
+        name: '${user.firstName} ${user.lastName}',
+        seed: user.id,
+        photo: user.profilePhoto?.small,
+        minithumbnail: user.profilePhoto?.minithumbnail,
+        size: size,
+        online: showOnline && isOnline(user),
+      ),
     );
   }
 }

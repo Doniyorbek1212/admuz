@@ -1,0 +1,24 @@
+{
+  "frames": [
+    {"id": "gold_laurel", "tier": 4, "price_uzs": 75000, "title": {"uz": "Oltin dafna", "ru": "Золотой лавр", "en": "Golden Laurel"}},
+    {"id": "teal_neon", "tier": 1, "price_uzs": 20000, "title": {"uz": "Zumrad neon", "ru": "Изумрудный неон", "en": "Emerald Neon"}},
+    {"id": "blue_crystal", "tier": 3, "price_uzs": 50000, "title": {"uz": "Moviy kristall", "ru": "Синий кристалл", "en": "Blue Crystal"}},
+    {"id": "fire_ring", "tier": 3, "price_uzs": 50000, "title": {"uz": "Olovli halqa", "ru": "Огненное кольцо", "en": "Ring of Fire"}},
+    {"id": "cosmic", "tier": 4, "price_uzs": 75000, "title": {"uz": "Koinot", "ru": "Космос", "en": "Cosmos"}},
+    {"id": "silver_diamond", "tier": 4, "price_uzs": 75000, "title": {"uz": "Kumush olmos", "ru": "Серебряный бриллиант", "en": "Silver Diamond"}},
+    {"id": "sakura", "tier": 2, "price_uzs": 35000, "title": {"uz": "Sakura", "ru": "Сакура", "en": "Sakura"}},
+    {"id": "green_laurel", "tier": 2, "price_uzs": 35000, "title": {"uz": "Yashil dafna", "ru": "Зелёный лавр", "en": "Green Laurel"}},
+    {"id": "cyan_hud", "tier": 1, "price_uzs": 20000, "title": {"uz": "Kiber halqa", "ru": "Кибер-кольцо", "en": "Cyber Ring"}},
+    {"id": "black_gold_ribbon", "tier": 4, "price_uzs": 75000, "title": {"uz": "Qora-oltin lenta", "ru": "Чёрно-золотая лента", "en": "Black & Gold Ribbon"}},
+    {"id": "purple_neon_crown", "tier": 3, "price_uzs": 50000, "title": {"uz": "Binafsha toj", "ru": "Фиолетовая корона", "en": "Violet Crown"}},
+    {"id": "ice_snow", "tier": 2, "price_uzs": 35000, "title": {"uz": "Qor va muz", "ru": "Снег и лёд", "en": "Snow & Ice"}},
+    {"id": "navy_laurel", "tier": 3, "price_uzs": 50000, "title": {"uz": "Ko'k medal", "ru": "Синяя медаль", "en": "Navy Medal"}},
+    {"id": "white_green_leaf", "tier": 1, "price_uzs": 20000, "title": {"uz": "Bahor bargi", "ru": "Весенний лист", "en": "Spring Leaf"}},
+    {"id": "teal_brush", "tier": 2, "price_uzs": 35000, "title": {"uz": "Mo'yqalam", "ru": "Мазок кисти", "en": "Brush Stroke"}},
+    {"id": "violet_hud", "tier": 1, "price_uzs": 20000, "title": {"uz": "Binafsha kiber", "ru": "Фиолетовый кибер", "en": "Violet Cyber"}},
+    {"id": "black_gold_stripes", "tier": 3, "price_uzs": 50000, "title": {"uz": "Qora-oltin chiziqlar", "ru": "Чёрно-золотые полосы", "en": "Black & Gold Stripes"}},
+    {"id": "red_hearts", "tier": 2, "price_uzs": 35000, "title": {"uz": "Yuraklar", "ru": "Сердца", "en": "Hearts"}},
+    {"id": "gold_stars", "tier": 3, "price_uzs": 50000, "title": {"uz": "Oltin yulduzlar", "ru": "Золотые звёзды", "en": "Golden Stars"}},
+    {"id": "green_leaves", "tier": 1, "price_uzs": 20000, "title": {"uz": "Yashil barglar", "ru": "Зелёные листья", "en": "Green Leaves"}}
+  ]
+}
