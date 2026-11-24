@@ -4,12 +4,13 @@ customer profiles and their admin review."""
 import io
 import os
 import tempfile
+import uuid
 
 import pytest
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import AdminRole, AdminUser, AuditLog
+from app.models import AdminRole, AdminUser, AuditLog, TelegramLink
 from app.security import new_secret, sha256_hex
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -396,6 +397,28 @@ async def test_admin_sees_shared_profiles_and_counts(new_customer, client, sessi
     assert (await client.get("/v1/admin/users", headers=admin, params={"q": "seller"})).json()["total"] == 0
     async with session_factory() as db:
         assert "users_listed" in set(await db.scalars(select(AuditLog.action)))
+
+
+async def test_admin_list_folds_reinstalls_of_one_phone(new_customer, client, session_factory):
+    old, linked, newest, stranger = await new_customer(), await new_customer(), await new_customer(), await new_customer()
+    admin = await _admin(session_factory)
+    profile = {"first_name": "Doniyor", "last_name": "A", "phone": "998901112233"}
+    for c in (old, linked, newest):
+        assert (await _put(c, "/v1/customers/me/profile", profile)).status_code == 200
+    await _shop(old)
+    async with session_factory() as db:
+        db.add(TelegramLink(customer_id=uuid.UUID(linked.id), telegram_user_id=777))
+        await db.commit()
+
+    listed = (await client.get("/v1/admin/users", headers=admin)).json()
+    assert listed["total"] == 2
+    rows = {u["id"]: u for u in listed["users"]}
+    assert set(rows) == {linked.id, stranger.id}, "the Telegram-linked install stands for the phone, not the newest"
+    assert rows[linked.id]["other_installs"] == 2 and rows[linked.id]["shops"] == 1
+    assert rows[stranger.id]["other_installs"] == 0
+
+    searched = (await client.get("/v1/admin/users", headers=admin, params={"q": "998901112233"})).json()
+    assert searched["total"] == 3 and all(u["other_installs"] == 0 for u in searched["users"])
 
 
 async def test_profile_input_is_validated(new_customer):

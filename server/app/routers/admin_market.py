@@ -8,13 +8,13 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 
 from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
 from app.market import ad_out, profile_out, shop_out
-from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop, WalletEntry
+from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop, TelegramLink, WalletEntry
 from app.services.audit import audit
 from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics
 from app.uploads import private_file
@@ -224,23 +224,33 @@ async def list_users(
     wallets = select(WalletEntry.customer_id, func.sum(WalletEntry.delta_uzs).label("uzs")).group_by(WalletEntry.customer_id).subquery()
     # Registration order over every customer ever made, so a user's number never changes.
     numbers = select(Customer.id, func.row_number().over(order_by=(Customer.created_at, Customer.id)).label("no")).subquery()
-    stmt = (
+    # Every reinstall makes a new anonymous customer that shares the same profile, so the plain list shows one row
+    # per phone: the Telegram-linked (else newest) account, with the totals of all of them. A search lists each one.
+    person = Customer.id if q else func.coalesce(func.nullif(CustomerProfile.phone, ""), cast(Customer.id, String))
+    grouped = (
         select(
-            Customer,
-            CustomerProfile,
-            func.coalesce(shops.c.n, 0),
-            func.coalesce(ads.c.n, 0),
-            platform.c.platform,
-            func.coalesce(wallets.c.uzs, 0),
-            numbers.c.no,
+            Customer.id.label("cid"),
+            func.row_number().over(partition_by=person, order_by=(TelegramLink.customer_id.is_(None), Customer.created_at.desc())).label("rank"),
+            func.count().over(partition_by=person).label("installs"),
+            func.sum(func.coalesce(shops.c.n, 0)).over(partition_by=person).label("shops"),
+            func.sum(func.coalesce(ads.c.n, 0)).over(partition_by=person).label("ads"),
+            func.sum(func.coalesce(wallets.c.uzs, 0)).over(partition_by=person).label("uzs"),
         )
-        .join(numbers, numbers.c.id == Customer.id)
         .outerjoin(CustomerProfile, CustomerProfile.customer_id == Customer.id)
+        .outerjoin(TelegramLink, TelegramLink.customer_id == Customer.id)
         .outerjoin(shops, shops.c.owner_id == Customer.id)
         .outerjoin(ads, ads.c.customer_id == Customer.id)
-        .outerjoin(platform, platform.c.customer_id == Customer.id)
         .outerjoin(wallets, wallets.c.customer_id == Customer.id)
         .where(Customer.deleted_at.is_(None))
+        .subquery()
+    )
+    stmt = (
+        select(Customer, CustomerProfile, grouped.c.shops, grouped.c.ads, platform.c.platform, grouped.c.uzs, numbers.c.no, grouped.c.installs)
+        .join(grouped, grouped.c.cid == Customer.id)
+        .join(numbers, numbers.c.id == Customer.id)
+        .outerjoin(CustomerProfile, CustomerProfile.customer_id == Customer.id)
+        .outerjoin(platform, platform.c.customer_id == Customer.id)
+        .where(grouped.c.rank == 1)
     )
     if q:
         like = like_pattern(q.lstrip("@"))
@@ -264,11 +274,14 @@ async def list_users(
                 "created_at": c.created_at.isoformat(),
                 "platform": plat,
                 "profile": profile_out(p),
-                "shops": n_shops,
-                "ads": n_ads,
+                # Window sums come back as Decimal.
+                "shops": int(n_shops),
+                "ads": int(n_ads),
                 "wallet_uzs": int(uzs),
                 "number": int(no),
+                # Older installs folded into this row (same phone); 0 when searching.
+                "other_installs": int(installs) - 1,
             }
-            for c, p, n_shops, n_ads, plat, uzs, no in rows.all()
+            for c, p, n_shops, n_ads, plat, uzs, no, installs in rows.all()
         ],
     }
