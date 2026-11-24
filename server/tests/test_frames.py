@@ -5,7 +5,7 @@ import json
 import pytest
 from sqlalchemy import delete
 
-from app.models import FrameItem, OwnedFrame
+from app.models import AdminRole, FrameItem, OwnedFrame
 from app.services.frame_catalog import import_rendered_frames, parse_manifest
 from app.uploads import public_dir
 from tests.test_gifts import _admin, _link, _top_up, gifts_bot  # noqa: F401  (fixture used by autouse)
@@ -130,6 +130,34 @@ async def test_buy_wear_switch_and_lookup(client, session_factory, new_customer)
     assert (await alice.put("/v1/frames/me", json={"key": "frame_a"})).json()["equipped"] == "frame_a"
     async with session_factory() as db:
         assert await db.get(OwnedFrame, (7201, "frame_a")) is not None
+
+
+async def test_admin_edits_hides_and_deletes_frames(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    viewer = await _admin(session_factory, AdminRole.VIEWER)
+    await _frames(session_factory, ("adm_owned", 20_000), ("adm_spare", 35_000))
+    (public_dir() / "adm_spare.webp").write_bytes(b"RIFF....WEBP")
+    buyer = await new_customer()
+    await _link(client, buyer, 7301)
+    await _top_up(client, admin, buyer, 20_000)
+    assert (await buyer.post("/v1/frames/buy", json={"key": "adm_owned"})).status_code == 200
+
+    listed = {f["key"]: f for f in (await client.get("/v1/admin/frames", headers=viewer)).json()["items"]}
+    assert (listed["adm_owned"]["owners"], listed["adm_spare"]["owners"]) == (1, 0)
+    body = {"title": "Yangi nom", "price_uzs": 45_000, "sort": 3, "active": False}
+    assert (await client.put("/v1/admin/frames/adm_spare", headers=viewer, json=body)).status_code == 403
+    edited = (await client.put("/v1/admin/frames/adm_spare", headers=admin, json=body)).json()
+    assert (edited["title"], edited["price_uzs"], edited["sort"], edited["active"]) == ("Yangi nom", 45_000, 3, False)
+    assert (await client.put("/v1/admin/frames/adm_spare", headers=admin, json=body | {"price_uzs": 0})).status_code == 422
+    assert (await client.put("/v1/admin/frames/nope_frame", headers=admin, json=body)).status_code == 404
+
+    # Someone paid for it: it can only be hidden, never deleted from under them.
+    owned = await client.delete("/v1/admin/frames/adm_owned", headers=admin)
+    assert owned.json()["detail"]["code"] == "FRAME_IN_USE"
+    assert (await client.delete("/v1/admin/frames/adm_spare", headers=admin)).status_code == 204
+    async with session_factory() as db:
+        assert await db.get(FrameItem, "adm_spare") is None and await db.get(OwnedFrame, (7301, "adm_owned")) is not None
+    assert not (public_dir() / "adm_spare.webp").exists()
 
 
 async def test_requests_are_validated(client, new_customer):

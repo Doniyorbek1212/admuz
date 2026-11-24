@@ -6,6 +6,8 @@
 Object.assign(ERRORS, {
   NOT_A_GIFT_ANIMATION: "Fayl animatsion WebP yoki GIF bo'lishi kerak", GIFT_NOT_FOUND: "Sovg'a topilmadi",
   GIFT_IN_USE: "Bu sovg'a allaqachon yuborilgan: o'chirib bo'lmaydi, faqat yashirish mumkin",
+  FRAME_NOT_FOUND: 'Ramka topilmadi',
+  FRAME_IN_USE: "Bu ramkani kimdir sotib olgan: o'chirib bo'lmaydi, faqat sotuvdan olish mumkin",
   TOPUP_NOT_FOUND: "To'lov topilmadi", TOPUP_NOT_PENDING: "Bu to'lov allaqachon ko'rib chiqilgan",
   TELEGRAM_NOT_LINKED: "Bu Telegram ID UZARO hisobiga bog'lanmagan: foydalanuvchi ilovada Sovg'alar bo'limida bog'lashi kerak",
   GIFT_PACK_INVALID: "ZIP to'g'ri tayyorlanmagan", GIFT_PACK_TOO_BIG: 'ZIP 30 MB dan katta: bir nechta ZIPga bo\'ling',
@@ -115,6 +117,7 @@ const TOPUP_STATUS = { pending: 'Kutilmoqda', approved: 'Tasdiqlangan', rejected
 
 async function renderGifts(el, arg) {
   if (['pending', 'approved', 'rejected'].includes(arg)) return renderTopups(el, arg);
+  if (arg === 'frames') return renderFrames(el);
   const [list, topups] = await Promise.all([api('/v1/admin/gifts'), api('/v1/admin/gifts/topups')]);
   const support = can('support');
   const cards = list.items.map((g) => `<div class="card gift-card">
@@ -126,7 +129,8 @@ async function renderGifts(el, arg) {
     </div>`).join('');
   el.innerHTML = `
     <div class="tabs"><a class="tab" href="#gifts" aria-pressed="true">Katalog · ${list.items.length}</a>
-      <a class="tab" href="#gifts/pending" aria-pressed="false">To'lovlar · ${topups.pending} kutilmoqda</a></div>
+      <a class="tab" href="#gifts/pending" aria-pressed="false">To'lovlar · ${topups.pending} kutilmoqda</a>
+      <a class="tab" href="#gifts/frames" aria-pressed="false">Profil ramkalari</a></div>
     <div class="toolbar">${support ? `<button class="btn primary" id="g-pack" type="button">📦 Blender sovg'alarini yuklash</button>
       <button class="btn" id="g-new" type="button">+ Oddiy sovg'a qo'shish</button>` : ''}
       ${can('finance') ? '<button class="btn" id="g-bonus" type="button">+ Balansga bonus (keshbek)</button>' : ''}</div>
@@ -183,6 +187,61 @@ function giftForm(gift, el) {
   };
 }
 
+// Avatar frames come from `python -m app.cli import-frame-renders`; here only price, name, order and sale change.
+async function renderFrames(el) {
+  const list = await api('/v1/admin/frames');
+  const support = can('support');
+  const cards = list.items.map((f) => `<div class="card gift-card">
+      <img src="${esc(f.animation_url)}" alt="" width="96" height="96" loading="lazy">
+      <b>${esc(f.title)}</b><span class="pill gold">${esc(som(f.price_uzs))}</span>
+      <span class="muted">Sotib olgan: ${f.owners}${f.active ? '' : ' · <span class="pill bad">Sotuvda emas</span>'}</span>
+      ${support ? `<div class="toolbar"><button class="btn" data-f="edit" data-key="${esc(f.key)}">Tahrirlash</button>
+        ${f.owners ? '' : `<button class="btn bad" data-f="delete" data-key="${esc(f.key)}">O'chirish</button>`}</div>` : ''}
+    </div>`).join('');
+  el.innerHTML = `
+    <div class="tabs"><a class="tab" href="#gifts" aria-pressed="false">Katalog</a>
+      <a class="tab" href="#gifts/pending" aria-pressed="false">To'lovlar</a>
+      <a class="tab" href="#gifts/frames" aria-pressed="true">Profil ramkalari · ${list.items.length}</a></div>
+    ${list.items.length ? `<div class="gift-grid">${cards}</div>` : '<div class="empty">Hali ramka yo\'q. Serverda <code>python -m app.cli import-frame-renders &lt;papka&gt;</code> qo\'shadi.</div>'}
+    <p class="muted">Ramka bir marta sotib olinadi. Yangi narx faqat keyingi xaridlarga ta'sir qiladi. Sotib olingan ramkani o'chirib bo'lmaydi: egalarida qoladi, uni faqat sotuvdan olish mumkin.</p>`;
+  el.querySelectorAll('[data-f]').forEach((b) => {
+    const frame = list.items.find((f) => f.key === b.dataset.key);
+    b.onclick = async () => {
+      if (b.dataset.f === 'edit') return frameForm(frame, el);
+      if (!(await confirmBox(`"${frame.title}" ni o'chirish`, 'Ramka katalogdan va serverdan butunlay o\'chiriladi.', "O'chirish"))) return undefined;
+      // DELETE answers 204 (null); run() gives undefined only on failure.
+      if (await run(() => api(`/v1/admin/frames/${frame.key}`, { method: 'DELETE' }), "O'chirildi") !== undefined) renderFrames(el);
+      return undefined;
+    };
+  });
+}
+
+function frameForm(frame, el) {
+  const body = openModal('Ramkani tahrirlash', `
+    <form class="stack" id="f-form">
+      <div class="form-grid">
+        <div class="field"><label for="f-title">Nomi</label><input id="f-title" required maxlength="64" value="${esc(frame.title)}"></div>
+        <div class="field"><label for="f-price">Narxi (so'm)</label><input id="f-price" type="number" min="1" max="10000000" step="500" required value="${frame.price_uzs}"></div>
+        <div class="field"><label for="f-sort">Tartib (kichigi oldin)</label><input id="f-sort" type="number" min="0" max="10000" value="${frame.sort}"></div>
+      </div>
+      <label class="chip"><input type="checkbox" id="f-active" ${frame.active ? 'checked' : ''}> Ilovada sotuvda</label>
+      <div><button class="btn primary" type="submit">Saqlash</button></div>
+    </form>`);
+  body.querySelector('#f-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const payload = {
+      title: body.querySelector('#f-title').value.trim(),
+      price_uzs: Number(body.querySelector('#f-price').value),
+      sort: Number(body.querySelector('#f-sort').value || 0),
+      active: body.querySelector('#f-active').checked,
+    };
+    if (await run(() => api(`/v1/admin/frames/${frame.key}`, { method: 'PUT', body: payload }), 'Saqlandi')) {
+      closeModal();
+      renderFrames(el);
+    }
+  };
+}
+
 async function renderTopups(el, state) {
   const list = await api(`/v1/admin/gifts/topups?state=${state}`);
   const support = can('support');
@@ -196,7 +255,8 @@ async function renderTopups(el, state) {
         ${support && t.status === 'pending' ? `<button class="btn primary" data-t="approve" data-id="${esc(t.id)}">Tasdiqlash</button>
         <button class="btn bad" data-t="reject" data-id="${esc(t.id)}">Rad etish</button>` : ''}</div></td></tr>`).join('');
   el.innerHTML = `
-    <div class="tabs"><a class="tab" href="#gifts" aria-pressed="false">Katalog</a>${['pending', 'approved', 'rejected'].map(tab).join('')}</div>
+    <div class="tabs"><a class="tab" href="#gifts" aria-pressed="false">Katalog</a>${['pending', 'approved', 'rejected'].map(tab).join('')}
+      <a class="tab" href="#gifts/frames" aria-pressed="false">Profil ramkalari</a></div>
     ${list.items.length ? `<div class="table-wrap"><table><thead><tr><th>Sana</th><th>Summa</th><th>Foydalanuvchi</th><th>Izoh</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>` : '<div class="empty">Bu yerda to\'lov yo\'q</div>'}
     <p class="muted">Chekdagi summa kartaga (Sozlamalar → Karta raqami) tushganini tekshiring. Tasdiqlansa, summa foydalanuvchining UZARO balansiga qo'shiladi.</p>`;
