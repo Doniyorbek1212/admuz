@@ -119,10 +119,13 @@ String withoutMediaEmoji(String preview) => preview.replaceFirst(RegExp(r'^(🖼
 
 /// Renders a FormattedText with Telegram entities (links, mentions, bold, code, spoilers...).
 class FormattedTextView extends StatefulWidget {
-  const FormattedTextView({super.key, required this.text, this.style, this.onMention, this.trailingSpace = 0});
+  const FormattedTextView({super.key, required this.text, this.style, this.onMention, this.onCommand, this.trailingSpace = 0});
 
   final td.FormattedText text;
   final TextStyle? style;
+
+  /// Sends a tapped "/command" to the chat; without it commands are only coloured.
+  final void Function(String command)? onCommand;
 
   /// Invisible room at the end of the last line (the bubble draws the time there when it fits).
   final double trailingSpace;
@@ -231,6 +234,9 @@ class _FormattedTextViewState extends State<FormattedTextView> {
         );
       case td.TextEntityTypeMentionName(:final userId):
         return TextSpan(text: part, style: TextStyle(color: linkColor), recognizer: _tap(() => _openUserId(userId)));
+      case td.TextEntityTypeBotCommand():
+        final onCommand = widget.onCommand;
+        return TextSpan(text: part, style: TextStyle(color: linkColor), recognizer: onCommand == null ? null : _tap(() => onCommand(part)));
       case td.TextEntityTypeHashtag() || td.TextEntityTypeCashtag():
         return TextSpan(
           text: part,
@@ -487,12 +493,24 @@ class _PhotoViewState extends State<_PhotoView> {
               _hidden ? ImageFiltered(imageFilter: _blur, child: image) : image,
               _TransferOverlay(file: size.photo),
               if (!download)
+                // The size under the button tells what the tap will cost (aka).
                 Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
-                    child: const Icon(Icons.download_rounded, color: Colors.white, size: 28),
-                  ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                      child: const Icon(Icons.download_rounded, color: Colors.white, size: 28),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(9)),
+                      child: Text(
+                        formatFileSize(size.photo.size == 0 ? size.photo.expectedSize : size.photo.size),
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                  ]),
                 ),
             ],
           ),
@@ -1119,6 +1137,7 @@ class VoiceNoteView extends ConsumerWidget {
     final samples = decodeWaveform(voiceNote.waveform);
     final playback = Playback.instance;
     final recognition = voiceNote.speechRecognitionResult;
+    final title = context.t('voice_message');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -1163,9 +1182,17 @@ class VoiceNoteView extends ConsumerWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            CustomPaint(
-                              size: const Size(150, 26),
-                              painter: WaveformPainter(samples: samples, progress: fraction.clamp(0, 1), color: primary),
+                            _SeekableWaveform(
+                              samples: samples,
+                              progress: fraction.clamp(0, 1),
+                              color: primary,
+                              // Tap or drag anywhere on the waveform to jump there, as in Telegram.
+                              onSeek: isDesktop && !Platform.isMacOS
+                                  ? null
+                                  : (at) async {
+                                      if (!isCurrent) await playback.playMessage(account, message, title: title);
+                                      await playback.player.seek((playback.player.duration ?? total) * at);
+                                    },
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -1343,6 +1370,53 @@ String errorTextFromCode(BuildContext context, String code) {
   final s = context.s;
   final known = s.error(code);
   return known == s.t('err_GENERIC') ? code.replaceAll('_', ' ') : known;
+}
+
+/// Voice-note waveform that seeks: a tap jumps to that spot, a drag shows where it will land and jumps on release.
+class _SeekableWaveform extends StatefulWidget {
+  const _SeekableWaveform({required this.samples, required this.progress, required this.color, required this.onSeek});
+
+  final List<int> samples;
+  final double progress;
+  final Color color;
+
+  /// Fraction 0..1 of the note; null where seeking is not possible.
+  final ValueChanged<double>? onSeek;
+
+  @override
+  State<_SeekableWaveform> createState() => _SeekableWaveformState();
+}
+
+class _SeekableWaveformState extends State<_SeekableWaveform> {
+  static const _size = Size(150, 26);
+
+  double? _dragging;
+
+  double _at(Offset local) => (local.dx / _size.width).clamp(0.0, 1.0);
+
+  @override
+  Widget build(BuildContext context) {
+    final paint = CustomPaint(
+      size: _size,
+      painter: WaveformPainter(samples: widget.samples, progress: _dragging ?? widget.progress, color: widget.color),
+    );
+    final onSeek = widget.onSeek;
+    if (onSeek == null) return paint;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (d) => onSeek(_at(d.localPosition)),
+      onHorizontalDragStart: (d) => setState(() => _dragging = _at(d.localPosition)),
+      onHorizontalDragUpdate: (d) => setState(() => _dragging = _at(d.localPosition)),
+      onHorizontalDragEnd: (_) {
+        final at = _dragging;
+        setState(() => _dragging = null);
+        if (at != null) onSeek(at);
+      },
+      onHorizontalDragCancel: () => setState(() => _dragging = null),
+      // Taller hit area than the bars so a finger catches it easily.
+      child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: paint),
+    );
+  }
 }
 
 class WaveformPainter extends CustomPainter {

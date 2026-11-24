@@ -114,7 +114,7 @@ class ChatBackground extends ConsumerWidget {
               fit: StackFit.expand,
               children: [
                 RepaintBoundary(
-                  child: CustomPaint(painter: ChatPatternPainter(color: dark ? Colors.white.withValues(alpha: 0.035) : Colors.black.withValues(alpha: 0.055))),
+                  child: CustomPaint(painter: ChatPatternPainter(color: dark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.08))),
                 ),
                 child,
               ],

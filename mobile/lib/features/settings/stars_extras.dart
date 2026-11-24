@@ -12,6 +12,7 @@ import '../../state/telegram.dart';
 import '../../widgets/common.dart';
 import '../chat/composer_panels.dart' show StickerThumb;
 import '../chat/payments.dart' show formatInvoiceAmount;
+import '../contacts/contacts_screen.dart' show ContactsScreen;
 import '../profile/statistics_screen.dart' show StatGraphCard;
 import 'privacy_screen.dart' show promptText;
 
@@ -40,7 +41,10 @@ class _RevenueScreenState extends ConsumerState<RevenueScreen> {
   late final TelegramAccount _account = ref.read(accountProvider);
   td.ChatRevenueStatistics? _chat;
   td.StarRevenueStatistics? _stars;
+  td.GramRevenueStatistics? _grams;
   List<td.ChatRevenueTransaction> _transactions = const [];
+
+  bool get _isMe => switch (widget.owner) { td.MessageSenderUser(:final userId) => userId == _account.myId, _ => false };
 
   @override
   void initState() {
@@ -64,6 +68,14 @@ class _RevenueScreenState extends ConsumerState<RevenueScreen> {
     } on TdException catch (error) {
       debugPrint('star revenue unavailable: $error');
     }
+    if (_isMe) {
+      // The user's own TON earnings (e.g. from selling gifts and usernames).
+      try {
+        _grams = await _account.send<td.GramRevenueStatistics>(td.GetGramRevenueStatistics(isDark: dark));
+      } on TdException catch (error) {
+        debugPrint('gram revenue unavailable: $error');
+      }
+    }
     if (mounted) setState(() {});
   }
 
@@ -73,6 +85,13 @@ class _RevenueScreenState extends ConsumerState<RevenueScreen> {
     final password = await _password();
     if (password == null || password.isEmpty || !mounted) return;
     final url = await guard(context, () => _account.send<td.HttpUrl>(td.GetChatRevenueWithdrawalUrl(chatId: widget.chatId!, password: password)));
+    if (url != null) await launchUrl(Uri.parse(url.url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _withdrawGrams() async {
+    final password = await _password();
+    if (password == null || password.isEmpty || !mounted) return;
+    final url = await guard(context, () => _account.send<td.HttpUrl>(td.GetGramWithdrawalUrl(password: password)));
     if (url != null) await launchUrl(Uri.parse(url.url), mode: LaunchMode.externalApplication);
   }
 
@@ -96,12 +115,22 @@ class _RevenueScreenState extends ConsumerState<RevenueScreen> {
     final s = context.s;
     final chat = _chat;
     final stars = _stars;
+    final grams = _grams;
     final graphChat = widget.chatId ?? (widget.owner is td.MessageSenderChat ? (widget.owner as td.MessageSenderChat).chatId : 0);
     return Scaffold(
       appBar: AppBar(title: Text(s.t('revenue'))),
-      body: chat == null && stars == null
+      body: chat == null && stars == null && grams == null
           ? Center(child: Text(s.t('revenue_none')))
           : ListView(children: [
+              if (grams != null && grams.status.totalAmount > 0) ...[
+                SectionHeader(s.t('revenue_ton')),
+                ListTile(
+                  title: Text(_crypto(grams.status.availableAmount, 'TON')),
+                  subtitle: Text(s.t('revenue_total', {'n': _crypto(grams.status.totalAmount, 'TON')})),
+                  trailing: grams.status.withdrawalEnabled ? FilledButton(onPressed: _withdrawGrams, child: Text(s.t('revenue_withdraw'))) : null,
+                ),
+                StatGraphCard(chatId: graphChat, title: s.t('revenue_graph'), graph: grams.revenueByDayGraph),
+              ],
               if (chat != null) ...[
                 SectionHeader(s.t('revenue_ads')),
                 ListTile(
@@ -474,13 +503,32 @@ class PremiumCatalogSection extends ConsumerWidget {
                     builder: (context, sticker) => SizedBox.square(dimension: 36, child: sticker.data == null ? const Icon(Icons.card_giftcard_rounded) : StickerThumb(sticker: sticker.data!)),
                   ),
                   title: Text(s.t('premium_months', {'n': '${o.monthCount}'})),
+                  subtitle: o.starCount > 0 ? Text(s.t('premium_gift_with_stars')) : null,
                   trailing: Text([formatInvoiceAmount(o.amount, o.currency), if (o.starCount > 0) '${o.starCount} ⭐'].join(' / ')),
+                  onTap: o.starCount > 0 ? () => _giftPremiumWithStars(context, account, o) : null,
                 ),
             ]);
           },
         ),
     ]);
   }
+}
+
+/// Pays [option]'s Stars price so a contact gets Premium for its months.
+Future<void> _giftPremiumWithStars(BuildContext context, TelegramAccount account, td.PremiumGiftPaymentOption option) async {
+  final s = context.s;
+  final user = await Navigator.of(context).push<td.User>(MaterialPageRoute(builder: (_) => const ContactsScreen(pickUser: true)));
+  if (user == null || !context.mounted) return;
+  final months = s.t('premium_months', {'n': '${option.monthCount}'});
+  final ask = s.t('premium_gift_stars_ask', {'name': user.firstName, 'n': '${option.starCount}'});
+  final ok = await confirm(context, title: months, message: ask);
+  if (!ok || !context.mounted) return;
+  final done = await guard(context, () async {
+    await account.send<td.Ok>(td.GiftPremiumWithStars(
+        userId: user.id, starCount: option.starCount, monthCount: option.monthCount, text: const td.FormattedText(text: '', entities: [])));
+    return true;
+  });
+  if (done == true && context.mounted) showToast(context, s.t('premium_gift_sent', {'name': user.firstName}));
 }
 
 String premiumLimitLabel(td.PremiumLimitType type, Strings s) => switch (type) {

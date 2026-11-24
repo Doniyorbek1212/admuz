@@ -94,19 +94,20 @@ class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
 ThemeData buildTheme(Brightness brightness, Color accent, {String fontFamily = '', bool smoothTransitions = true}) {
   final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: brightness);
   final isDark = brightness == Brightness.dark;
-  final surface = isDark ? const Color(0xFF151A21) : Colors.white;
+  // Night is blue-grey, not black: near-black read as a blank screen next to Telegram-style clients.
+  final surface = isDark ? const Color(0xFF1C2531) : Colors.white;
   // Phone pages sit on a faint accent wash (mint for the default teal); cards and lists stay white.
   final page = isDark || isDesktop ? surface : Color.lerp(accent, Colors.white, 0.95)!;
   // Dialogs, sheets and menus sit one step above the page.
-  final elevated = isDark ? const Color(0xFF1C232D) : Colors.white;
+  final elevated = isDark ? const Color(0xFF243040) : Colors.white;
   final chatColors = ChatColors(
     outgoingBubble: isDark ? Color.lerp(accent, Colors.black, 0.35)! : Color.lerp(accent, Colors.white, 0.86)!,
-    incomingBubble: isDark ? const Color(0xFF222A35) : Colors.white,
+    incomingBubble: isDark ? const Color(0xFF283444) : Colors.white,
     outgoingText: isDark ? Colors.white : const Color(0xFF0E1621),
     incomingText: isDark ? Colors.white : const Color(0xFF0E1621),
     outgoingMeta: isDark ? Colors.white70 : Color.lerp(accent, Colors.black, 0.25)!,
     incomingMeta: isDark ? Colors.white54 : const Color(0xFF8A96A3),
-    chatBackground: isDark ? const Color(0xFF0E1218) : Color.lerp(accent, const Color(0xFFE6EFEF), 0.9)!,
+    chatBackground: isDark ? const Color(0xFF17202A) : Color.lerp(accent, const Color(0xFFE6EFEF), 0.9)!,
     online: const Color(0xFF2EBD59),
     unreadBadge: accent,
     mutedBadge: isDark ? const Color(0xFF4A5563) : Color.lerp(accent, const Color(0xFFB0BAC5), 0.7)!,
@@ -127,7 +128,7 @@ ThemeData buildTheme(Brightness brightness, Color accent, {String fontFamily = '
     scaffoldBackgroundColor: page,
     extensions: [chatColors],
     appBarTheme: AppBarTheme(
-      backgroundColor: isDark ? const Color(0xFF1B222C) : (lightBars ? surface : accent),
+      backgroundColor: isDark ? const Color(0xFF212C39) : (lightBars ? surface : accent),
       foregroundColor: barForeground,
       elevation: 0,
       scrolledUnderElevation: 0,

@@ -12,6 +12,7 @@ import '../chat/forward_picker.dart';
 import '../contacts/contacts_screen.dart';
 import '../home/home_screen.dart';
 import '../profile/profile_more.dart' show handleTooManyChannels;
+import '../settings/my_bots_screen.dart' show BotEditScreen;
 import 'web_app_screen.dart';
 
 /// Opens a Mini App page for [botUserId] at [url].
@@ -96,6 +97,12 @@ class BotProfileExtras extends ConsumerWidget {
     final similar = ref.watch(_similarBotsProvider(bot.id)).value;
     final botInfo = info?.botInfo;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (type is td.UserTypeBot && type.canBeEdited)
+        ListTile(
+          leading: const Icon(Icons.edit_rounded),
+          title: Text(s.t('bot_edit')),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => BotEditScreen(botUserId: bot.id))),
+        ),
       if (type is td.UserTypeBot && type.hasMainWebApp)
         ListTile(leading: const Icon(Icons.apps_rounded), title: Text(s.t('bot_open_app')), onTap: () => _openMainApp(context, account)),
       if (attach != null)

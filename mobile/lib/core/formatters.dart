@@ -66,7 +66,10 @@ bool isOnline(td.User? user) =>
     (user!.status as td.UserStatusOnline).expires * 1000 > DateTime.now().millisecondsSinceEpoch;
 
 String formatUserStatus(td.User user, Strings s) {
-  if (user.type is td.UserTypeBot) return s.t('bot');
+  // Like the official apps: a bot's monthly users ("8,083,461 monthly users") when Telegram reports them.
+  if (user.type case td.UserTypeBot(:final activeUserCount)) {
+    return activeUserCount > 0 ? s.t('bot_monthly_users', {'n': NumberFormat('#,###', 'en').format(activeUserCount)}) : s.t('bot');
+  }
   if (user.type is td.UserTypeDeleted) return s.t('deleted_account');
   if (user.isSupport) return s.t('support');
   final status = user.status;

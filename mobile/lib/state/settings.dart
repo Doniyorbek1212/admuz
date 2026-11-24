@@ -35,7 +35,7 @@ class AppSettings {
     this.keepAlive = false,
     this.bubbleRadius = 18,
     this.showTranslateButton = true,
-    this.chatTypeTabs = false,
+    this.chatTypeTabs = true,
     this.chatTabOrder = const [],
     this.keepMediaDays = 0,
     this.autoDownloadPhotos = false,
@@ -270,7 +270,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       keepAlive: _prefs.getBool('keepAlive') ?? false,
       bubbleRadius: _prefs.getDouble('bubbleRadius') ?? 18,
       showTranslateButton: _prefs.getBool('showTranslateButton') ?? true,
-      chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? false,
+      // On by default, as in aka: Personal / Groups / Channels / Bots / Unread icon tabs. A user's own "off" is kept.
+      chatTypeTabs: _prefs.getBool('chatTypeTabs') ?? true,
       chatTabOrder: _prefs.getStringList('chatTabOrder') ?? const [],
       keepMediaDays: _prefs.getInt('keepMediaDays') ?? 0,
       // Off until the user turns it on: saves traffic; photos load on tap.

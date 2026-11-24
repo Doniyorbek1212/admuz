@@ -23,7 +23,7 @@ Future<void> _pumpGate(WidgetTester tester, {required bool passcode}) => tester.
       ),
     );
 
-/// Locked with an old 4-digit PIN "1234"; records the PIN that replaces it.
+/// Locked with a 4-digit PIN "1234"; records any PIN that would replace it.
 class _LegacyLock extends AppLockNotifier {
   String? stored;
 
@@ -51,7 +51,7 @@ Future<void> _type(WidgetTester tester, String digits) async {
 bool _covered(WidgetTester tester) => find.byType(ColoredBox).evaluate().any((e) => e.findAncestorWidgetOfExactType<AppLockGate>() != null);
 
 void main() {
-  testWidgets('an old 4-digit PIN unlocks only after a new 6-digit PIN replaces it', (tester) async {
+  testWidgets('a 4-digit PIN unlocks as it is, without forcing a 6-digit one', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final lock = _LegacyLock();
@@ -61,17 +61,34 @@ void main() {
     ));
     expect(find.text('secret chat'), findsNothing);
 
+    await _type(tester, '1235');
+    expect(find.text('secret chat'), findsNothing, reason: 'wrong PIN stays locked');
+
     await _type(tester, '1234');
-    expect(find.text('secret chat'), findsNothing, reason: 'still locked: the 4-digit PIN must be replaced');
-
-    await _type(tester, '135790');
-    await _type(tester, '135791'); // mismatch: asked for the new PIN again
-    expect(lock.stored, isNull);
-
-    await _type(tester, '135790');
-    await _type(tester, '135790');
-    expect(lock.stored, '135790');
     expect(find.text('secret chat'), findsOneWidget);
+    expect(lock.stored, isNull, reason: 'no replacement PIN asked for');
+  });
+
+  testWidgets('a new PIN can be 6 digits or, after switching, 4', (tester) async {
+    String? result;
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () async => result = await Navigator.of(context)
+              .push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_new', canSwitchLength: true))),
+          child: const Text('open'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await _type(tester, '12');
+    await tester.tap(find.text('4 xonali kod'));
+    await tester.pump();
+    await _type(tester, '9876'); // the switch cleared the two digits typed before it
+    await tester.pumpAndSettle();
+    expect(result, '9876');
   });
 
   testWidgets('iOS hides the chats from the app switcher while a passcode is set', (tester) async {

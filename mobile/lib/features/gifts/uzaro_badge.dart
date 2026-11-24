@@ -58,7 +58,11 @@ class NameBadges extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(accountProvider);
     final user = account.privateUser(chat);
+    // Telegram's own blue check (official bots, channels, people), shown first as in the official apps.
+    final verified = (user?.verificationStatus ?? account.supergroupOf(chat)?.verificationStatus)?.isVerified ?? false;
     return Row(mainAxisSize: MainAxisSize.min, children: [
+      if (verified)
+        Padding(padding: const EdgeInsets.only(left: 3), child: Icon(Icons.verified_rounded, size: size, color: const Color(0xFF3D9AEF))),
       EmojiStatusBadge(status: chat.emojiStatus, size: size),
       if (user != null && !account.isSavedMessages(chat)) UzaroBadge(userId: user.id, size: size),
     ]);

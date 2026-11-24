@@ -265,9 +265,15 @@ class ChatInfoScreen extends ConsumerWidget {
                     ),
                     if (canGift && (callable || user == null))
                       _ActionTile(icon: Icons.card_giftcard_rounded, label: s.t('gift_short'), onTap: sendGift),
+                    // As in the official apps: "Call" rings at once, then "Video"; a long press offers the SIM call too.
                     if (callable) ...[
+                      _ActionTile(
+                        icon: Icons.call_rounded,
+                        label: s.t('call'),
+                        onTap: () => startTelegramCall(context, user.id),
+                        onLongPress: () => showCallOptions(context, user),
+                      ),
                       _ActionTile(icon: Icons.videocam_rounded, label: s.t('video'), onTap: () => startTelegramCall(context, user.id, video: true)),
-                      _ActionTile(icon: Icons.call_rounded, label: s.t('call'), onTap: () => showCallOptions(context, user)),
                     ] else if (user == null && account.isMember(chat) && !account.isSavedMessages(chat))
                       _ActionTile(
                         icon: Icons.logout_rounded,
@@ -588,11 +594,12 @@ String _birthdayText(td.Birthdate birthdate, Strings s) {
 
 /// Rounded quick-action tile under the profile name (Message, Mute, Call, Video).
 class _ActionTile extends StatelessWidget {
-  const _ActionTile({required this.icon, required this.label, required this.onTap, this.color});
+  const _ActionTile({required this.icon, required this.label, required this.onTap, this.onLongPress, this.color});
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final Color? color;
 
   @override
@@ -611,6 +618,7 @@ class _ActionTile extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
+            onLongPress: onLongPress,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
               child: Column(

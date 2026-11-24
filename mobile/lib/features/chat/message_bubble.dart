@@ -33,6 +33,19 @@ final _replyTargetProvider = FutureProvider.autoDispose.family<td.Message?, (int
 });
 
 /// Message effects (the animated emoji a sender attached), fetched once per effect id.
+/// A tapped "/command" goes to the chat, as in the official apps. In groups it gets "@bot" of the bot that wrote it,
+/// so that bot answers and not another one.
+Future<void> sendBotCommand(BuildContext context, TelegramAccount account, td.Message message, td.Chat chat, String command) async {
+  var text = command;
+  if (account.privateUser(chat) == null && !command.contains('@')) {
+    final sender = message.senderId;
+    final bot = sender is td.MessageSenderUser ? account.users[sender.userId] : null;
+    final name = bot?.usernames?.activeUsernames.firstOrNull;
+    if (bot?.type is td.UserTypeBot && name != null) text = '$command@$name';
+  }
+  await guard(context, () => account.sendText(chat.id, text));
+}
+
 final messageEffectProvider = FutureProvider.family<td.MessageEffect?, int>((ref, effectId) async {
   try {
     return await ref.watch(accountProvider).send<td.MessageEffect>(td.GetMessageEffect(effectId: effectId));
@@ -297,9 +310,12 @@ class MessageBubble extends ConsumerWidget {
           ], policy: policy);
     // "Hide messages with dangerous links": the text stays folded until the user asks to see it.
     final folded = linkRisk.isDangerous && policy.hideMessages && !ref.watch(_revealedRiskyProvider).contains('${message.chatId}:${message.id}');
-    final inlineFooter = hasText && translation == null && !folded;
+    final hasReactions = message.interactionInfo?.reactions?.reactions.isNotEmpty ?? false;
     // Photos and videos without a caption carry the time on the media itself, edge to edge (Telegram/aka layout).
     final footerOnMedia = isMediaBubble && !hasText && translation == null;
+    // With reactions the time moves to the end of the reaction row (aka layout).
+    final footerInReactions = hasReactions && !footerOnMedia;
+    final inlineFooter = hasText && translation == null && !folded && !footerInReactions;
     final textColor = outgoing ? colors.outgoingText : colors.incomingText;
     final radius = Radius.circular(settings.bubbleRadius);
     final small = Radius.circular(settings.bubbleRadius / 3.5);
@@ -361,6 +377,7 @@ class MessageBubble extends ConsumerWidget {
               FormattedTextView(
                 text: text,
                 style: TextStyle(color: textColor, fontSize: 15.5 * settings.textScale, height: 1.3),
+                onCommand: (command) => sendBotCommand(context, ref.read(accountProvider), message, chat, command),
                 trailingSpace: _footerWidth(message, outgoing: outgoing, isChannel: isChannel, archived: archived) * MediaQuery.textScalerOf(context).scale(1),
               ),
               Positioned(
@@ -377,6 +394,7 @@ class MessageBubble extends ConsumerWidget {
           child: FormattedTextView(
             text: text,
             style: TextStyle(color: textColor, fontSize: 15.5 * settings.textScale, height: 1.3),
+            onCommand: (command) => sendBotCommand(context, ref.read(accountProvider), message, chat, command),
           ),
         ),
       if (content case td.MessageText(:final linkPreview?) when !folded) LinkPreviewCard(preview: linkPreview, textColor: textColor),
@@ -400,7 +418,7 @@ class MessageBubble extends ConsumerWidget {
             FormattedTextView(text: factCheck.text, style: TextStyle(color: textColor, fontSize: 14 * settings.textScale)),
           ]),
         ),
-      if (!inlineFooter && !footerOnMedia)
+      if (!inlineFooter && !footerOnMedia && !footerInReactions)
         Align(
           alignment: Alignment.bottomRight,
           child: Padding(
@@ -408,10 +426,19 @@ class MessageBubble extends ConsumerWidget {
             child: _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived),
           ),
         ),
-      if (message.interactionInfo?.reactions?.reactions.isNotEmpty ?? false)
+      if (hasReactions)
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-          child: _Reactions(message: message, outgoing: outgoing),
+          padding: EdgeInsets.fromLTRB(8, footerInReactions ? 6 : 0, 8, 6),
+          child: footerInReactions
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(child: _Reactions(message: message, outgoing: outgoing)),
+                    const SizedBox(width: 10),
+                    _Footer(message: message, chat: chat, outgoing: outgoing, isChannel: isChannel, archived: archived),
+                  ],
+                )
+              : _Reactions(message: message, outgoing: outgoing),
         ),
       if (message.interactionInfo?.replyInfo case final replyInfo? when isChannel) CommentsBar(message: message, replyInfo: replyInfo),
     ];
@@ -757,18 +784,63 @@ class _Reactions extends ConsumerWidget {
             GestureDetector(
               onTap: () => guard(context, () => account.toggleReaction(message, emoji)),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.fromLTRB(8, 3, 4, 3),
                 decoration: BoxDecoration(
                   color: reaction.isChosen ? primary : primary.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Text(
-                  '$emoji ${formatCount(reaction.totalCount)}',
-                  style: TextStyle(fontSize: 13, color: reaction.isChosen ? Colors.white : primary, fontWeight: FontWeight.w600),
-                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(emoji, style: const TextStyle(fontSize: 15)),
+                  const SizedBox(width: 4),
+                  // When every reactor is known (small chats), show who reacted instead of a number, as aka does.
+                  if (reaction.recentSenderIds.isNotEmpty && reaction.recentSenderIds.length == reaction.totalCount)
+                    _ReactorFaces(senders: reaction.recentSenderIds, ring: reaction.isChosen ? primary : Color.alphaBlend(primary.withValues(alpha: 0.14), Theme.of(context).colorScheme.surface))
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text(
+                        formatCount(reaction.totalCount),
+                        style: TextStyle(fontSize: 13, color: reaction.isChosen ? Colors.white : primary, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                ]),
               ),
             ),
       ],
+    );
+  }
+}
+
+/// Up to three overlapping reactor avatars inside a reaction chip.
+class _ReactorFaces extends StatelessWidget {
+  const _ReactorFaces({required this.senders, required this.ring});
+
+  final List<td.MessageSender> senders;
+  final Color ring;
+
+  static const _size = 20.0;
+  static const _step = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = senders.take(3).toList();
+    return SizedBox(
+      width: _size + _step * (shown.length - 1),
+      height: _size,
+      child: Stack(children: [
+        for (var i = shown.length - 1; i >= 0; i--)
+          Positioned(
+            left: _step * i,
+            child: Container(
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: ring, width: 1.5)),
+              child: switch (shown[i]) {
+                td.MessageSenderUser(:final userId) => UserAvatar(userId: userId, size: _size - 3, showOnline: false),
+                td.MessageSenderChat(:final chatId) => ChatAvatar(chatId: chatId, size: _size - 3, showOnline: false),
+                _ => const SizedBox(width: _size - 3, height: _size - 3),
+              },
+            ),
+          ),
+      ]),
     );
   }
 }

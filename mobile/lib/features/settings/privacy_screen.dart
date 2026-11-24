@@ -440,7 +440,7 @@ Future<void> _deleteAccountNow(BuildContext context, TelegramAccount account) as
   await guard(context, () => account.send<td.Ok>(td.DeleteAccount(reason: 'Deleted from UZARO', password: password)));
 }
 
-/// One-field text dialog; null when cancelled.
+/// One-field text dialog; null when cancelled. [TextInputType.multiline] grows the field with the text.
 Future<String?> promptText(BuildContext context,
     {required String title, required String label, TextInputType? keyboard, String initial = '', bool obscure = false, int? maxLength}) {
   final controller = TextEditingController(text: initial);
@@ -449,7 +449,13 @@ Future<String?> promptText(BuildContext context,
     builder: (context) => AlertDialog(
       title: Text(title),
       content: TextField(
-          controller: controller, autofocus: true, keyboardType: keyboard, obscureText: obscure, maxLength: maxLength, decoration: InputDecoration(labelText: label)),
+          controller: controller,
+          autofocus: true,
+          keyboardType: keyboard,
+          obscureText: obscure,
+          maxLength: maxLength,
+          maxLines: keyboard == TextInputType.multiline ? null : 1,
+          decoration: InputDecoration(labelText: label)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: Text(context.t('cancel'))),
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(context.t('ok'))),

@@ -1,14 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 
+import '../../core/app_lock.dart';
 import '../../core/formatters.dart';
 import '../../core/tdlib/td_client.dart';
 import '../../core/theme.dart';
 import '../../l10n/strings.dart';
+import '../../state/actions.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
@@ -23,6 +24,7 @@ import '../contacts/contacts_screen.dart';
 import '../search/search_screen.dart';
 import '../settings/folders_screen.dart';
 import '../settings/session_security.dart';
+import '../settings/settings_screen.dart';
 import '../stories/stories.dart';
 import 'chat_tile.dart';
 import 'ghost_mode_button.dart';
@@ -114,13 +116,8 @@ class HomeScreen extends ConsumerWidget {
                   appBar: AppBar(
                     toolbarHeight: 64,
                     flexibleSpace: const BrandCornerWave(),
-                    leading: inShell
-                        ? IconButton(
-                            icon: const Icon(Icons.menu_rounded, size: 28),
-                            tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
-                            onPressed: () => homeShellScaffoldKey.currentState?.openDrawer(),
-                          )
-                        : null,
+                    // No ☰: settings live in Profile and the ⋮ menu, as in aka.
+                    automaticallyImplyLeading: false,
                     title: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -130,8 +127,14 @@ class HomeScreen extends ConsumerWidget {
                     ),
                     actions: [
                       const _SearchButton(),
+                      if (ref.watch(appLockProvider.select((lock) => lock.enabled)))
+                        IconButton(
+                          icon: const Icon(Icons.lock_open_rounded, size: 26),
+                          tooltip: s.t('passcode_lock_now'),
+                          onPressed: ref.read(appLockProvider.notifier).lockNow,
+                        ),
                       if (ref.watch(settingsProvider.select((st) => st.showGhostButton))) const _RoundAction(child: GhostModeButton()),
-                      const SizedBox(width: 8),
+                      const _HomeMenu(),
                     ],
                     bottom: tabs.length > 1 ? _PillTabBar(tabs: tabs) : null,
                   ),
@@ -205,10 +208,52 @@ class _BrandHeaderTheme extends StatelessWidget {
           actionsIconTheme: IconThemeData(color: ink),
           titleTextStyle: bar.titleTextStyle?.copyWith(color: ink),
           // White status icons on BrandCornerWave's accent band, in both themes.
-          systemOverlayStyle: SystemUiOverlayStyle.light,
+          systemOverlayStyle: brandBarsStyle(context),
         ),
       ),
       child: child,
+    );
+  }
+}
+
+enum _MenuItem { settings, nightMode, newGroup, saved }
+
+/// ⋮ of the chat list header: settings, night/day mode, new group, saved messages.
+class _HomeMenu extends ConsumerWidget {
+  const _HomeMenu();
+
+  Future<void> _open(BuildContext context, WidgetRef ref, _MenuItem item) async {
+    switch (item) {
+      case _MenuItem.settings:
+        await openPanel(context, const SettingsScreen());
+      case _MenuItem.nightMode:
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        ref.read(settingsProvider.notifier).setThemeMode(dark ? ThemeMode.light : ThemeMode.dark);
+      case _MenuItem.newGroup:
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ContactsScreen(createGroup: true)));
+      case _MenuItem.saved:
+        final chat = await guard(context, ref.read(accountProvider).savedMessages);
+        if (chat != null && context.mounted) openChat(context, chat.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = context.s;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    PopupMenuItem<_MenuItem> item(_MenuItem value, IconData icon, String title) => PopupMenuItem(
+          value: value,
+          child: Row(children: [Icon(icon, size: 22), const SizedBox(width: 14), Text(title)]),
+        );
+    return PopupMenuButton<_MenuItem>(
+      icon: const Icon(Icons.more_vert_rounded, size: 27),
+      onSelected: (value) => unawaited(_open(context, ref, value)),
+      itemBuilder: (_) => [
+        item(_MenuItem.settings, Icons.settings_rounded, s.t('settings')),
+        item(_MenuItem.nightMode, dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded, s.t(dark ? 'day_mode' : 'night_mode')),
+        item(_MenuItem.newGroup, Icons.group_add_rounded, s.t('new_group')),
+        item(_MenuItem.saved, Icons.bookmark_rounded, s.t('saved_messages')),
+      ],
     );
   }
 }
@@ -251,7 +296,7 @@ class _PillTabBar extends StatelessWidget implements PreferredSizeWidget {
       isScrollable: true,
       tabAlignment: TabAlignment.start,
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      labelPadding: const EdgeInsets.symmetric(horizontal: 16),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 14),
       indicatorSize: TabBarIndicatorSize.tab,
       indicator: BoxDecoration(
         color: theme.brightness == Brightness.dark ? Color.lerp(accent, Colors.black, 0.2) : accent,
@@ -310,17 +355,17 @@ class _FolderTabLabel extends ConsumerWidget {
     // Follows the tab's animated label color: white on the selected pill, muted ink elsewhere.
     final color = DefaultTextStyle.of(context).style.color ?? context.onAppBar;
     final iconName = ref.watch(foldersProvider.select((folders) => folders.where((f) => 'folder:${f.id}' == listKey).firstOrNull?.icon.name));
+    // Icon only, as in aka: a folder's Telegram icon (its default "Custom" one is a plain folder), else the tab's own.
+    final icon = switch (iconName) {
+      final name? when name.isNotEmpty && name != 'Custom' => folderIconData(name),
+      _ => listKey.startsWith('folder:') ? Icons.folder_rounded : folderIconData(listKey),
+    };
     return GestureDetector(
       onLongPress: () => showFolderMenu(context, ref.read(accountProvider), listKey, title),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Telegram's default "Custom" icon stays hidden; a chosen one shows before the name.
-          if (iconName != null && iconName.isNotEmpty && iconName != 'Custom') ...[
-            Icon(folderIconData(iconName), size: 17, color: color),
-            const SizedBox(width: 6),
-          ],
-          Text(title),
+          Icon(icon, size: 24, color: color, semanticLabel: title),
           if (unread > 0) ...[
             const SizedBox(width: 8),
             Container(

@@ -278,7 +278,7 @@ class _OwnerProductCard extends StatelessWidget {
     final theme = Theme.of(context);
     final out = product.stock == 0;
     return Material(
-      color: theme.brightness == Brightness.dark ? const Color(0xFF222A35) : const Color(0xFFF6F7F9),
+      color: theme.brightness == Brightness.dark ? const Color(0xFF283444) : const Color(0xFFF6F7F9),
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

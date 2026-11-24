@@ -23,6 +23,7 @@ import '../chat/sticker_extras.dart' show pickPhotoSource;
 import 'advanced_settings.dart';
 import 'file_guard_screen.dart';
 import 'folders_screen.dart';
+import 'my_bots_screen.dart';
 import 'notifications_screen.dart';
 import '../search/search_screen.dart';
 import 'power_saving_screen.dart';
@@ -128,6 +129,7 @@ class SettingsScreen extends ConsumerWidget {
         _row(context, Icons.storefront_rounded, const Color(0xFFE5486A), s.t('telegram_business'), screen: const BusinessInfoScreen()),
         _row(context, Icons.card_giftcard_rounded, const Color(0xFFFF8A1F), s.t('send_gift'), onTap: () => sendGiftFlow(context)),
         _row(context, Icons.redeem_rounded, const Color(0xFFE5486A), s.t('my_gifts'), screen: const MyGiftsScreen()),
+        _row(context, Icons.smart_toy_rounded, const Color(0xFF0FA3B1), s.t('my_bots'), screen: const MyBotsScreen()),
       ],
     );
   }

@@ -98,6 +98,17 @@ class _CornerPainter extends CustomPainter {
   bool shouldRepaint(_CornerPainter old) => old.gradient != gradient || old.top != top;
 }
 
+/// White status icons for the corner-wave headers. Flutter's [SystemUiOverlayStyle.light] also paints the
+/// system navigation bar pure black; at night it takes the page colour instead.
+SystemUiOverlayStyle brandBarsStyle(BuildContext context) {
+  final theme = Theme.of(context);
+  if (theme.brightness != Brightness.dark) return SystemUiOverlayStyle.light;
+  return SystemUiOverlayStyle.light.copyWith(
+    systemNavigationBarColor: theme.scaffoldBackgroundColor,
+    systemNavigationBarIconBrightness: Brightness.light,
+  );
+}
+
 /// Ink of the light phone headers: white in dark mode, a deep shade of the accent in light mode.
 Color brandHeaderInk(BuildContext context) {
   final theme = Theme.of(context);
@@ -127,7 +138,7 @@ class BrandTabBar extends StatelessWidget implements PreferredSizeWidget {
       iconTheme: IconThemeData(color: ink),
       actionsIconTheme: IconThemeData(color: ink),
       // White status icons sit on the corner wave's accent band in both themes.
-      systemOverlayStyle: SystemUiOverlayStyle.light,
+      systemOverlayStyle: brandBarsStyle(context),
       flexibleSpace: const BrandCornerWave(),
       titleSpacing: 20,
       title: Text(title, style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.3, color: ink)),

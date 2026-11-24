@@ -137,7 +137,7 @@ class GlassSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tint = Color.alphaBlend(scheme.primary.withValues(alpha: 0.05), isDark ? const Color(0xFF1C232D) : Colors.white);
+    final tint = Color.alphaBlend(scheme.primary.withValues(alpha: 0.05), isDark ? const Color(0xFF243040) : Colors.white);
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(radius),
       side: BorderSide(color: Colors.white.withValues(alpha: isDark ? 0.10 : 0.55), width: 0.8),

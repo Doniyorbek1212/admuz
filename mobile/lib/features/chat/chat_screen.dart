@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,7 +18,6 @@ import '../../state/chat_history.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../state/telegram.dart';
-import '../../widgets/brand.dart';
 import '../../widgets/common.dart';
 import '../../widgets/message_context_menu.dart';
 import '../../widgets/playback_bar.dart';
@@ -53,6 +53,9 @@ import 'screen_effects.dart';
 import 'message_extras.dart';
 import 'scheduled_screen.dart';
 import 'sponsored_bubble.dart';
+
+/// Height of the floating header row (52px gold-framed pills plus their margins), below the status bar.
+const _floatingBarHeight = 62.0;
 
 /// Message menu entry: icon, label, action value (suffix ':destructive' paints it red).
 typedef _MenuEntry = (IconData, String, String);
@@ -734,6 +737,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _ => null,
     };
     final showStart = _history.initialized && _history.messages.isEmpty && _account.isBot(_account.privateUser(chat));
+    // Phones: the header is pills floating over the chat, so the chat runs under them up to the status bar.
+    final floating = !selecting && _floatingHeader;
+    final headerInset = floating ? MediaQuery.paddingOf(context).top + _floatingBarHeight : 0.0;
+    final topBars = [
+      const PlaybackBar(),
+      if (chat.videoChat.groupCallId != 0) VideoChatBar(chat: chat),
+      if (chat.actionBar != null && !selecting) ChatActionBarView(chat: chat),
+      if (chat.businessBotManageBar != null && !selecting) BusinessBotBar(chat: chat),
+      if (_pinned != null)
+        _PinnedBar(message: _pinned!, floating: floating, onTap: () => _jumpTo(_pinned!.id), onClose: () => setState(() => _pinned = null)),
+    ];
     return MessageActionScope(
       run: _runFromViewer,
       child: PopScope(
@@ -749,21 +763,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Scaffold(
         // Behind the floating header pills: the wallpaper's base color, so they read as floating over the chat.
         backgroundColor: context.chatColors.chatBackground,
+        extendBodyBehindAppBar: floating,
         appBar: selecting ? _selectionBar(s) : _chatBar(chat, s),
-        body: Column(
+        body: ChatBackground(
+          chatId: chat.id,
+          child: Column(
           children: [
-            const PlaybackBar(),
-            if (chat.videoChat.groupCallId != 0) VideoChatBar(chat: chat),
-            if (chat.actionBar != null && !selecting) ChatActionBarView(chat: chat),
-            if (chat.businessBotManageBar != null && !selecting) BusinessBotBar(chat: chat),
-            if (_pinned != null) _PinnedBar(message: _pinned!, onTap: () => _jumpTo(_pinned!.id), onClose: () => setState(() => _pinned = null)),
+            if (!floating) ...topBars,
             Expanded(
-              child: ChatBackground(
-                chatId: chat.id,
                 child: Stack(
                   children: [
-                    _messageList(chat),
+                    // shortcut: the extra inset assumes a one-line pinned bar; other top bars may cover the oldest message.
+                    _messageList(chat, topInset: headerInset + (floating && _pinned != null ? 60 : 0)),
                     ScreenEffectsOverlay(key: _effectsKey),
+                    if (floating) Positioned(top: headerInset, left: 0, right: 0, child: Column(mainAxisSize: MainAxisSize.min, children: topBars)),
                     if (replyKeyboard != null && !selecting)
                       Positioned(
                         left: 12,
@@ -795,7 +808,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
                   ],
                 ),
-              ),
             ),
             if (!selecting && replyKeyboard != null && markupMessage != null && !_replyKeyboardHidden)
               ReplyKeyboardPanel(
@@ -830,6 +842,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ],
           ],
+          ),
         ),
       ),
       ),
@@ -856,7 +869,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final action = chatActionText(chat, account, s);
     final subtitle = widget.topicName != null ? chatTitle(chat, account, s) : (action ?? chatSubtitle(chat, account, s));
     // Accent bars (phones, dark mode) get the branded gradient bar; desktop's light bars stay classic.
-    if (context.onAppBar == Colors.white) return _brandBar(chat, s, action, subtitle);
+    if (_floatingHeader) return _brandBar(chat, s, action, subtitle);
     return AppBar(
       // No back button when the chat is the split-view pane's root page.
       titleSpacing: Navigator.canPop(context) ? 0 : 12,
@@ -898,7 +911,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
       actions: [
         if (_callableUser(chat) case final user?)
-          IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
+          _callButton(user, s),
         _chatMenu(chat, s),
       ],
     );
@@ -911,62 +924,120 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return user;
   }
 
-  /// Phone header: one accent-gradient bar (the gold swoosh along its bottom edge is the only gold),
-  /// back · avatar with name and status · call and menu.
+  /// Phones (accent or dark bars) get the floating pill header; desktop's light bars stay classic.
+  bool get _floatingHeader => context.onAppBar == Colors.white;
+
+  /// Status bar icons follow the chat under them; the navigation bar takes the chat's color instead of black.
+  SystemUiOverlayStyle _chatBarsStyle() {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: context.chatColors.chatBackground,
+      systemNavigationBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+    );
+  }
+
+  /// Phone header as in aka: three pills floating over the chat, back · avatar with name and status · call and menu.
   PreferredSizeWidget _brandBar(td.Chat chat, Strings s, String? action, String subtitle) {
     final account = _account;
     final user = _callableUser(chat);
-    return AppBar(
-      toolbarHeight: 60,
-      titleSpacing: Navigator.canPop(context) ? 0 : 12,
-      systemOverlayStyle: SystemUiOverlayStyle.light,
-      flexibleSpace: const BrandBarBackground(),
-      backgroundColor: Colors.transparent,
-      title: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          child: Row(
-            children: [
-              ChatAvatar(chatId: chat.id, size: 40, showOnline: false),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      Flexible(
-                        child: Text(
-                          widget.topicName ?? chatTitle(chat, account, s),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white, height: 1.2),
-                        ),
-                      ),
-                      if (widget.topicName == null) NameBadges(chat: chat, size: 17),
-                    ]),
-                    if (subtitle.isNotEmpty)
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        // Typing/recording status stands out in bright green.
-                        style: TextStyle(fontSize: 13, color: action == null ? Colors.white.withValues(alpha: 0.75) : Colors.lightGreenAccent, height: 1.25),
-                      ),
-                  ],
+    final theme = Theme.of(context);
+    final ink = theme.colorScheme.onSurface;
+    // Each pill sits in the same polished gold frame as the composer (the UZARO look).
+    Widget pill(Widget child) => DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: goldMetal,
+            borderRadius: BorderRadius.circular(24 + goldRim),
+            boxShadow: [BoxShadow(color: brandGold.withValues(alpha: 0.3), blurRadius: 8)],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(goldRim),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: Material(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.9),
+                  shape: const StadiumBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: SizedBox(height: 46, child: child),
                 ),
               ),
-            ],
+            ),
+          ),
+        );
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(_floatingBarHeight),
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: _chatBarsStyle(),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+            child: IconTheme(
+              data: IconThemeData(color: ink),
+              child: Row(
+                children: [
+                  if (Navigator.canPop(context)) ...[
+                    pill(IconButton(
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                      onPressed: () => Navigator.maybePop(context),
+                    )),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: pill(InkWell(
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ChatInfoScreen(chatId: chat.id))),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 0, 14, 0),
+                        child: Row(
+                          children: [
+                            ChatAvatar(chatId: chat.id, size: 36, showOnline: false),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    Flexible(
+                                      child: Text(
+                                        widget.topicName ?? chatTitle(chat, account, s),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: ink, height: 1.2),
+                                      ),
+                                    ),
+                                    if (widget.topicName == null) NameBadges(chat: chat, size: 16),
+                                  ]),
+                                  if (subtitle.isNotEmpty)
+                                    Text(
+                                      subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      // Typing/recording status stands out in the accent color.
+                                      style: TextStyle(fontSize: 12.5, color: action == null ? ink.withValues(alpha: 0.6) : theme.colorScheme.primary, height: 1.2),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )),
+                  ),
+                  const SizedBox(width: 8),
+                  pill(Row(mainAxisSize: MainAxisSize.min, children: [
+                    if (user != null) _callButton(user, s),
+                    _chatMenu(chat, s),
+                  ])),
+                ],
+              ),
+            ),
           ),
         ),
       ),
-      actions: [
-        if (user != null) IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => _callOptions(user, s)),
-        _chatMenu(chat, s),
-        const SizedBox(width: 4),
-      ],
     );
   }
 
@@ -1156,7 +1227,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (first != null && mounted) await _jumpTo(first.id);
   }
 
-  Future<void> _callOptions(td.User user, Strings s) => showCallOptions(context, user);
+  /// As in the official apps the phone icon rings at once (video is in the menu); a long press offers the SIM call too.
+  Widget _callButton(td.User user, Strings s) => GestureDetector(
+        onLongPress: () => showCallOptions(context, user),
+        child: IconButton(icon: const Icon(Icons.call_rounded), tooltip: s.t('call'), onPressed: () => startTelegramCall(context, user.id)),
+      );
 
   PreferredSizeWidget _selectionBar(Strings s) {
     final messages = _selectedMessages;
@@ -1183,7 +1258,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  Widget _messageList(td.Chat chat) {
+  Widget _messageList(td.Chat chat, {double topInset = 0}) {
     final messages = _history.messages;
     final s = context.s;
     if (!_history.initialized) return const Center(child: CircularProgressIndicator());
@@ -1200,7 +1275,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return ListView.builder(
       controller: _scroll,
       reverse: true,
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.only(top: 8 + topInset, bottom: 8),
       itemCount: sponsoredSlots + messages.length + (_history.hasOlder ? 1 : 0),
       itemBuilder: (context, rawIndex) {
         // Telegram sponsored message goes after the newest ordinary message (bottom of a reversed list).
@@ -1340,8 +1415,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 }
 
 class _PinnedBar extends ConsumerWidget {
-  const _PinnedBar({required this.message, required this.onTap, required this.onClose});
+  const _PinnedBar({required this.message, required this.onTap, required this.onClose, this.floating = false});
 
+  /// Under the floating header pills the bar is a rounded card too, not an edge-to-edge strip.
+  final bool floating;
   final td.Message message;
   final VoidCallback onTap;
   final VoidCallback onClose;
@@ -1353,9 +1430,11 @@ class _PinnedBar extends ConsumerWidget {
     final primary = Theme.of(context).colorScheme.primary;
     final thumb = replyThumb(message.content);
     final preview = messagePreview(message, account, s);
-    return Material(
+    final bar = Material(
       color: Theme.of(context).colorScheme.surface,
       elevation: 1,
+      shape: floating ? RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)) : null,
+      clipBehavior: floating ? Clip.antiAlias : Clip.none,
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -1380,6 +1459,7 @@ class _PinnedBar extends ConsumerWidget {
         ),
       ),
     );
+    return floating ? Padding(padding: const EdgeInsets.fromLTRB(8, 2, 8, 4), child: bar) : bar;
   }
 }
 

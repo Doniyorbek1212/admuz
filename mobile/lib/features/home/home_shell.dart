@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -150,13 +152,7 @@ class _BottomBar extends ConsumerWidget {
               onTap: () => onSelect(3),
               onLongPress: () {
                 HapticFeedback.mediumImpact();
-                showModalBottomSheet<void>(
-                  context: context,
-                  showDragHandle: true,
-                  builder: (_) => const SafeArea(
-                    child: Padding(padding: EdgeInsets.fromLTRB(12, 0, 12, 12), child: AccountSwitcherList()),
-                  ),
-                );
+                _showAccountMenu(context);
               },
               onDoubleTap: () {
                 if (ref.read(accountSlotsProvider.notifier).switchToNext()) HapticFeedback.selectionClick();
@@ -174,6 +170,45 @@ class _BottomBar extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Long-press on Profile: the accounts pop up right above the tab over a blurred screen, not as a full sheet.
+void _showAccountMenu(BuildContext context) {
+  final media = MediaQuery.of(context);
+  // The bar sits in SafeArea(minimum: 10) and is 68 tall; the menu floats 8 above it.
+  final bottom = math.max(media.padding.bottom, 10.0) + 68 + 8;
+  final width = math.min(300.0, media.size.width * 0.72);
+  showGeneralDialog<void>(
+    context: context,
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 180),
+    pageBuilder: (dialogContext, _, _) => Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () => Navigator.pop(dialogContext),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: const ColoredBox(color: Color(0x33000000)),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 14,
+          bottom: bottom,
+          width: width,
+          child: const Material(type: MaterialType.transparency, child: AccountSwitcherList()),
+        ),
+      ],
+    ),
+    transitionBuilder: (_, animation, _, child) {
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: curved,
+        child: ScaleTransition(scale: Tween(begin: 0.92, end: 1.0).animate(curved), alignment: Alignment.bottomRight, child: child),
+      );
+    },
+  );
 }
 
 class _BarItem extends StatelessWidget {

@@ -44,8 +44,11 @@ class AppLockState {
       );
 }
 
-/// Digits asked for a new PIN.
+/// Digits asked for a new PIN by default; the user may switch to [shortPinLength], like Telegram.
 const newPinLength = 6;
+
+/// Shortest PIN allowed. PBKDF2 plus the growing cooldown keep 10 000 combinations slow to try.
+const shortPinLength = 4;
 
 /// PBKDF2-HMAC-SHA256 rounds; slow enough to hurt guessing, run off the UI isolate.
 const _pbkdf2Rounds = 150000;
@@ -199,8 +202,8 @@ class AppLockNotifier extends Notifier<AppLockState> {
     return true;
   }
 
-  /// A PIN shorter than [newPinLength] (set before 6 digits were required) must be replaced before unlocking.
-  bool get needsUpgrade => state.pinLength < newPinLength;
+  /// A PIN shorter than [shortPinLength] must be replaced before unlocking; 4 and 6 digits are both fine.
+  bool get needsUpgrade => state.pinLength < shortPinLength;
 
   void lockNow() {
     if (state.enabled) state = state.copyWith(locked: true);
@@ -337,7 +340,7 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
           }
           return;
         }
-        // Old 4-digit PIN: proven, but the app stays locked until a 6-digit one replaces it.
+        // PIN shorter than 4 digits: proven, but the app stays locked until a 6-digit one replaces it.
         final ok = await notifier.verify(pin);
         if (!mounted) return;
         if (!ok) HapticFeedback.heavyImpact();
@@ -464,9 +467,10 @@ class PasscodeSettingsScreen extends ConsumerWidget {
   const PasscodeSettingsScreen({super.key});
 
   Future<String?> _askNewPin(BuildContext context) async {
-    final first = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_new', length: newPinLength)));
+    final first = await Navigator.of(context)
+        .push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_new', canSwitchLength: true)));
     if (first == null || !context.mounted) return null;
-    final second = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PinEntryScreen(titleKey: 'passcode_repeat', length: newPinLength)));
+    final second = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => PinEntryScreen(titleKey: 'passcode_repeat', length: first.length)));
     if (second == null || !context.mounted) return null;
     if (first != second) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('passcode_mismatch'))));
@@ -557,10 +561,13 @@ Future<bool> checkCurrentPasscode(BuildContext context, WidgetRef ref) async {
 }
 
 class PinEntryScreen extends StatefulWidget {
-  const PinEntryScreen({super.key, required this.titleKey, this.length = newPinLength});
+  const PinEntryScreen({super.key, required this.titleKey, this.length = newPinLength, this.canSwitchLength = false});
 
   final String titleKey;
   final int length;
+
+  /// A new PIN: offers switching between 6 and 4 digits.
+  final bool canSwitchLength;
 
   @override
   State<PinEntryScreen> createState() => _PinEntryScreenState();
@@ -568,19 +575,38 @@ class PinEntryScreen extends StatefulWidget {
 
 class _PinEntryScreenState extends State<PinEntryScreen> {
   String _pin = '';
+  late int _length = widget.length;
 
   @override
   Widget build(BuildContext context) {
+    final other = _length == newPinLength ? shortPinLength : newPinLength;
     return Scaffold(
       appBar: AppBar(),
-      body: PinPad(
-        title: context.t(widget.titleKey),
-        pin: _pin,
-        length: widget.length,
-        onChanged: (pin) {
-          setState(() => _pin = pin);
-          if (pin.length == widget.length) Navigator.pop(context, pin);
-        },
+      body: Column(
+        children: [
+          Expanded(
+            child: PinPad(
+              title: context.t(widget.titleKey),
+              pin: _pin,
+              length: _length,
+              onChanged: (pin) {
+                setState(() => _pin = pin);
+                if (pin.length == _length) Navigator.pop(context, pin);
+              },
+            ),
+          ),
+          if (widget.canSwitchLength)
+            SafeArea(
+              top: false,
+              child: TextButton(
+                onPressed: () => setState(() {
+                  _length = other;
+                  _pin = '';
+                }),
+                child: Text(context.t('passcode_digits', {'n': '$other'})),
+              ),
+            ),
+        ],
       ),
     );
   }

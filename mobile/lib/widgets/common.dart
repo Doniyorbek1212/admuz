@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -61,14 +62,20 @@ class TdImage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final current = (download ? ref.watch(fileProvider(file.id)).value : ref.watch(fileStateProvider(file.id)).value) ?? file;
+    // The 40px inline preview is blurred so it reads as a soft preview, not as pixels.
     final fallback = minithumbnail != null
-        ? Image.memory(
-            base64Decode(minithumbnail!.data),
-            fit: fit,
-            width: width,
-            height: height,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.low,
+        ? ClipRect(
+            child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 10, sigmaY: 10, tileMode: TileMode.clamp),
+              child: Image.memory(
+                base64Decode(minithumbnail!.data),
+                fit: fit,
+                width: width,
+                height: height,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+              ),
+            ),
           )
         : (placeholder ?? SizedBox(width: width, height: height));
     if (!current.local.isDownloadingCompleted || current.local.path.isEmpty) return fallback;

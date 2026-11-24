@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tdlib_ex/td_api.dart' as td;
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../state/providers.dart';
 import '../../state/settings.dart';
@@ -35,6 +36,14 @@ final _remoteShapeProvider = FutureProvider.family<VideoNoteShape?, int>((ref, f
   }
 });
 
+/// Turn of a clock hand from 12 o'clock through [local] on a note [diameter] wide, as a 0..1 fraction of the
+/// note: the progress ring starts at the top and runs clockwise.
+double videoNoteTurnAt(Offset local, double diameter) {
+  final r = diameter / 2;
+  final turn = atan2(local.dx - r, r - local.dy) / (2 * pi);
+  return turn < 0 ? turn + 1 : turn;
+}
+
 /// Round video message as in Telegram/aka: downloads by itself and loops silently in the chat;
 /// a tap plays it from the start with sound and a progress ring, another tap pauses.
 class VideoNoteView extends ConsumerStatefulWidget {
@@ -61,11 +70,46 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
   /// Playing from the start with sound (otherwise: muted preview loop).
   bool _withSound = false;
 
+  /// Screen kept on while the note plays with sound (nobody touches the screen while watching).
+  bool _awake = false;
+
+  /// Where a finger dragging around the note is pointing (0..1 clockwise from the top); null when not dragging.
+  double? _scrub;
+  bool _resumeAfterScrub = false;
+
   @override
   void dispose() {
     _controller?.removeListener(_onTick);
     unawaited(_controller?.dispose());
+    _keepAwake(false);
     super.dispose();
+  }
+
+  void _keepAwake(bool on) {
+    if (_awake == on) return;
+    _awake = on;
+    unawaited(on ? WakelockPlus.enable() : WakelockPlus.disable());
+  }
+
+  void _scrubStart(Offset local, double diameter) {
+    final controller = _controller;
+    if (controller == null) return;
+    _resumeAfterScrub = controller.value.isPlaying;
+    unawaited(controller.pause());
+    _scrubTo(local, diameter);
+  }
+
+  void _scrubTo(Offset local, double diameter) {
+    final controller = _controller;
+    if (controller == null) return;
+    final at = videoNoteTurnAt(local, diameter);
+    setState(() => _scrub = at);
+    unawaited(controller.seekTo(controller.value.duration * at));
+  }
+
+  void _scrubEnd() {
+    setState(() => _scrub = null);
+    if (_resumeAfterScrub) unawaited(_controller?.play());
   }
 
   Future<void> _open(String path) async {
@@ -99,17 +143,19 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     final controller = _controller;
     if (controller == null || !mounted) return;
     final value = controller.value;
-    // Finished the audible run: back to the silent loop.
-    if (_withSound && !value.isPlaying && value.position >= value.duration - const Duration(milliseconds: 200)) {
+    // Finished the audible run: back to the silent loop (not while a finger holds it near the end).
+    if (_withSound && _scrub == null && !value.isPlaying && value.position >= value.duration - const Duration(milliseconds: 200)) {
       _backToPreview(controller);
       return;
     }
+    _keepAwake(_withSound && (value.isPlaying || _scrub != null));
     if (_withSound) setState(() {});
   }
 
   /// Ends the audible run (finished or closed with ✕): small, silent, looping preview again.
   void _backToPreview(VideoPlayerController controller) {
     setState(() => _withSound = false);
+    _keepAwake(false);
     final loop = ref.read(motionProvider).videos;
     unawaited(controller.setVolume(0).then((_) => controller.setLooping(true)).then((_) => loop ? controller.play() : controller.seekTo(Duration.zero)));
   }
@@ -158,7 +204,7 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
     final total = Duration(seconds: note.duration);
     final remaining = _withSound && value != null ? value.duration - value.position : total;
     final progress = _withSound && value != null && value.duration.inMilliseconds > 0
-        ? value.position.inMilliseconds / value.duration.inMilliseconds
+        ? _scrub ?? value.position.inMilliseconds / value.duration.inMilliseconds
         : null;
     final downloading = !file.local.isDownloadingCompleted && (fetch || file.local.isDownloadingActive);
     final size = file.size == 0 ? file.expectedSize : file.size;
@@ -167,8 +213,14 @@ class _VideoNoteViewState extends ConsumerState<VideoNoteView> {
         (lengthShape == VideoNoteShape.circle && !file.local.isDownloadingCompleted ? ref.watch(_remoteShapeProvider(note.video.id)).value : null) ??
         lengthShape;
 
+    // While it plays with sound, a finger moved around the note winds it to that point of the ring, as in Telegram.
+    final canScrub = _withSound && controller != null && controller.value.isInitialized;
     return GestureDetector(
       onTap: _tap,
+      onPanStart: canScrub ? (d) => _scrubStart(d.localPosition, diameter) : null,
+      onPanUpdate: canScrub ? (d) => _scrubTo(d.localPosition, diameter) : null,
+      onPanEnd: canScrub ? (_) => _scrubEnd() : null,
+      onPanCancel: canScrub ? _scrubEnd : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,

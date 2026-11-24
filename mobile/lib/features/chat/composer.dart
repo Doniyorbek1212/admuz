@@ -1472,15 +1472,15 @@ class ComposerState extends ConsumerState<Composer> {
               // White pill in a polished gold frame (the UZARO look).
               : DecoratedBox(
                   decoration: BoxDecoration(
-                    gradient: _goldMetal,
-                    borderRadius: BorderRadius.circular(26 + _goldRim),
+                    gradient: goldMetal,
+                    borderRadius: BorderRadius.circular(26 + goldRim),
                     boxShadow: [
                       BoxShadow(color: brandGold.withValues(alpha: 0.35), blurRadius: 10),
                       BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8, offset: const Offset(0, 3)),
                     ],
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(_goldRim),
+                    padding: const EdgeInsets.all(goldRim),
                     child: Container(
                       constraints: const BoxConstraints(minHeight: 48),
                       decoration: BoxDecoration(color: theme.colorScheme.surface, borderRadius: BorderRadius.circular(26)),
@@ -1656,10 +1656,10 @@ class ComposerState extends ConsumerState<Composer> {
         curve: Curves.easeOut,
         width: _recording ? 60 : (isDesktop ? 48 : 54),
         height: _recording ? 60 : (isDesktop ? 48 : 54),
-        padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.all(_goldRim),
+        padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.all(goldRim),
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: isDesktop ? (_recording ? brandGradient(primary, vertical: true) : null) : _goldMetal,
+          gradient: isDesktop ? (_recording ? brandGradient(primary, vertical: true) : null) : goldMetal,
           boxShadow: [
             if (_recording || !isDesktop)
               BoxShadow(color: primary.withValues(alpha: _recording ? 0.45 : 0.3), blurRadius: _recording ? 16 : 10, offset: const Offset(0, 4)),
@@ -1743,7 +1743,14 @@ class _RecordClock extends StatefulWidget {
 }
 
 class _RecordClockState extends State<_RecordClock> with SingleTickerProviderStateMixin {
-  late final _ticker = createTicker((_) => setState(() {}))..start();
+  late final _ticker = createTicker((_) => setState(() {}));
+
+  @override
+  void initState() {
+    super.initState();
+    // Started here: the lazy field alone was first touched in dispose, so the clock stayed at 0:00,0.
+    _ticker.start();
+  }
 
   @override
   void dispose() {
@@ -1834,10 +1841,10 @@ class _MicHaloState extends State<_MicHalo> with SingleTickerProviderStateMixin 
 
 /// Round accent send button beside the floating field, matching the mic button.
 /// Width of the gold rim around the phone composer's field and its send/mic button.
-const _goldRim = 3.0;
+const goldRim = 3.0;
 
 /// Polished gold: a bright highlight on top, deeper toward the bottom edge.
-const _goldMetal = LinearGradient(
+const goldMetal = LinearGradient(
   begin: Alignment.topCenter,
   end: Alignment.bottomCenter,
   colors: [Color(0xFFFFF0C2), Color(0xFFE2BC62), Color(0xFFA9792A), Color(0xFFE8C877)],
@@ -1856,10 +1863,10 @@ class _RoundButton extends StatelessWidget {
     return Container(
       width: 54,
       height: 54,
-      padding: const EdgeInsets.all(_goldRim),
+      padding: const EdgeInsets.all(goldRim),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: _goldMetal,
+        gradient: goldMetal,
         boxShadow: [BoxShadow(color: primary.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Material(
