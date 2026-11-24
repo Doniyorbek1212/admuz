@@ -221,7 +221,7 @@ function frameForm(frame, el) {
     <form class="stack" id="f-form">
       <div class="form-grid">
         <div class="field"><label for="f-title">Nomi</label><input id="f-title" required maxlength="64" value="${esc(frame.title)}"></div>
-        <div class="field"><label for="f-price">Narxi (so'm)</label><input id="f-price" type="number" min="1" max="10000000" step="500" required value="${frame.price_uzs}"></div>
+        <div class="field"><label for="f-price">Narxi (so'm)</label><input id="f-price" type="number" min="1" max="10000000" step="1" required value="${frame.price_uzs}"></div>
         <div class="field"><label for="f-sort">Tartib (kichigi oldin)</label><input id="f-sort" type="number" min="0" max="10000" value="${frame.sort}"></div>
       </div>
       <label class="chip"><input type="checkbox" id="f-active" ${frame.active ? 'checked' : ''}> Ilovada sotuvda</label>
