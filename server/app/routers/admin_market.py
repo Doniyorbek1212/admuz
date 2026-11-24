@@ -8,12 +8,12 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import func, or_, select
 
 from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
-from app.market import ad_out, profile_out, shop_out
+from app.market import ad_out, person_key, profile_out, shop_out
 from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop, TelegramLink, WalletEntry
 from app.services.audit import audit
 from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics
@@ -226,7 +226,7 @@ async def list_users(
     numbers = select(Customer.id, func.row_number().over(order_by=(Customer.created_at, Customer.id)).label("no")).subquery()
     # Every reinstall makes a new anonymous customer that shares the same profile, so the plain list shows one row
     # per phone: the Telegram-linked (else newest) account, with the totals of all of them. A search lists each one.
-    person = Customer.id if q else func.coalesce(func.nullif(CustomerProfile.phone, ""), cast(Customer.id, String))
+    person = Customer.id if q else person_key(Customer.id)
     grouped = (
         select(
             Customer.id.label("cid"),

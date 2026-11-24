@@ -3,8 +3,17 @@
 from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, StringConstraints
+from sqlalchemy import String, cast, func, literal_column
 
 from app.models import AdCampaign, CustomerProfile, Product, Shop, StockMovement
+
+
+def person_key(customer_id: Any) -> Any:
+    """One person across reinstalls: each install is a new anonymous customer that shares the same profile, so
+    customers with the same phone are one person; one without a shared phone counts on its own.
+    The query must outer-join CustomerProfile on [customer_id]."""
+    # A literal, not a bound parameter: Postgres must see SELECT and GROUP BY expressions as identical.
+    return func.coalesce(func.nullif(CustomerProfile.phone, literal_column("''")), cast(customer_id, String))
 
 # Regions of Uzbekistan as the app shows them; ads and shops are targeted by these exact names.
 REGIONS = (

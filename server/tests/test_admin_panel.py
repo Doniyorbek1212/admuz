@@ -113,6 +113,15 @@ async def test_stats_count_users_shops_and_revenue(client, new_customer, session
     disk = stats["disk"]
     assert disk["total_bytes"] > 0 and disk["used_bytes"] + disk["free_bytes"] <= disk["total_bytes"]
 
+    # A reinstall with the same phone is the same person; a new phone is a new one.
+    profile = {"first_name": "Ali", "phone": "998901112233"}
+    for customer in (c, await new_customer()):
+        assert (await customer.put("/v1/customers/me/profile", json=profile)).status_code == 200
+    await new_customer()
+    stats = (await client.get("/v1/admin/stats", headers=viewer)).json()
+    assert stats["users"] == {"total": 2, "new_7d": 2}
+    assert stats["daily"][-1]["new_users"] == 2
+
 
 async def test_support_hides_a_product_and_sees_shop_detail(client, new_customer, session_factory):
     support = await _admin(session_factory, AdminRole.SUPPORT)

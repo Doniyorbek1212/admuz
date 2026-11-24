@@ -10,7 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.deps import CustomerDep, DbDep, rate_limit, require_admin
-from app.models import ActivityDay, AdminRole, AdminUser
+from app.market import person_key
+from app.models import ActivityDay, AdminRole, AdminUser, CustomerProfile
 from app.routers.admin_panel import TASHKENT
 
 router = APIRouter(tags=["activity"])
@@ -45,17 +46,25 @@ async def record(body: ActivityIn, current: CustomerDep, db: DbDep) -> None:
 
 @router.get("/v1/admin/activity")
 async def activity_stats(admin: Viewer, db: DbDep) -> dict[str, Any]:
-    """Distinct users per event for today / 7 / 30 / 365 days, and a daily series for the last 30 days."""
+    """Distinct people (reinstalls with one phone count once) per event for today / 7 / 30 / 365 days,
+    and a daily series for the last 30 days."""
     end = today()
+    people = func.count(func.distinct(person_key(ActivityDay.customer_id)))
+    with_profile = CustomerProfile.customer_id == ActivityDay.customer_id
     totals: dict[str, dict[str, int]] = {}
     for event in ActivityEvent:
         totals[event.value] = {}
         for name, days in PERIODS.items():
             totals[event.value][name] = await db.scalar(
-                select(func.count(func.distinct(ActivityDay.customer_id))).where(ActivityDay.event == event.value, ActivityDay.day > end - timedelta(days=days))
+                select(people)
+                .select_from(ActivityDay)
+                .outerjoin(CustomerProfile, with_profile)
+                .where(ActivityDay.event == event.value, ActivityDay.day > end - timedelta(days=days))
             ) or 0
     rows = await db.execute(
-        select(ActivityDay.day, ActivityDay.event, func.count())
+        select(ActivityDay.day, ActivityDay.event, people)
+        .select_from(ActivityDay)
+        .outerjoin(CustomerProfile, with_profile)
         .where(ActivityDay.day > end - timedelta(days=CHART_DAYS))
         .group_by(ActivityDay.day, ActivityDay.event)
     )

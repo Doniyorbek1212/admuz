@@ -14,7 +14,7 @@ from sqlalchemy import Date, cast, func, literal_column, select
 from app.config import get_settings
 from app.deps import DbDep, require_admin, revoke_admin_sessions
 from app.errors import bad_request, conflict, not_found
-from app.market import product_out, profile_out, shop_out
+from app.market import person_key, product_out, profile_out, shop_out
 from app.models import (
     AdCampaign,
     AdminRole,
@@ -55,9 +55,17 @@ async def stats(admin: Viewer, db: DbDep) -> dict[str, Any]:
     """Dashboard numbers: users, shops and ads by status, revenue from approved payments, last 30 days by day."""
     now = datetime.now(UTC)
     since = now - timedelta(days=STATS_DAYS)
-    active = Customer.deleted_at.is_(None)
-    users_total = await db.scalar(select(func.count()).select_from(Customer).where(active)) or 0
-    users_7d = await db.scalar(select(func.count()).select_from(Customer).where(active, Customer.created_at >= now - timedelta(days=7))) or 0
+    # People, not installs: reinstalls with the same phone count once, from their first install.
+    key = person_key(Customer.id)
+    people = (
+        select(key.label("person"), func.min(Customer.created_at).label("first"))
+        .outerjoin(CustomerProfile, CustomerProfile.customer_id == Customer.id)
+        .where(Customer.deleted_at.is_(None))
+        .group_by(key)
+        .subquery()
+    )
+    users_total = await db.scalar(select(func.count()).select_from(people)) or 0
+    users_7d = await db.scalar(select(func.count()).select_from(people).where(people.c.first >= now - timedelta(days=7))) or 0
     shops = dict((s.value, n) for s, n in (await db.execute(select(Shop.status, func.count()).group_by(Shop.status))).all())
     ads = dict((s.value, n) for s, n in (await db.execute(select(AdCampaign.status, func.count()).group_by(AdCampaign.status))).all())
     products = await db.scalar(select(func.count()).select_from(Product).where(Product.active.is_(True))) or 0
@@ -72,7 +80,7 @@ async def stats(admin: Viewer, db: DbDep) -> dict[str, Any]:
     ) or 0
     new_users = dict(
         (await db.execute(
-            select(_day(Customer.created_at), func.count()).where(active, Customer.created_at >= since).group_by(_day(Customer.created_at))
+            select(_day(people.c.first), func.count()).where(people.c.first >= since).group_by(_day(people.c.first))
         )).all()
     )
     ad_income = dict(

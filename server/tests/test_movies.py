@@ -138,3 +138,10 @@ async def test_activity_counts_distinct_users_per_period(client, session_factory
     assert stats["totals"]["app_open"] == {"day": 2, "week": 2, "month": 2, "year": 2}
     assert stats["totals"]["hub_open"]["day"] == 1 and stats["totals"]["movies_open"]["year"] == 1
     assert len(stats["daily"]) == 30 and stats["daily"][-1]["app_open"] == 2
+
+    # Once both installs share one phone they are one person.
+    for customer in (first, second):
+        assert (await customer.put("/v1/customers/me/profile", json={"first_name": "Ali", "phone": "998901112233"})).status_code == 200
+    stats = (await client.get("/v1/admin/activity", headers=admin)).json()
+    assert stats["totals"]["app_open"]["day"] == 1 and stats["daily"][-1]["app_open"] == 1
+    assert stats["totals"]["movies_open"]["day"] == 1
