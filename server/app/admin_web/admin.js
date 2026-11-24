@@ -7,7 +7,11 @@ const ROLE_LABEL = { viewer: "Kuzatuvchi", support: "Moderator", finance: "Moliy
 const AD_STATUS = {
   pending_review: ['Tekshiruvda', 'warn'], awaiting_payment: ["To'lov kutilmoqda", 'info'],
   approved: ['Tasdiqlangan', 'ok'], rejected: ['Rad etilgan', 'bad'],
+  active: ["Faol (ko'rsatilmoqda)", 'ok'], expired: ["Muddati o'tgan", 'gold'],
 };
+// Ads page tabs: approved ads split into the ones being shown now and the finished ones.
+const AD_TABS = ['pending_review', 'awaiting_payment', 'active', 'expired', 'rejected'];
+const adShowing = (ad) => ad.status === 'approved' && ad.ends_at && new Date(ad.ends_at) > new Date();
 // Interest topics of hub ads (server: app.services.interests.TOPICS).
 const TOPIC_LABEL = {
   taxi: 'Taksi', pharmacy: 'Dorixona', hotel: 'Mehmonxona', doctor: 'Shifokor', car_service: 'Avtoservis', bank: 'Bank',
@@ -26,7 +30,8 @@ const ERRORS = {
   LOGIN_DENIED: "Kirish Telegramda rad etildi", LOGIN_NOT_CONFIRMED: "Kirish Telegramda tasdiqlanmadi (90 soniya o'tdi). Qayta urinib ko'ring.",
   LOGIN_PENDING: "Telegramdagi oldingi so'rov hali kutilmoqda: uni tasdiqlang yoki rad eting", TWO_FACTOR_UNAVAILABLE: "Telegramga tasdiqlash so'rovi yuborilmadi. Birozdan keyin urinib ko'ring.", LOGIN_TAKEN: 'Bu login band', ADMIN_KEY_REQUIRED: 'Admin kaliti kerak', ADMIN_ROLE_INSUFFICIENT: "Bu amal uchun huquqingiz yetmaydi",
   RATE_LIMITED: "Juda ko'p urinish. 15 daqiqadan keyin qayta urining.", RECEIPT_REQUIRED: "To'lov cheki yuklanmagan",
-  AD_NOT_PENDING_REVIEW: 'Reklama tekshiruv holatida emas', SHOP_NOT_REVIEWABLE: "Bu do'konni hozir tekshirib bo'lmaydi",
+  AD_NOT_PENDING_REVIEW: 'Reklama tekshiruv holatida emas', AD_NOT_EXPIRED: "Faqat muddati o'tgan reklamani o'chirish mumkin",
+  AD_NOT_APPROVED: 'Faqat tasdiqlangan reklamani uzaytirish mumkin', SHOP_NOT_REVIEWABLE: "Bu do'konni hozir tekshirib bo'lmaydi",
   ADMIN_NAME_TAKEN: 'Bu nom band', HTTP_422: "Maydonlarni tekshiring", CANNOT_CHANGE_OWN_ACCESS: "O'zingizning huquqingizni o'chira olmaysiz", VALIDATION_FAILED: "Maydonlarni tekshiring",
 };
 
@@ -109,6 +114,22 @@ function askReason(title, placeholder) {
       closeModal(); resolve(value);
     };
     body.querySelector('#reason-cancel').onclick = () => { closeModal(); resolve(null); };
+  });
+}
+
+// Free extension of an approved ad: 1-30 days, counted from its end (or from now once it has expired).
+function askDays() {
+  return new Promise((resolve) => {
+    const body = openModal('Reklama muddatini uzaytirish', `
+      <div class="field"><label for="ext-days">Necha kun qo'shilsin</label><input id="ext-days" type="number" min="1" max="30" step="1" value="7">
+      <small>Bepul qo'shiladi. Muddati o'tgan reklama hozirdan boshlab yana ko'rsatiladi.</small></div>
+      <div class="toolbar"><button class="btn primary" id="ext-ok" type="button">Uzaytirish</button><button class="btn" id="ext-no" type="button">Bekor qilish</button></div>`);
+    body.querySelector('#ext-ok').onclick = () => {
+      const days = Number(body.querySelector('#ext-days').value);
+      if (!Number.isInteger(days) || days < 1 || days > 30) { toast("1 dan 30 gacha kun kiriting", true); return; }
+      closeModal(); resolve(days);
+    };
+    body.querySelector('#ext-no').onclick = () => { closeModal(); resolve(null); };
   });
 }
 
@@ -262,7 +283,7 @@ function queue(href, label, n, info = false) {
 
 async function renderAds(el, status = 'pending_review') {
   const ads = await api(`/v1/admin/ads?status=${encodeURIComponent(status)}&limit=200`);
-  const tabs = Object.entries(AD_STATUS).map(([k, [label]]) => `<button class="tab" data-status="${k}" aria-pressed="${k === status}">${esc(label)}</button>`).join('');
+  const tabs = AD_TABS.map((k) => `<button class="tab" data-status="${k}" aria-pressed="${k === status}">${esc(AD_STATUS[k][0])}</button>`).join('');
   el.innerHTML = `<div class="tabs">${tabs}</div>` + (ads.length ? `<div class="grid-cards">${ads.map(adCard).join('')}</div>` : '<div class="empty">Bu holatda reklama yo\'q</div>');
   el.querySelectorAll('.tab').forEach((b) => { b.onclick = () => { location.hash = `ads/${b.dataset.status}`; }; });
   el.querySelectorAll('[data-act]').forEach((b) => {
@@ -292,7 +313,7 @@ function adCard(ad) {
   return `<article class="item">
     <div class="media">${mediaHtml(ad.media_type, ad.media_url)}</div>
     <div class="body">
-      <div class="toolbar">${pill(AD_STATUS, ad.status)}<span class="pill gold">${esc(som(ad.price_uzs))}</span></div>
+      <div class="toolbar">${pill(AD_STATUS, ad.status === 'approved' ? (adShowing(ad) ? 'active' : 'expired') : ad.status)}<span class="pill gold">${esc(som(ad.price_uzs))}</span></div>
       <h4>${ad.title ? esc(ad.title) : '<span class="muted">Sarlavhasiz</span>'}</h4>
       ${ad.text ? `<p class="text">${esc(ad.text)}</p>` : ''}
       <dl class="facts">
@@ -311,7 +332,9 @@ function adCard(ad) {
       ${ad.has_receipt && support ? `<button class="btn" data-act="receipt" data-id="${esc(ad.id)}">Chekni ko'rish</button>` : ''}
       ${support ? `<button class="btn" data-act="topics" data-id="${esc(ad.id)}" data-topics="${esc((ad.topics || []).join(','))}">Qiziqishlar</button>` : ''}
       ${ad.status === 'pending_review' && support ? `<button class="btn ok" data-act="approve" data-id="${esc(ad.id)}">Tasdiqlash</button><button class="btn bad" data-act="reject" data-id="${esc(ad.id)}">Rad etish</button>` : ''}
-      ${ad.status === 'approved' && support ? `<button class="btn bad" data-act="stop" data-id="${esc(ad.id)}">To'xtatish</button>` : ''}
+      ${ad.status === 'approved' && support ? `<button class="btn ok" data-act="extend" data-id="${esc(ad.id)}">Muddatni uzaytirish</button>` : ''}
+      ${adShowing(ad) && support ? `<button class="btn bad" data-act="stop" data-id="${esc(ad.id)}">To'xtatish</button>` : ''}
+      ${ad.status === 'approved' && !adShowing(ad) && support ? `<button class="btn bad" data-act="delete" data-id="${esc(ad.id)}">O'chirish</button>` : ''}
     </div>
   </article>`;
 }
@@ -321,6 +344,13 @@ async function adAction(act, id, status) {
   if (act === 'approve') {
     if (!(await confirmBox('Reklamani tasdiqlash', "To'lov tekshirildimi? Tasdiqlangach reklama darhol ko'rsatila boshlaydi.", 'Tasdiqlash'))) return undefined;
     await run(() => api(`/v1/admin/ads/${id}/approve`, { method: 'POST' }), 'Reklama tasdiqlandi');
+  } else if (act === 'extend') {
+    const days = await askDays();
+    if (!days) return undefined;
+    await run(() => api(`/v1/admin/ads/${id}/extend`, { method: 'POST', body: { days } }), `Reklama ${days} kunga uzaytirildi`);
+  } else if (act === 'delete') {
+    if (!(await confirmBox("Reklamani o'chirish", "Muddati o'tgan reklama butunlay o'chiriladi. Buni qaytarib bo'lmaydi.", "O'chirish"))) return undefined;
+    await run(() => api(`/v1/admin/ads/${id}`, { method: 'DELETE' }), "Reklama o'chirildi");
   } else {
     const reason = await askReason(act === 'stop' ? "Reklamani to'xtatish" : 'Reklamani rad etish', 'Masalan: chek summasi mos emas');
     if (!reason) return undefined;

@@ -5,12 +5,13 @@ import io
 import os
 import tempfile
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import AdminRole, AdminUser, AuditLog, TelegramLink
+from app.models import AdCampaign, AdminRole, AdminUser, AuditLog, TelegramLink
 from app.security import new_secret, sha256_hex
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -129,6 +130,42 @@ async def test_ad_shown_only_after_approval_and_only_in_its_regions(new_customer
     async with session_factory() as db:
         actions = list(await db.scalars(select(AuditLog.action)))
     assert "ad_approved" in actions
+
+
+async def test_admin_sees_running_and_expired_ads_apart_extends_and_deletes(new_customer, client, session_factory):
+    c = await new_customer()
+    admin = await _admin(session_factory)
+    running, finished = [(await c.post("/v1/ads", json=AD)).json()["id"] for _ in range(2)]
+    for ad_id in (running, finished):
+        await _upload(c, f"/v1/ads/{ad_id}/receipt")
+        await client.post(f"/v1/admin/ads/{ad_id}/approve", headers=admin)
+    async with session_factory() as db:
+        ad = await db.get(AdCampaign, uuid.UUID(finished))
+        ad.ends_at = datetime.now(UTC) - timedelta(hours=1)
+        await db.commit()
+
+    def ids(status: str):
+        return client.get("/v1/admin/ads", headers=admin, params={"status": status})
+
+    assert [a["id"] for a in (await ids("active")).json()] == [running]
+    assert [a["id"] for a in (await ids("expired")).json()] == [finished]
+    assert (await client.delete(f"/v1/admin/ads/{running}", headers=admin)).json()["detail"]["code"] == "AD_NOT_EXPIRED"
+
+    # A free extension brings the expired ad back for exactly the given days, counted from now.
+    revived = (await client.post(f"/v1/admin/ads/{finished}/extend", headers=admin, json={"days": 5})).json()
+    left = datetime.fromisoformat(revived["ends_at"]) - datetime.now(UTC)
+    assert timedelta(days=5) - timedelta(minutes=1) < left <= timedelta(days=5)
+    assert {a["id"] for a in (await ids("active")).json()} == {running, finished}
+
+    async with session_factory() as db:
+        ad = await db.get(AdCampaign, uuid.UUID(finished))
+        ad.ends_at = datetime.now(UTC) - timedelta(hours=1)
+        await db.commit()
+    assert (await client.delete(f"/v1/admin/ads/{finished}", headers=admin)).status_code == 204
+    assert (await ids("expired")).json() == []
+    async with session_factory() as db:
+        actions = set(await db.scalars(select(AuditLog.action)))
+    assert {"ad_extended", "ad_deleted"} <= actions
 
 
 async def test_ad_can_use_own_uploaded_video_only(new_customer):

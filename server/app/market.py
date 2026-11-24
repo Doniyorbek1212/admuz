@@ -1,5 +1,6 @@
 """Shared rules for the marketplace and hub ads: regions, URL and text validation, serializers."""
 
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, StringConstraints
@@ -155,6 +156,12 @@ def profile_out(profile: CustomerProfile | None) -> dict[str, Any] | None:
 
 # AdCampaign.receipt_path of an ad paid from the UZARO balance: there is no receipt file.
 WALLET_PAID = "wallet"
+
+
+def extend_ad(ad: AdCampaign, days: int, now: datetime) -> None:
+    """Adds [days] of showing: after the current end while it runs, from now once it has expired."""
+    base = ad.ends_at if ad.ends_at is not None and ad.ends_at > now else now
+    ad.ends_at = base + timedelta(days=days)
 
 
 def ad_out(ad: AdCampaign, *, private: bool = False) -> dict[str, Any]:

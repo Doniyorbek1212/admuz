@@ -556,6 +556,10 @@ class SadoApi {
 
   Future<void> cancelAd(String adId) => _delete('/v1/ads/$adId');
 
+  /// More days for an approved ad, paid from the UZARO balance; it keeps showing without a new review.
+  Future<Ad> extendAd(String adId, int days) async =>
+      Ad.fromJson(await _post('/v1/ads/$adId/extend', data: {'days': days}) as Map<String, dynamic>);
+
   /// Reports that a hub banner was seen ("view") or tapped ("click"); never throws.
   /// [learn] false: the tap is only counted, not used to learn the user's interests.
   Future<void> adEvent(String adId, String event, {bool learn = true}) async {

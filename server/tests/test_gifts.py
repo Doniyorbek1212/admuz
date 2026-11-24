@@ -1,6 +1,7 @@
 """UZARO gifts: bot-proven Telegram id, balance top-up by receipt, sending, profile listing, hiding, admin catalog."""
 
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -403,6 +404,32 @@ async def test_ad_paid_from_the_balance_goes_to_review_and_refunds_on_cancel(cli
     assert wallet_now["balance_uzs"] == price + 1_000
     kinds = [item["kind"] for item in (await alice.get("/v1/wallet/history")).json()["items"]]
     assert kinds[:2] == ["refund", "ad"]
+
+
+async def test_advertiser_extends_an_approved_ad_from_the_balance(client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    alice = await new_customer()
+    ad_body = {"title": "Chegirma", "media_type": "image", "media_url": "https://example.com/b.jpg", "regions": ["Andijon", "Toshkent"], "days": 2}
+    ad = (await alice.post("/v1/ads", json=ad_body)).json()
+    price = ad["price_uzs"]
+    assert (await alice.post(f"/v1/ads/{ad['id']}/extend", json={"days": 3})).json()["detail"]["code"] == "AD_NOT_APPROVED"
+
+    await _top_up(client, admin, alice, price + 10)
+    await alice.post(f"/v1/ads/{ad['id']}/pay-wallet")
+    approved = (await client.post(f"/v1/admin/ads/{ad['id']}/approve", headers=admin)).json()
+    assert (await alice.post(f"/v1/ads/{ad['id']}/extend", json={"days": 3})).json()["detail"]["code"] == "INSUFFICIENT_BALANCE"
+
+    per_day = price // 2  # two regions, two days
+    await _top_up(client, admin, alice, per_day * 3)
+    extended = await alice.post(f"/v1/ads/{ad['id']}/extend", json={"days": 3})
+    assert extended.status_code == 200, extended.text
+    body = extended.json()
+    assert body["balance_uzs"] == 10 and body["price_uzs"] == price + per_day * 3
+    gained = datetime.fromisoformat(body["ends_at"]) - datetime.fromisoformat(approved["ends_at"])
+    assert gained == timedelta(days=3)
+    # Extending a running ad never sends it back to review.
+    assert body["status"] == "approved"
+    assert (await alice.post(f"/v1/ads/{ad['id']}/extend", json={"days": 31})).status_code == 422
 
 
 async def test_welcome_bonus_once_per_telegram_account(client, session_factory, new_customer, monkeypatch):

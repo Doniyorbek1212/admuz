@@ -56,6 +56,83 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
     if (updated != null) showToast(context, s.t('ad_pay_wallet_done'));
   }
 
+  int _extendDays = 7;
+  bool _extending = false;
+
+  /// Approved ads (running or ended) can buy more days from the balance; no new review.
+  Future<void> _extend(int days, int price) async {
+    final s = context.s;
+    final amount = formatUzs(context, price);
+    if (!await confirm(context, title: s.t('ad_extend'), message: s.t('ad_extend_btn', {'n': '$days', 'amount': amount}))) return;
+    if (!mounted) return;
+    setState(() => _extending = true);
+    final updated = await apiGuard(context, () => ref.read(sadoApiProvider).extendAd(_ad.id, days));
+    if (!mounted) return;
+    setState(() {
+      _extending = false;
+      if (updated != null) _ad = updated;
+      _wallet = ref.read(sadoApiProvider).wallet();
+    });
+    if (updated != null) showToast(context, s.t('ad_extend_done', {'n': '$days'}));
+  }
+
+  Widget _extendSection(BuildContext context) {
+    final s = context.s;
+    return FutureBuilder<AdsConfig>(
+      future: _config,
+      builder: (context, configSnapshot) => FutureBuilder<Wallet>(
+        future: _wallet,
+        builder: (context, walletSnapshot) {
+          final config = configSnapshot.data;
+          final balance = walletSnapshot.data?.balanceUzs;
+          if (config == null) return const SizedBox.shrink();
+          final maxDays = config.maxDays;
+          final days = _extendDays.clamp(1, maxDays);
+          final price = config.pricePerRegionDay * _ad.regions.length * days;
+          final enough = balance != null && balance >= price;
+          return SettingsGroup(title: s.t('ad_extend'), children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+              child: Text(s.t('ad_days', {'n': '$days'}), style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            Slider(
+              value: days.toDouble(),
+              min: 1,
+              max: maxDays.toDouble(),
+              divisions: maxDays > 1 ? maxDays - 1 : null,
+              label: '$days',
+              onChanged: (v) => setState(() => _extendDays = v.round()),
+            ),
+            if (balance != null)
+              ListTile(
+                leading: Icon(Icons.account_balance_wallet_rounded, color: Theme.of(context).colorScheme.primary),
+                title: Text(s.t('ad_pay_wallet_balance', {'amount': formatUzs(context, balance)})),
+                subtitle: Text(s.t('ad_extend_hint')),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: _extending
+                  ? const Center(child: CircularProgressIndicator())
+                  : enough
+                      ? FilledButton.icon(
+                          onPressed: () => _extend(days, price),
+                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                          icon: const Icon(Icons.more_time_rounded),
+                          label: Text(s.t('ad_extend_btn', {'n': '$days', 'amount': formatUzs(context, price)})),
+                        )
+                      : OutlinedButton.icon(
+                          onPressed: balance == null ? null : _topUp,
+                          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                          icon: const Icon(Icons.add_card_rounded),
+                          label: Text(s.t('gifts_topup')),
+                        ),
+            ),
+          ]);
+        },
+      ),
+    );
+  }
+
   Future<void> _topUp() async {
     await Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const TopupScreen()));
     if (mounted) setState(() => _wallet = ref.read(sadoApiProvider).wallet());
@@ -126,6 +203,7 @@ class _AdPaymentScreenState extends ConsumerState<AdPaymentScreen> {
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
               child: Text(s.t('ad_pay_wallet_paid'), style: TextStyle(color: theme.hintColor)),
             ),
+          if (_ad.status == AdStatus.approved && !storeBlocksWalletSpending) _extendSection(context),
           if (_canPayFromWallet) _walletPayment(context),
           if (_canPay && !_ad.paidFromWallet) _paymentSteps(context),
           if (_ad.status != AdStatus.approved)

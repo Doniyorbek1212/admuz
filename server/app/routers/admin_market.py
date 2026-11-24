@@ -13,7 +13,8 @@ from sqlalchemy import func, or_, select
 from app.db import like_pattern
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
-from app.market import ad_out, person_key, profile_out, shop_out
+from app.market import ad_out, extend_ad, person_key, profile_out, shop_out
+from app.routers.ads import MAX_DAYS
 from app.models import AdCampaign, AdminRole, AdminUser, AdStatus, Customer, CustomerProfile, Device, ListingStatus, Product, Shop, TelegramLink, WalletEntry
 from app.services.audit import audit
 from app.services.interests import MAX_AD_TOPICS, TOPICS, clean_topics
@@ -50,15 +51,55 @@ async def review_summary(admin: Viewer, db: DbDep) -> dict[str, int]:
 # ------------------------------------------------------------------ ads
 
 
+# Statuses, plus approved ads split into the ones being shown now and the ones whose time is over.
+AdFilter = Literal["awaiting_payment", "pending_review", "approved", "rejected", "active", "expired"]
+
+
 @router.get("/ads")
 async def list_ads(
     admin: Viewer,
     db: DbDep,
-    status: AdStatus = AdStatus.PENDING_REVIEW,
+    status: AdFilter = "pending_review",
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[dict[str, Any]]:
-    rows = await db.scalars(select(AdCampaign).where(AdCampaign.status == status).order_by(AdCampaign.created_at).limit(limit))
+    now = datetime.now(UTC)
+    approved = AdCampaign.status == AdStatus.APPROVED
+    stmt = select(AdCampaign)
+    if status == "active":
+        stmt = stmt.where(approved, AdCampaign.ends_at > now).order_by(AdCampaign.ends_at)
+    elif status == "expired":
+        stmt = stmt.where(approved, AdCampaign.ends_at <= now).order_by(AdCampaign.ends_at.desc())
+    else:
+        stmt = stmt.where(AdCampaign.status == AdStatus(status)).order_by(AdCampaign.created_at)
+    rows = await db.scalars(stmt.limit(limit))
     return [ad_out(ad, private=True) for ad in rows]
+
+
+class ExtendIn(BaseModel):
+    days: Annotated[int, Field(ge=1, le=MAX_DAYS)]
+
+
+@router.post("/ads/{ad_id}/extend")
+async def extend_ad_free(ad_id: uuid.UUID, body: ExtendIn, admin: Support, db: DbDep) -> dict[str, Any]:
+    """Gives an approved ad more days for free (goodwill, an outside payment); an expired one starts showing again."""
+    ad = await _ad(db, ad_id)
+    if ad.status != AdStatus.APPROVED:
+        raise conflict("AD_NOT_APPROVED")
+    extend_ad(ad, body.days, datetime.now(UTC))
+    audit(db, f"admin:{admin.name}", "ad_extended", str(ad.id), days=body.days, ends_at=ad.ends_at.isoformat() if ad.ends_at else "")
+    await db.commit()
+    return ad_out(ad, private=True)
+
+
+@router.delete("/ads/{ad_id}", status_code=204)
+async def delete_expired_ad(ad_id: uuid.UUID, admin: Support, db: DbDep) -> None:
+    """Removes an ad whose showing time is over; running or unreviewed ones (money may still be owed) stay."""
+    ad = await _ad(db, ad_id)
+    if ad.status != AdStatus.APPROVED or ad.ends_at is None or ad.ends_at > datetime.now(UTC):
+        raise conflict("AD_NOT_EXPIRED")
+    audit(db, f"admin:{admin.name}", "ad_deleted", str(ad.id), title=ad.title, price_uzs=ad.price_uzs, customer=str(ad.customer_id))
+    await db.delete(ad)
+    await db.commit()
 
 
 async def _ad(db: DbDep, ad_id: uuid.UUID) -> AdCampaign:

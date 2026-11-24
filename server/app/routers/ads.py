@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 
 from app.deps import CustomerDep, DbDep, get_redis, rate_limit
 from app.errors import bad_request, conflict, not_found
-from app.market import REGIONS, WALLET_PAID, MediaUrl, OptionalHttpsUrl, Region, ad_out
+from app.market import REGIONS, WALLET_PAID, MediaUrl, OptionalHttpsUrl, Region, ad_out, extend_ad
 from app.models import AdCampaign, AdStatus, Customer, MediaUpload, TelegramLink, WalletEntry
 from app.services import wallet
 from app.services.audit import audit
@@ -201,6 +201,32 @@ async def pay_from_wallet(ad_id: uuid.UUID, current: CustomerDep, db: DbDep) -> 
     ad.receipt_path = WALLET_PAID
     ad.status = AdStatus.PENDING_REVIEW
     ad.reject_reason = None
+    await db.commit()
+    return ad_out(ad, private=True) | {"balance_uzs": await wallet.balance(db, current.id)}
+
+
+class ExtendIn(BaseModel):
+    days: Annotated[int, Field(ge=1, le=MAX_DAYS)]
+
+
+@router.post("/{ad_id}/extend")
+async def extend_from_wallet(ad_id: uuid.UUID, body: ExtendIn, current: CustomerDep, db: DbDep) -> dict[str, Any]:
+    """More days for an approved ad, paid from the balance at today's price for its regions. The content was
+    already reviewed, so it keeps showing (or shows again, once expired) without a new review."""
+    await rate_limit(f"adpay:{current.id}", limit=20, window_seconds=3600)
+    await _lock_spending(db, current.id)
+    ad = await _own_ad(db, current.id, ad_id)
+    if ad.status != AdStatus.APPROVED:
+        raise conflict("AD_NOT_APPROVED")
+    settings = await load_market_settings(db)
+    price = ad_price(len(ad.regions), body.days, settings.ad_price_per_region_day_uzs)
+    if await wallet.balance(db, current.id) < price:
+        raise conflict("INSUFFICIENT_BALANCE")
+    # kind "ad" so wallet history shows it as an ad; the suffix keeps each extension a separate ledger line.
+    await wallet.record(db, current.id, -price, "ad", f"{ad.id}:ext:{uuid.uuid4().hex[:8]}")
+    ad.price_uzs += price  # what the ad brought in, for revenue
+    extend_ad(ad, body.days, datetime.now(UTC))
+    audit(db, f"customer:{current.id}", "ad_extended_wallet", str(ad.id), days=body.days, price_uzs=price)
     await db.commit()
     return ad_out(ad, private=True) | {"balance_uzs": await wallet.balance(db, current.id)}
 
