@@ -4,6 +4,7 @@
 import asyncio
 import tempfile
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
@@ -72,6 +73,37 @@ async def create_gift(
     return gift_out(gift)
 
 
+async def unpack_upload[T](
+    dest: Path,
+    file: UploadFile | None,
+    files: list[UploadFile] | None,
+    code: str,
+    limit_of: Callable[[str], int],
+    parse: Callable[[Path], list[T]],
+) -> list[T]:
+    """A rendered pack sent as one ZIP [file] or as the folder's own [files], unpacked into [dest] and validated.
+    Bad input answers 400 with [code]_INVALID (the reason in the message) or [code]_TOO_BIG."""
+    if (file is None) == (not files):
+        raise bad_request(f"{code}_INVALID", "send a ZIP file or the folder's files")
+    try:
+        if file is not None:
+            data = await file.read(MAX_PACK_BYTES + 1)
+            if len(data) > MAX_PACK_BYTES:
+                raise bad_request(f"{code}_TOO_BIG")
+            await asyncio.to_thread(gift_catalog.unzip_pack, data, dest, limit_of)
+        else:
+            for upload in files or []:
+                name = PurePosixPath((upload.filename or "").replace("\\", "/")).name
+                limit = limit_of(name)
+                if limit:
+                    gift_catalog.save_pack_file(dest, name, await upload.read(limit + 1), limit_of)
+        if not (dest / "manifest.json").is_file():
+            raise ValueError("manifest.json is missing")
+        return await asyncio.to_thread(parse, dest / "manifest.json")
+    except ValueError as exc:
+        raise bad_request(f"{code}_INVALID", str(exc)) from exc
+
+
 @router.post("/import")
 async def import_gift_pack(
     admin: Support,
@@ -81,27 +113,8 @@ async def import_gift_pack(
 ) -> dict[str, Any]:
     """Rendered gifts (see the admin panel's format guide) as one ZIP [file], or as the folder's own [files]
     (manifest.json plus gift files; the panel sends a big folder one gift per request). Same-id gifts are replaced."""
-    if (file is None) == (not files):
-        raise bad_request("GIFT_PACK_INVALID", "send a ZIP file or the folder's files")
     with tempfile.TemporaryDirectory() as folder:
-        dest = Path(folder)
-        try:
-            if file is not None:
-                data = await file.read(MAX_PACK_BYTES + 1)
-                if len(data) > MAX_PACK_BYTES:
-                    raise bad_request("GIFT_PACK_TOO_BIG")
-                gifts = await asyncio.to_thread(gift_catalog.extract_pack, data, dest)
-            else:
-                for upload in files or []:
-                    name = PurePosixPath((upload.filename or "").replace("\\", "/")).name
-                    limit = gift_catalog.pack_file_limit(name)
-                    if limit:
-                        gift_catalog.save_pack_file(dest, name, await upload.read(limit + 1))
-                if not (dest / "manifest.json").is_file():
-                    raise ValueError("manifest.json is missing")
-                gifts = await asyncio.to_thread(gift_catalog.parse_manifest, dest / "manifest.json")
-        except ValueError as exc:
-            raise bad_request("GIFT_PACK_INVALID", str(exc)) from exc
+        gifts = await unpack_upload(Path(folder), file, files, "GIFT_PACK", gift_catalog.pack_file_limit, gift_catalog.parse_manifest)
         added, updated = await gift_catalog.import_rendered_gifts(db, gifts)
     name = file.filename if file is not None else "folder"
     audit(db, f"admin:{admin.name}", "gift_pack_imported", "gifts", file=(name or "")[:120], added=added, updated=updated,

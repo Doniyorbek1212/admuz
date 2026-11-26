@@ -1,22 +1,31 @@
 """Rendered avatar frames from frame_renders/manifest.json into the frame shop.
 
 Each entry becomes (or upgrades) one FrameItem keyed by its id: the profile-size frame with the UZARO plate and the
-small chat-list frame are copied to the public media dir. Re-running is safe; a price is set only when the frame is
-new, so an admin's later price stays.
+small chat-list frame are copied to the public media dir. Re-running is safe; price and place are set only when the
+frame is new, so an admin's later price and order stay. Packs come from the CLI or the admin panel's upload.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import FrameItem
-from app.services.gift_catalog import KEY, LANGS, MAX_PRICE_UZS, _check, _publish
+from app.services.gift_catalog import KEY, LANGS, MAX_MANIFEST_BYTES, MAX_PRICE_UZS, _check, _publish
 from app.uploads import public_dir
 
 MAX_BYTES = {"full": 640 << 10, "small": 256 << 10}
+PACK_FILE = re.compile(r"[a-z][a-z0-9_]{1,31}\.webp")
+
+
+def pack_file_limit(name: str) -> int:
+    """Byte cap for a file taken into a frame pack, or 0 when the importer does not take that name."""
+    if name == "manifest.json":
+        return MAX_MANIFEST_BYTES
+    return MAX_BYTES["full"] if PACK_FILE.fullmatch(name) else 0
 
 
 @dataclass(frozen=True)
@@ -62,19 +71,22 @@ def parse_manifest(path: Path) -> list[RenderedFrame]:
 
 
 async def import_rendered_frames(db: AsyncSession, frames: list[RenderedFrame]) -> tuple[int, int]:
-    """Adds new frames and upgrades existing ones by key. Returns (added, updated)."""
+    """Adds new frames after the existing ones and upgrades existing ones by key, keeping their price and place.
+    Returns (added, updated)."""
     public_dir().mkdir(parents=True, exist_ok=True)
     added = updated = 0
-    for index, frame in enumerate(frames):
+    next_sort = (await db.scalar(select(func.max(FrameItem.sort))) or 0) + 1
+    for frame in frames:
         row = await db.scalar(select(FrameItem).where(FrameItem.key == frame.key))
         if row is None:
-            row = FrameItem(key=frame.key, price_uzs=frame.price_uzs, animation="", small="")
+            row = FrameItem(key=frame.key, price_uzs=frame.price_uzs, sort=next_sort, animation="", small="")
             db.add(row)
             added += 1
+            next_sort += 1
         else:
             updated += 1
         row.title, row.title_ru, row.title_en = frame.titles["uz"], frame.titles["ru"], frame.titles["en"]
-        row.tier, row.sort = frame.tier, index
+        row.tier = frame.tier
         row.animation = _publish(frame.full, row.animation)
         row.small = _publish(frame.small, row.small)
     await db.flush()

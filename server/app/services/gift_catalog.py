@@ -11,6 +11,7 @@ import re
 import shutil
 import uuid
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -84,12 +85,9 @@ MAX_MANIFEST_BYTES = 256 << 10
 MAX_PACK_ENTRIES = 400
 
 
-def extract_pack(data: bytes, dest: Path) -> list[RenderedGift]:
-    """A ZIP of one rendered-gifts folder (manifest.json plus the files it names) unpacked into [dest] and validated.
-
-    Only manifest.json and files named like gift files are taken, by base name, so paths inside the ZIP cannot
-    escape [dest]; previews, Blender sources and anything else in the folder are skipped.
-    """
+def unzip_pack(data: bytes, dest: Path, limit_of: Callable[[str], int]) -> None:
+    """Unpacks the ZIP's one manifest folder into [dest]. Only names [limit_of] takes (a non-zero byte cap) are written,
+    by base name, so paths inside the ZIP cannot escape [dest]; previews, Blender sources and the rest are skipped."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -103,13 +101,12 @@ def extract_pack(data: bytes, dest: Path) -> list[RenderedGift]:
         root = paths[manifests[0].filename].parent
         for entry in entries:
             path = paths[entry.filename]
-            limit = pack_file_limit(path.name)
+            limit = limit_of(path.name)
             if path.parent != root or limit == 0:
                 continue
             _check(entry.file_size <= limit, path.name, "too big")
             with archive.open(entry) as source:
-                save_pack_file(dest, path.name, source.read(limit + 1))
-    return parse_manifest(dest / "manifest.json")
+                save_pack_file(dest, path.name, source.read(limit + 1), limit_of)
 
 
 def pack_file_limit(name: str) -> int:
@@ -119,9 +116,9 @@ def pack_file_limit(name: str) -> int:
     return MAX_BYTES["show"] if PACK_FILE.fullmatch(name) else 0
 
 
-def save_pack_file(dest: Path, name: str, body: bytes) -> None:
-    """Writes one pack file flat into [dest] by base name; [name] must already pass pack_file_limit."""
-    _check(len(body) <= pack_file_limit(name), name, "too big")
+def save_pack_file(dest: Path, name: str, body: bytes, limit_of: Callable[[str], int] = pack_file_limit) -> None:
+    """Writes one pack file flat into [dest] by base name; [name] must already pass [limit_of]."""
+    _check(len(body) <= limit_of(name), name, "too big")
     (dest / name).write_bytes(body)
 
 

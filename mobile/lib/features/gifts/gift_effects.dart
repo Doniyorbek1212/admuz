@@ -21,9 +21,33 @@ import 'gift_widgets.dart';
 
 const _showLength = Duration(milliseconds: 5200);
 
+/// True while a show is loading or on screen.
+bool _showBusy = false;
+
+/// Closes the page's own route even when another route was pushed over it; `pop()` would close the top one
+/// and leave this transparent page over the app, swallowing every tap.
+void closeOwnRoute(BuildContext context) {
+  final route = ModalRoute.of(context);
+  if (route == null || !route.isActive) return;
+  final navigator = Navigator.of(context);
+  route.isCurrent ? navigator.pop() : navigator.removeRoute(route);
+}
+
 /// Plays a premium gift full screen over the current page: its rendered show (or the drawn one) for its
 /// [GiftItem.effect], else its video. [sent] adds who sent it to a video; null right after sending (the sender's own preview).
+/// A second show asked for while one plays is skipped: right after sending, the shop and the recipient's
+/// profile both ask for the same gift.
 Future<void> showPremiumGift(BuildContext context, GiftItem gift, {SentGift? sent}) async {
+  if (_showBusy) return;
+  _showBusy = true;
+  try {
+    await _playShow(context, gift, sent);
+  } finally {
+    _showBusy = false;
+  }
+}
+
+Future<void> _playShow(BuildContext context, GiftItem gift, SentGift? sent) async {
   if (gift.effect == null) return showGiftVideoOf(context, gift, sent: sent);
   if (MediaQuery.disableAnimationsOf(context)) return;
   var showUrl = gift.showUrl;
@@ -204,7 +228,8 @@ class _GiftShowPageState extends State<_GiftShowPage> with SingleTickerProviderS
       _ => _showLength,
     },
   );
-  late final AudioPlayer _player = widget.sound ?? AudioPlayer(handleAudioSessionActivation: false, handleInterruptions: false);
+  // Made only when a sound plays: a silent show needs no platform player.
+  late AudioPlayer? _player = widget.sound;
   final List<_Particle> _particles = _Particle.scatter(math.Random(), 46);
   bool _closed = false;
 
@@ -220,11 +245,12 @@ class _GiftShowPageState extends State<_GiftShowPage> with SingleTickerProviderS
   }
 
   Future<void> _playSound() async {
-    if (widget.sound != null) return _player.play();
+    if (widget.sound case final sound?) return sound.play();
     if (widget.rendered != null || _show == _Show.pop || !widget.soundOn) return;
+    final player = _player = AudioPlayer(handleAudioSessionActivation: false, handleInterruptions: false);
     try {
-      await _player.setAsset('assets/gift_effects/${_show.name}.mp3');
-      unawaited(_player.play());
+      await player.setAsset('assets/gift_effects/${_show.name}.mp3');
+      unawaited(player.play());
     } on Exception catch (error) {
       // A show without sound is still a show.
       debugPrint('gift sound failed: $error');
@@ -234,13 +260,13 @@ class _GiftShowPageState extends State<_GiftShowPage> with SingleTickerProviderS
   void _close() {
     if (_closed || !mounted) return;
     _closed = true;
-    Navigator.of(context).pop();
+    closeOwnRoute(context);
   }
 
   @override
   void dispose() {
     _clock.dispose();
-    unawaited(_player.dispose());
+    unawaited(_player?.dispose());
     // The render plays once and stays on its last frame: drop it so the next show starts from the beginning.
     unawaited(widget.rendered?.evict());
     super.dispose();

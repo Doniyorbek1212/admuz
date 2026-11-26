@@ -1,16 +1,19 @@
-"""Admin side of avatar frames: price, title, order and sale status of the imported frames, and deleting unsold ones."""
+"""Admin side of avatar frames: importing rendered frame packs, price, title, order and sale status, and deleting unsold ones."""
 
+import tempfile
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.deps import DbDep, require_admin
 from app.errors import conflict, not_found
 from app.models import AdminRole, AdminUser, FrameItem, OwnedFrame
-from app.routers.admin_gifts import Title
+from app.routers.admin_gifts import Title, unpack_upload
 from app.routers.frames import FrameKey, frame_out
+from app.services import frame_catalog
 from app.services.audit import audit
 from app.services.gift_catalog import MAX_PRICE_UZS
 from app.uploads import public_dir
@@ -44,6 +47,25 @@ class FrameIn(BaseModel):
     price_uzs: Annotated[int, Field(gt=0, le=MAX_PRICE_UZS)]
     sort: Annotated[int, Field(ge=0, le=10_000)] = 0
     active: bool = True
+
+
+@router.post("/import")
+async def import_frame_pack(
+    admin: Support,
+    db: DbDep,
+    file: Annotated[UploadFile | None, File()] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict[str, Any]:
+    """Rendered frames (frame_renders: manifest.json plus <id>.webp and <id>_small.webp) as one ZIP [file] or the
+    folder's own [files]. Same-id frames are upgraded and keep their price; the app picks them up from the catalog."""
+    with tempfile.TemporaryDirectory() as folder:
+        frames = await unpack_upload(Path(folder), file, files, "FRAME_PACK", frame_catalog.pack_file_limit, frame_catalog.parse_manifest)
+        added, updated = await frame_catalog.import_rendered_frames(db, frames)
+    name = file.filename if file is not None else "folder"
+    ids = [f.key for f in frames]
+    audit(db, f"admin:{admin.name}", "frame_pack_imported", "frames", file=(name or "")[:120], added=added, updated=updated, ids=ids)
+    await db.commit()
+    return {"added": added, "updated": updated, "ids": ids}
 
 
 @router.put("/{key}")

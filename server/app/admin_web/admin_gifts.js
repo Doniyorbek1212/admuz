@@ -11,6 +11,7 @@ Object.assign(ERRORS, {
   TOPUP_NOT_FOUND: "To'lov topilmadi", TOPUP_NOT_PENDING: "Bu to'lov allaqachon ko'rib chiqilgan",
   TELEGRAM_NOT_LINKED: "Bu Telegram ID UZARO hisobiga bog'lanmagan: foydalanuvchi ilovada Sovg'alar bo'limida bog'lashi kerak",
   GIFT_PACK_INVALID: "ZIP to'g'ri tayyorlanmagan", GIFT_PACK_TOO_BIG: 'ZIP 30 MB dan katta: bir nechta ZIPga bo\'ling',
+  FRAME_PACK_INVALID: "Ramkalar to'g'ri tayyorlanmagan", FRAME_PACK_TOO_BIG: 'ZIP 30 MB dan katta: bir nechta ZIPga bo\'ling',
   HTTP_413: 'Fayl juda katta: ZIP 30 MB gacha bo\'lsin',
 });
 
@@ -43,42 +44,76 @@ const PACK_GUIDE = `
   <p class="muted">Yuklangach sovg'a ilovada darhol ko'rinadi — ilovani yangilash shart emas. Narx, nom va tartibni keyin "Tahrirlash"da o'zgartirasiz.</p>
   </details>`;
 
+// What the frame importer accepts (server/app/services/frame_catalog.py).
+const FRAME_GUIDE = `
+  <details class="stack" open><summary><b>Ramkalar qanday tayyorlanadi</b></summary>
+  <ol>
+    <li>Har bir ramka uchun <b>id</b>: kichik lotin harfi bilan boshlanadi, faqat <code>a-z 0-9 _</code>, 2–32 belgi. Masalan <code>gold_laurel</code>.
+      Shu id bilan yana yuklasangiz, ramka yangilanadi (narxi va tartibi o'zgarmaydi).</li>
+    <li>Har ramkaga 2 ta fayl, nomlari aynan shunday:
+      <ul>
+        <li><code>&lt;id&gt;.webp</code> — profildagi katta ramka (UZARO yozuvi bilan): animatsion WebP, shaffof fon, kvadrat, rasm teshigi kenglikning 76 %i, <b>640 KB gacha</b>.</li>
+        <li><code>&lt;id&gt;_small.webp</code> — chatlar ro'yxatidagi kichik ramka: animatsion WebP, kvadrat, <b>256 KB gacha</b>.</li>
+      </ul></li>
+    <li>Shu papkaga <code>manifest.json</code>:
+<pre>{"frames": [{
+  "id": "gold_laurel",
+  "tier": 4,
+  "price_uzs": 75000,
+  "title": {"uz": "Oltin dafna", "ru": "Золотой лавр", "en": "Golden Laurel"},
+  "files": {"full": "gold_laurel.webp", "small": "gold_laurel_small.webp"}
+}]}</pre>
+      <b>tier</b> 1–4, <b>price_uzs</b> so'mda, <b>title</b> uchala tilda, <b>files</b> aynan yuqoridagi nomlar.</li>
+    <li>Yuqorida <code>frame_renders</code> papkasini tanlang (yoki ZIP qiling, 30 MB gacha). Preview va boshqa fayllar e'tiborga olinmaydi.</li>
+  </ol>
+  <p class="muted">Yuklangach ramka ilovadagi do'konda darhol chiqadi — ilovani yangilash shart emas.</p>
+  </details>`;
+
 const packError = (err) => `${errorText(err)}${err.reason && err.reason !== err.code ? `: ${err.reason}` : ''}`;
 const baseName = (f) => f.name.split(/[\\/]/).pop();
 
-// A picked folder goes up one gift per request (its manifest entry plus its three files), so any number of gifts
-// fits under the request size cap; a bad gift is reported and the rest still go in.
-async function uploadFolder(files, progress) {
+// The two kinds of rendered packs: the manifest lists its items under [list] and goes up to [url].
+const PACKS = {
+  gifts: { title: "Blender sovg'alarini yuklash", url: '/v1/admin/gifts/import', list: 'gifts', code: 'GIFT_PACK', guide: PACK_GUIDE,
+    reload: (el) => renderGifts(el, '') },
+  frames: { title: 'Ramkalarni yuklash', url: '/v1/admin/frames/import', list: 'frames', code: 'FRAME_PACK', guide: FRAME_GUIDE,
+    reload: (el) => renderFrames(el) },
+};
+
+// A picked folder goes up one item per request (its manifest entry plus its files), so any number of items
+// fits under the request size cap; a bad item is reported and the rest still go in.
+async function uploadFolder(files, progress, pack) {
+  const bad = (reason) => Object.assign(new Error('manifest'), { code: `${pack.code}_INVALID`, reason });
   const manifestFile = files.filter((f) => baseName(f) === 'manifest.json')
     .sort((a, b) => a.webkitRelativePath.length - b.webkitRelativePath.length)[0];
-  if (!manifestFile) throw Object.assign(new Error('manifest'), { code: 'GIFT_PACK_INVALID', reason: 'papkada manifest.json yo\'q' });
-  let gifts;
-  try { gifts = JSON.parse(await manifestFile.text()).gifts; } catch (_) { gifts = null; }
-  if (!Array.isArray(gifts) || !gifts.length) throw Object.assign(new Error('manifest'), { code: 'GIFT_PACK_INVALID', reason: "manifest.json o'qilmadi" });
+  if (!manifestFile) throw bad('papkada manifest.json yo\'q');
+  let items;
+  try { items = JSON.parse(await manifestFile.text())[pack.list]; } catch (_) { items = null; }
+  if (!Array.isArray(items) || !items.length) throw bad("manifest.json o'qilmadi");
   const byName = new Map(files.map((f) => [baseName(f), f]));
   const result = { added: 0, updated: 0, ids: [], failed: [] };
-  for (const [i, gift] of gifts.entries()) {
-    progress(`${i + 1}/${gifts.length}: ${gift?.id ?? '?'}`);
+  for (const [i, item] of items.entries()) {
+    progress(`${i + 1}/${items.length}: ${item?.id ?? '?'}`);
     const form = new FormData();
-    form.append('files', new Blob([JSON.stringify({ gifts: [gift] })], { type: 'application/json' }), 'manifest.json');
-    Object.values(gift?.files || {}).forEach((name) => { if (byName.has(name)) form.append('files', byName.get(name), name); });
+    form.append('files', new Blob([JSON.stringify({ [pack.list]: [item] })], { type: 'application/json' }), 'manifest.json');
+    Object.values(item?.files || {}).forEach((name) => { if (byName.has(name)) form.append('files', byName.get(name), name); });
     try {
-      const done = await fetchJson('/v1/admin/gifts/import', { method: 'POST', body: form });
+      const done = await fetchJson(pack.url, { method: 'POST', body: form });
       result.added += done.added; result.updated += done.updated; result.ids.push(...done.ids);
-    } catch (err) { result.failed.push(`${gift?.id ?? `#${i + 1}`} — ${packError(err)}`); }
+    } catch (err) { result.failed.push(`${item?.id ?? `#${i + 1}`} — ${packError(err)}`); }
   }
   return result;
 }
 
-function packForm(el) {
-  const body = openModal("Blender sovg'alarini yuklash", `
+function packForm(el, pack = PACKS.gifts) {
+  const body = openModal(pack.title, `
     <form class="stack" id="p-form">
       <div class="field"><label for="p-dir">Papkani tanlang (manifest.json va fayllar) — eng qulayi, hajm cheklovi yo'q</label>
         <input id="p-dir" type="file" webkitdirectory multiple></div>
       <div class="field"><label for="p-file">yoki bitta ZIP (30 MB gacha)</label><input id="p-file" type="file" accept=".zip,application/zip"></div>
       <div id="p-error" class="pill bad" hidden style="white-space:pre-line"></div>
       <div><button class="btn primary" type="submit" id="p-go">Yuklash</button></div>
-      ${PACK_GUIDE}
+      ${pack.guide}
     </form>`);
   body.querySelector('#p-form').onsubmit = async (e) => {
     e.preventDefault();
@@ -93,13 +128,13 @@ function packForm(el) {
     progress('');
     try {
       let done;
-      if (folder.length) done = await uploadFolder(folder, progress);
+      if (folder.length) done = await uploadFolder(folder, progress, pack);
       else {
         const form = new FormData();
         form.append('file', zip);
-        done = { ...(await fetchJson('/v1/admin/gifts/import', { method: 'POST', body: form })), failed: [] };
+        done = { ...(await fetchJson(pack.url, { method: 'POST', body: form })), failed: [] };
       }
-      renderGifts(el, '');
+      pack.reload(el);
       toast(`Qo'shildi: ${done.added}, yangilandi: ${done.updated}`);
       if (!done.failed.length) { closeModal(); return; }
       error.textContent = `Yuklanmadi:\n${done.failed.join('\n')}`;
@@ -187,7 +222,8 @@ function giftForm(gift, el) {
   };
 }
 
-// Avatar frames come from `python -m app.cli import-frame-renders`; here only price, name, order and sale change.
+// Avatar frames: uploaded here as a frame_renders pack (or `python -m app.cli import-frame-renders`), then price,
+// name, order and sale change.
 async function renderFrames(el) {
   const list = await api('/v1/admin/frames');
   const support = can('support');
@@ -202,8 +238,10 @@ async function renderFrames(el) {
     <div class="tabs"><a class="tab" href="#gifts" aria-pressed="false">Katalog</a>
       <a class="tab" href="#gifts/pending" aria-pressed="false">To'lovlar</a>
       <a class="tab" href="#gifts/frames" aria-pressed="true">Profil ramkalari · ${list.items.length}</a></div>
-    ${list.items.length ? `<div class="gift-grid">${cards}</div>` : '<div class="empty">Hali ramka yo\'q. Serverda <code>python -m app.cli import-frame-renders &lt;papka&gt;</code> qo\'shadi.</div>'}
+    ${support ? '<div class="toolbar"><button class="btn primary" id="f-pack" type="button">📦 Ramkalarni yuklash</button></div>' : ''}
+    ${list.items.length ? `<div class="gift-grid">${cards}</div>` : '<div class="empty">Hali ramka yo\'q. "Ramkalarni yuklash" bilan <code>frame_renders</code> papkasini yuklang.</div>'}
     <p class="muted">Ramka bir marta sotib olinadi. Yangi narx faqat keyingi xaridlarga ta'sir qiladi. Sotib olingan ramkani o'chirib bo'lmaydi: egalarida qoladi, uni faqat sotuvdan olish mumkin.</p>`;
+  el.querySelector('#f-pack')?.addEventListener('click', () => packForm(el, PACKS.frames));
   el.querySelectorAll('[data-f]').forEach((b) => {
     const frame = list.items.find((f) => f.key === b.dataset.key);
     b.onclick = async () => {

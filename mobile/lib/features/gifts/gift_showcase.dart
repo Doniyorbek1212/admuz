@@ -35,8 +35,8 @@ final giftShowcaseProvider = FutureProvider.family<GiftShowcase?, int>((ref, rec
   return ref.watch(_showcaseLoaderProvider).load(recipientId);
 });
 
-/// Behind a chat row: the recipient's dearest gifts drift one slow lap around the whole row when it appears, then rest,
-/// always fully inside the row's frame. Nothing (and no ticker) for recipients without gifts.
+/// Behind a chat row: the recipient's dearest gifts keep drifting slowly around the whole row, always fully inside
+/// the row's frame. Nothing (and no ticker) for recipients without gifts.
 class GiftDrift extends ConsumerWidget {
   const GiftDrift({super.key, required this.recipientId, this.size = 24});
 
@@ -62,25 +62,25 @@ class _DriftingGifts extends StatefulWidget {
 }
 
 class _DriftingGiftsState extends State<_DriftingGifts> with SingleTickerProviderStateMixin {
-  static const _lap = Duration(seconds: 9);
-  late final AnimationController _loop = AnimationController(vsync: this, duration: _lap);
-  // One lap that slows to rest where it began: an endless loop per row kept the whole chat list repainting every frame.
-  late final Animation<double> _glide = CurvedAnimation(parent: _loop, curve: Curves.easeOutCubic);
+  static const _lap = Duration(seconds: 14);
+  // Endless slow drift. Each row repaints only its own layer (RepaintBoundary); rows scrolled away are disposed,
+  // and hidden tabs and covered pages stop the ticker (TickerMode).
+  late final AnimationController _glide = AnimationController(vsync: this, duration: _lap);
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // "Remove animations" in the phone settings keeps the gifts where they are.
     if (MediaQuery.disableAnimationsOf(context)) {
-      _loop.stop();
-    } else if (_loop.status == AnimationStatus.dismissed) {
-      _loop.forward();
+      _glide.stop();
+    } else if (!_glide.isAnimating) {
+      unawaited(_glide.repeat());
     }
   }
 
   @override
   void dispose() {
-    _loop.dispose();
+    _glide.dispose();
     super.dispose();
   }
 

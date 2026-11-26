@@ -1,6 +1,8 @@
 """Avatar frames: the manifest import, buying once from the balance, wearing one at a time, the public lookup."""
 
+import io
 import json
+import zipfile
 
 import pytest
 from sqlalchemy import delete
@@ -81,6 +83,61 @@ async def test_import_adds_then_upgrades_and_keeps_the_price(tmp_path, session_f
         row = await db.get(FrameItem, "imp_frame")
         assert (row.price_uzs, row.title, row.title_en) == (45_000, "Yangi", "New")
         assert (public_dir() / row.animation).is_file() and (public_dir() / row.small).is_file()
+
+
+def _zip(tmp_path, entries: list[dict]) -> bytes:
+    folder = tmp_path / "src"
+    folder.mkdir(parents=True)
+    _folder(folder, entries)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for file in folder.iterdir():
+            archive.write(file, "frame_renders/" + file.name)
+        archive.writestr("frame_renders/x_preview.png", b"x")  # not a frame file: skipped
+        archive.writestr("frame_renders/../escape.webp", b"x")  # outside the folder: never written
+    return buffer.getvalue()
+
+
+async def test_admin_uploads_frame_packs_and_keeps_order_and_price(tmp_path, client, session_factory, new_customer):
+    admin = await _admin(session_factory)
+    viewer = await _admin(session_factory, AdminRole.VIEWER)
+    async with session_factory() as db:
+        await db.execute(delete(FrameItem).where(FrameItem.key.in_(["zip_frame", "dir_frame"])))
+        await db.commit()
+    url = "/v1/admin/frames/import"
+    pack = _zip(tmp_path, [_entry("zip_frame", 30_000, 2)])
+    assert (await client.post(url, headers=viewer, files={"file": ("p.zip", pack, "application/zip")})).status_code == 403
+    first = await client.post(url, headers=admin, files={"file": ("p.zip", pack, "application/zip")})
+    assert first.status_code == 200, first.text
+    assert first.json() == {"added": 1, "updated": 0, "ids": ["zip_frame"]}
+
+    # The panel sends a picked folder one frame per request, as the folder's own files.
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    _folder(folder, [_entry("dir_frame", 15_000)])
+    parts = [("files", (f"frame_renders/{p.name}", p.read_bytes(), "application/octet-stream")) for p in folder.iterdir()]
+    by_folder = await client.post(url, headers=admin, files=[*parts, ("files", ("frame_renders/a.png", b"x", "image/png"))])
+    assert by_folder.status_code == 200, by_folder.text
+    assert by_folder.json()["ids"] == ["dir_frame"]
+
+    listed = {f["key"]: f for f in (await client.get("/v1/admin/frames", headers=admin)).json()["items"]}
+    assert listed["dir_frame"]["sort"] > listed["zip_frame"]["sort"], "a new frame goes after the existing ones"
+    edit = {"title": "Zip", "price_uzs": 44_000, "sort": 0, "active": True}
+    assert (await client.put("/v1/admin/frames/zip_frame", headers=admin, json=edit)).status_code == 200
+    again = await client.post(url, headers=admin, files={"file": ("p.zip", pack, "application/zip")})
+    assert again.json()["updated"] == 1
+    zip_frame = next(f for f in (await client.get("/v1/admin/frames", headers=admin)).json()["items"] if f["key"] == "zip_frame")
+    assert (zip_frame["price_uzs"], zip_frame["sort"]) == (44_000, 0), "re-upload keeps the admin's price and place"
+
+    # The app sees it in the catalog right away.
+    items = (await (await new_customer()).get("/v1/frames/catalog")).json()["items"]
+    assert {"zip_frame", "dir_frame"} <= {i["key"] for i in items}
+
+    assert (await client.post(url, headers=admin)).status_code == 400
+    broken = await client.post(url, headers=admin, files={"file": ("p.zip", b"not a zip", "application/zip")})
+    assert broken.status_code == 400 and broken.json()["detail"]["code"] == "FRAME_PACK_INVALID"
+    bad = await client.post(url, headers=admin, files={"file": ("p.zip", _zip(tmp_path / "b", [_entry("bad_frame", tier=9)]), "application/zip")})
+    assert bad.status_code == 400 and "tier" in bad.json()["detail"]["message"]
 
 
 async def test_buy_wear_switch_and_lookup(client, session_factory, new_customer):

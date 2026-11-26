@@ -24,6 +24,9 @@ final frameShopProvider = FutureProvider<FrameShop>((ref) => ref.watch(sadoApiPr
 
 final _frameLoaderProvider = Provider((ref) => IdBatcher<String>(ref.watch(sadoApiProvider).framesOf));
 
+/// When the shop was last refetched for a frame key it did not know.
+DateTime? _shopRefetchedAt;
+
 /// The frame a Telegram user wears, or null.
 // shortcut: cached for the session like the badge, so someone else's new frame shows after a restart; the user's
 // own purchase invalidates theirs right away.
@@ -32,7 +35,15 @@ final userFrameProvider = FutureProvider.family<AvatarFrameItem?, int>((ref, use
   if (!api.configured) return null;
   final key = await ref.watch(_frameLoaderProvider).load(userId);
   if (key == null) return null;
-  return (await ref.watch(frameShopProvider.future)).byKey(key);
+  final frame = (await ref.watch(frameShopProvider.future)).byKey(key);
+  // A frame uploaded after this session loaded the shop: fetch the catalog again (at most once a minute), and
+  // this provider reruns with it.
+  final now = DateTime.now();
+  if (frame == null && (_shopRefetchedAt == null || now.difference(_shopRefetchedAt!) > const Duration(minutes: 1))) {
+    _shopRefetchedAt = now;
+    ref.invalidate(frameShopProvider);
+  }
+  return frame;
 });
 
 /// Draws [frame] round an avatar of [size] without changing the avatar's layout size: the art overflows by about
@@ -99,6 +110,17 @@ class FrameShopScreen extends ConsumerStatefulWidget {
 class _FrameShopScreenState extends ConsumerState<FrameShopScreen> {
   String? _picked;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Frames uploaded since the shop was last loaded show up when it opens; the old list stays on screen meanwhile.
+    if (ref.read(frameShopProvider).hasValue) {
+      Future.microtask(() {
+        if (mounted) ref.invalidate(frameShopProvider);
+      });
+    }
+  }
 
   Future<void> _run(Future<void> Function() action, String? doneKey) async {
     if (!await ensureGiftsLinked(context, ref) || !mounted) return;

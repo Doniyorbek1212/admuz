@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/api/gift_models.dart';
 import '../../l10n/strings.dart';
 import '../../state/providers.dart';
+import 'gift_effects.dart' show closeOwnRoute;
 
 /// Plays a premium gift's video full screen with sound, like a live-stream gift; closes at the end or on a tap.
 /// [sent] adds who sent it; null right after sending (the sender's own preview).
@@ -64,7 +65,7 @@ class _GiftVideoPageState extends ConsumerState<_GiftVideoPage> {
   void _close() {
     if (_closed || !mounted) return;
     _closed = true;
-    Navigator.of(context).pop();
+    closeOwnRoute(context);
   }
 
   @override
