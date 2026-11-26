@@ -17,6 +17,36 @@
       ]
     },
     {
+      "id": "latte",
+      "tier": 1,
+      "price_uzs": 5000,
+      "title": {
+        "uz": "Qahva",
+        "ru": "Кофе",
+        "en": "Latte"
+      },
+      "credits": [
+        "\"Wine glass clink deeper.wav\" by lmr9, CC0 1.0, https://freesound.org/s/178178/",
+        "\"Pouring Champagne\" by snakebarney, CC0 1.0, https://freesound.org/s/138125/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
+      "id": "tulips",
+      "tier": 1,
+      "price_uzs": 6000,
+      "title": {
+        "uz": "Lolalar",
+        "ru": "Тюльпаны",
+        "en": "Tulips"
+      },
+      "credits": [
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
+      ]
+    },
+    {
       "id": "heart_balloons",
       "tier": 1,
       "price_uzs": 7000,
@@ -87,6 +117,21 @@
       "credits": [
         "\"Animated Flying Fluttering Butterfly Loop\" by LasquetiSpice, CC BY 4.0, https://sketchfab.com/3d-models/80f8d9a6dadc411e89ca366cb0cfb0d9",
         "\"Light Wing Flap\" by TurboFool, CC0 1.0, https://freesound.org/s/561009/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "pomegranate",
+      "tier": 1,
+      "price_uzs": 12000,
+      "title": {
+        "uz": "Anor",
+        "ru": "Гранат",
+        "en": "Pomegranate"
+      },
+      "credits": [
+        "\"Wood block hit\" by thomasjaunism, CC0 1.0, https://freesound.org/s/218460/",
+        "\"Apple Bite\" by phatcorns, CC0 1.0, https://freesound.org/s/250106/",
         "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
       ]
     },
@@ -182,6 +227,21 @@
       ]
     },
     {
+      "id": "magic_carpet",
+      "tier": 2,
+      "price_uzs": 80000,
+      "title": {
+        "uz": "Uchar gilam",
+        "ru": "Ковёр-самолёт",
+        "en": "Flying carpet"
+      },
+      "credits": [
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/"
+      ]
+    },
+    {
       "id": "helicopter",
       "tier": 2,
       "price_uzs": 80000,
@@ -269,6 +329,20 @@
       ]
     },
     {
+      "id": "dutor",
+      "tier": 2,
+      "price_uzs": 40000,
+      "title": {
+        "uz": "Dutor",
+        "ru": "Дутар",
+        "en": "Dutar"
+      },
+      "credits": [
+        "\"Guitar Pluck\" by Baconation, CC0 1.0, https://freesound.org/s/592442/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
       "id": "dolphin",
       "tier": 2,
       "price_uzs": 30000,
@@ -295,6 +369,22 @@
       },
       "credits": [
         "\"Tomahawk Missile Rocket Launch 2\" by qubodup, CC0 1.0, https://freesound.org/s/162379/"
+      ]
+    },
+    {
+      "id": "elephant",
+      "tier": 3,
+      "price_uzs": 250000,
+      "title": {
+        "uz": "Fil",
+        "ru": "Слон",
+        "en": "Elephant"
+      },
+      "credits": [
+        "\"African Elephant Bull - Rigged & Animated\" by Animal Animator, CC BY 4.0, https://sketchfab.com/3d-models/436483857ce84c77bd0f6c76fb3d4d2d",
+        "\"Elephant Trumpets Growls.flac\" by D.jones, CC0 1.0, https://freesound.org/s/527845/",
+        "\"Pouring Champagne\" by snakebarney, CC0 1.0, https://freesound.org/s/138125/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
       ]
     },
     {
@@ -326,6 +416,24 @@
         "\"Tiger Roar\" by lauramellis, CC0 1.0, https://freesound.org/s/263115/",
         "\"lion roar\" by bkyte, CC0 1.0, https://freesound.org/s/510476/",
         "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/"
+      ]
+    },
+    {
+      "id": "whale",
+      "tier": 3,
+      "price_uzs": 350000,
+      "title": {
+        "uz": "Kit",
+        "ru": "Кит",
+        "en": "Whale"
+      },
+      "credits": [
+        "\"High-Poly Humbpack Whale\" by K9239, CC BY 4.0, https://sketchfab.com/3d-models/5a6a09f1c27e4d0f890f2a30c10d7a81",
+        "\"Ocean Waves Rough.mp3\" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/",
+        "\"water splash\" by audiosmedia, CC0 1.0, https://freesound.org/s/243519/",
+        "\"LowWhalesong.wav\" by RebekahDay, CC0 1.0, https://freesound.org/s/171945/",
+        "\"Big Splash.wav\" by Bird_man, CC0 1.0, https://freesound.org/s/316744/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/"
       ]
     },
     {
@@ -451,6 +559,264 @@
         "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
         "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/",
         "\"Impact\" by chriskalos, CC0 1.0, https://freesound.org/s/172779/"
+      ]
+    },
+    {
+      "id": "snow_leopard",
+      "tier": 3,
+      "price_uzs": 300000,
+      "title": {
+        "uz": "Irbis",
+        "ru": "Снежный барс",
+        "en": "Snow leopard"
+      },
+      "credits": [
+        "\"black panther\" by kenchoo, CC BY 4.0, https://sketchfab.com/3d-models/7fca11c89cca4362a525c891a8345112",
+        "\"footsteps snow -20 degrees C.aif\" by Snstro, CC0 1.0, https://freesound.org/s/614052/",
+        "\"Wind_Arctic_Storm_Breeze-004.wav\" by EricsSoundschmiede, CC0 1.0, https://freesound.org/s/407010/",
+        "\"snow block of snow igloo brick put down crunch\" by kyles, CC0 1.0, https://freesound.org/s/450848/",
+        "\"Tiger Roar\" by lauramellis, CC0 1.0, https://freesound.org/s/263115/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/"
+      ]
+    },
+    {
+      "id": "humo",
+      "tier": 4,
+      "price_uzs": 2000000,
+      "title": {
+        "uz": "Humo qushi",
+        "ru": "Хумо",
+        "en": "Humo bird"
+      },
+      "credits": [
+        "\"Free Eagle\" by Filip, CC BY 4.0, https://sketchfab.com/3d-models/9f25e7c83840435396225970ba47b75e",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/",
+        "\"fire-whoosh.wav\" by hnhnh, CC0 1.0, https://freesound.org/s/244926/"
+      ]
+    },
+    {
+      "id": "golden_carriage",
+      "tier": 4,
+      "price_uzs": 1200000,
+      "title": {
+        "uz": "Oltin karvon",
+        "ru": "Золотая карета",
+        "en": "Golden carriage"
+      },
+      "credits": [
+        "\"Royal carriage\" by akiprensky, CC BY 4.0, https://sketchfab.com/3d-models/faa2c55beba14d69bf175e734702a091",
+        "\"Horse\" by victorberdugo1, CC BY 4.0, https://sketchfab.com/3d-models/2f4639623e684c44acb68922585d7a09",
+        "\"Horse Gallop - Loopable.mp3\" by HebronTheatre, CC0 1.0, https://freesound.org/s/197212/",
+        "\"Horse_neighing.wav\" by Lydmakeren, CC0 1.0, https://freesound.org/s/510903/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/"
+      ]
+    },
+    {
+      "id": "starship",
+      "tier": 4,
+      "price_uzs": 1000000,
+      "title": {
+        "uz": "Kosmik kema",
+        "ru": "Звездолёт",
+        "en": "Starship"
+      },
+      "credits": [
+        "\"Low spacey sound\" by User391915396, CC0 1.0, https://freesound.org/s/495010/",
+        "\"Deep Boom\" by Za-Games, CC0 1.0, https://freesound.org/s/539968/",
+        "\"Space Swoosh - brighter\" by GameAudio, CC0 1.0, https://freesound.org/s/220191/"
+      ]
+    },
+    {
+      "id": "steam_train",
+      "tier": 2,
+      "price_uzs": 90000,
+      "title": {
+        "uz": "Bug' poyezdi",
+        "ru": "Паровоз",
+        "en": "Steam train"
+      },
+      "credits": [
+        "\"Big Steam Engine Perfect Loop (24bit flac)\" by steaq, CC0 1.0, https://freesound.org/s/594215/",
+        "\"Steam Whistle.mp3\" by Bidone, CC0 1.0, https://freesound.org/s/71778/"
+      ]
+    },
+    {
+      "id": "timurid_palace",
+      "tier": 3,
+      "price_uzs": 400000,
+      "title": {
+        "uz": "Ko'shk",
+        "ru": "Дворец",
+        "en": "Blue-dome palace"
+      },
+      "credits": [
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Firework Explosion 1\" by deleted_user_3544904, CC0 1.0, https://freesound.org/s/212678/"
+      ]
+    },
+    {
+      "id": "bunny",
+      "tier": 1,
+      "price_uzs": 8000,
+      "title": {
+        "uz": "Quyoncha",
+        "ru": "Зайчик",
+        "en": "Bunny"
+      },
+      "credits": [
+        "\"Rabbit Rigged\" by FourthGreen, CC BY 4.0, https://sketchfab.com/3d-models/e7213589744d436b9d96e2dbb31198a5",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/"
+      ]
+    },
+    {
+      "id": "panda",
+      "tier": 1,
+      "price_uzs": 10000,
+      "title": {
+        "uz": "Pandacha",
+        "ru": "Панда",
+        "en": "Panda"
+      },
+      "credits": [
+        "\"Giant Panda: Rigged, Animated, Realistic Fur\" by Animal Animator, CC BY 4.0, https://sketchfab.com/3d-models/6a13eaa35143434392693c7f56fd9c7f",
+        "\"Chomp Chew Bite.wav\" by bbrocer, CC0 1.0, https://freesound.org/s/382650/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "penguin",
+      "tier": 1,
+      "price_uzs": 10000,
+      "title": {
+        "uz": "Pingvincha",
+        "ru": "Пингвин",
+        "en": "Penguin"
+      },
+      "credits": [
+        "\"Penguin\" by Mateus Schwaab, CC BY 4.0, https://sketchfab.com/3d-models/2c079bc491fb4bb4942c0f87927f8d87",
+        "\"Penguin Squeak\" by Breviceps, CC0 1.0, https://freesound.org/s/705839/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "camel",
+      "tier": 2,
+      "price_uzs": 50000,
+      "title": {
+        "uz": "Tuya",
+        "ru": "Верблюд",
+        "en": "Camel"
+      },
+      "credits": [
+        "\"Bactrian_camel_low_poly\" by mgddeldeen9020, CC BY 4.0, https://sketchfab.com/3d-models/d0f3f2383be841209946becf0cd24e50",
+        "\"Camels - Dromedary; Single; Close Perspective\" by TheKingOfGeeks360, CC0 1.0, https://freesound.org/s/801959/",
+        "\"Wine glass clink deeper.wav\" by lmr9, CC0 1.0, https://freesound.org/s/178178/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/"
+      ]
+    },
+    {
+      "id": "wolf",
+      "tier": 2,
+      "price_uzs": 60000,
+      "title": {
+        "uz": "Bo'ri",
+        "ru": "Волк",
+        "en": "Wolf"
+      },
+      "credits": [
+        "\"Grey Wolf (Rigged and Animated)\" by rhcreations, CC BY 4.0, https://sketchfab.com/3d-models/56de4df672654ed599777d2980bf0f53",
+        "\"wolf-howling-sound-effect.mp3\" by cactustt, CC0 1.0, https://freesound.org/s/490256/",
+        "\"Swoosh 15 Windy\" by qubodup, CC0 1.0, https://freesound.org/s/60002/"
+      ]
+    },
+    {
+      "id": "peacock",
+      "tier": 2,
+      "price_uzs": 70000,
+      "title": {
+        "uz": "Tovus",
+        "ru": "Павлин",
+        "en": "Peacock"
+      },
+      "credits": [
+        "\"Bird, Peacock Call\" by Kinoton, CC0 1.0, https://freesound.org/s/688203/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/"
+      ]
+    },
+    {
+      "id": "swans",
+      "tier": 3,
+      "price_uzs": 200000,
+      "title": {
+        "uz": "Oqqushlar",
+        "ru": "Лебеди",
+        "en": "Swans"
+      },
+      "credits": [
+        "\"Animated Swan - Rigged & Optimized Game Ready\" by GAMICO, CC BY 4.0, https://sketchfab.com/3d-models/04ac4add046843ee975f6785d24c042e",
+        "\"Ocean Waves Rough.mp3\" by SomeoneCool15, CC0 1.0, https://freesound.org/s/418366/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/"
+      ]
+    },
+    {
+      "id": "guitar",
+      "tier": 2,
+      "price_uzs": 80000,
+      "title": {
+        "uz": "Elektrogitara",
+        "ru": "Электрогитара",
+        "en": "Electric guitar"
+      },
+      "credits": [
+        "\"Dist_Chr_A&D_strs_pm.wav\" by SpeedY, CC0 1.0, https://freesound.org/s/11918/",
+        "\"E Guitar Riff\" by Rizzard, CC0 1.0, https://freesound.org/s/563588/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "headphones",
+      "tier": 2,
+      "price_uzs": 60000,
+      "title": {
+        "uz": "Quloqchin",
+        "ru": "Наушники",
+        "en": "Headphones"
+      },
+      "credits": [
+        "\"calculus 120 phosocyn.wav\" by djgriffin, CC0 1.0, https://freesound.org/s/64612/",
+        "\"trance_kick01.wav\" by laya, CC0 1.0, https://freesound.org/s/33325/",
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/"
+      ]
+    },
+    {
+      "id": "uzaro",
+      "tier": 4,
+      "price_uzs": 1000000,
+      "title": {
+        "uz": "UZARO",
+        "ru": "UZARO",
+        "en": "UZARO"
+      },
+      "credits": [
+        "\"Swosh swoosh whoosh air sound, free, high quality\" by qubodup, CC0 1.0, https://freesound.org/s/60026/",
+        "\"Glimmer.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521873/",
+        "\"Shimmery.wav\" by opticaillusions, CC0 1.0, https://freesound.org/s/521886/",
+        "\"GLEAM-GLOW-SFX-CHIME.wav\" by newagesoup, CC0 1.0, https://freesound.org/s/351408/",
+        "\"Wood block hit\" by thomasjaunism, CC0 1.0, https://freesound.org/s/218460/",
+        "\"Deep Boom\" by Za-Games, CC0 1.0, https://freesound.org/s/539968/"
       ]
     }
   ]

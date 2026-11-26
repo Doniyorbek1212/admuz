@@ -103,11 +103,12 @@ def fur(ob, length, count=2200, children=30, radius=0.006, roughness=0.5, densit
     hair = N("ShaderNodeBsdfHairPrincipled")
     hair.parametrization = "COLOR"
     if tex is not None and tex.type == "TEX_IMAGE":
-        uv = N("ShaderNodeUVMap")
-        uv.from_instancer = True
+        # 4.2 Cycles: particle hair carries the emitter UV as a named attribute; UVMap/TexCoord from_instancer give 0
+        uv = N("ShaderNodeAttribute")
+        uv.attribute_name = next(u.name for u in ob.data.uv_layers if u.active_render)
         im = N("ShaderNodeTexImage")
         im.image = tex.image
-        L(uv.outputs[0], im.inputs["Vector"])
+        L(uv.outputs["Vector"], im.inputs["Vector"])
         col = im.outputs["Color"]
         if gamma:
             g = N("ShaderNodeGamma")

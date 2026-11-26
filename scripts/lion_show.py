@@ -25,8 +25,10 @@ LION_SIZE = 5.9                   # longest bbox side, world units (frame is 8.1
 HEADING = R(28)                   # walk direction: screen right, turned this much toward camera
 GROUND_Z = -1.9
 STOP_X = 0.25
-GAIT = qp.Gait(cycle_dist=130.0)
-CYCLE_FRAMES = 20
+GAIT = qp.Gait(cycle_dist=140.0, duty=0.62, lift=17.0, bob=2.4, hind_flex=46.0, fore_flex=76.0)
+CYCLE_FRAMES = 24                 # about one stride a second: a lion's unhurried walk
+SCAPULA_DEG = 10.0                # collarbone swing that carries the shoulder with each fore stride
+COLLARS = {"LF": "RigLFLegCollarbone_011", "RF": "RigRFLegCollarbone_031"}
 STOP_F, ROAR_F, GO_F = 62, 64, 106   # stop, roar take frame 0, start walking out
 DECEL, ACCEL = 14, 10
 ROAR_LEN = 52
@@ -169,6 +171,12 @@ class Motion:
         self.arm, self.roar, self.k = arm, roar, k
         self.dir, self.stop = heading_dir, stop_loc
         self.legs = qp.make_legs(arm, chains(arm), FWD, UP, LAT, GAIT)
+        self.collar = {}
+        for key, leg in zip(chains(arm), self.legs):
+            if key in COLLARS:
+                c = COLLARS[key]
+                axis = (arm.data.bones[c].matrix_local.to_3x3().inverted() @ LAT).normalized()
+                self.collar[leg] = (arm.pose.bones[c], axis, leg._2d(arm.data.bones[c].head_local))
         self.up = {n: local_axis(arm, n, UP) for n in HEAD_CHAIN + TAIL + SPINE}
         self.lat = {n: local_axis(arm, n, LAT) for n in HEAD_CHAIN}
         tip = "RigTongue3_024"
@@ -202,10 +210,10 @@ class Motion:
         amp = self.speed(f) ** 0.5
         dist = self.s[f] / self.k
         cyc = dist / GAIT.cycle_dist
-        bob = qp.pose_walk(self.legs, GAIT, dist, amp)
+        bob = self.walk(dist, amp)
         turn = TURN_DEG * (env(f, STOP_F - 10, STOP_F + 4) - env(f, GO_F - 6, GO_F + 8))
         lower = LOWER_DEG * (env(f, STOP_F - 6, ROAR_F + 2) - env(f, ROAR_F + 8, ROAR_F + 22))
-        nod = 1.5 * amp * math.cos(4 * math.pi * cyc)
+        nod = 3.5 * amp * math.cos(4 * math.pi * cyc + 0.6)
         pbs = self.arm.pose.bones
         for i, n in enumerate(HEAD_CHAIN):
             d, dl = roar_delta(self.roar, n, a_roar)
@@ -225,7 +233,28 @@ class Motion:
                     + R(4.0) * amp * math.sin(2 * math.pi * (cyc - 0.06 * i)))
             pbs[n].rotation_quaternion = Quaternion(self.up[n], sway)
         for n in SPINE:
-            pbs[n].rotation_quaternion = Quaternion(self.up[n], R(1.2) * amp * math.sin(2 * math.pi * cyc))
+            pbs[n].rotation_quaternion = Quaternion(self.up[n], R(2.6) * amp * math.sin(2 * math.pi * cyc))
+        return bob
+
+    def walk(self, dist, amp):
+        """qp.pose_walk plus a swinging shoulder: each fore leg's collarbone turns with its paw (forward when the paw
+        reaches forward), the leg's hip joint moves with it and its first bone is corrected so the paw stays planted."""
+        cyc = dist / GAIT.cycle_dist
+        bob = -GAIT.bob * amp * math.cos(4 * math.pi * cyc)
+        half = GAIT.cycle_dist * GAIT.duty / 2
+        for leg in self.legs:
+            off, swing = qp.paw_path((cyc + leg.phase) % 1.0, GAIT, amp)
+            off.y -= bob
+            th, hip_off = 0.0, Vector((0.0, 0.0))
+            if leg in self.collar:
+                pb, axis, c = self.collar[leg]
+                th = R(SCAPULA_DEG) * off.x / half
+                r = leg.j[0] - c
+                hip_off = Vector((r.x * math.cos(th) - r.y * math.sin(th), r.x * math.sin(th) + r.y * math.cos(th))) - r
+                pb.rotation_quaternion = Quaternion(axis, leg.sign * th)
+            leg.solve(off, hip_off, leg.flex * swing, -0.5 * leg.flex * swing)
+            if th:
+                leg.bones[0].rotation_quaternion = Quaternion(leg.axis[0], leg.sign * qp._wrap(R(leg.last[0]) - th))
         return bob
 
     def key(self, f):
@@ -245,7 +274,7 @@ class Motion:
     @property
     def _keyed(self):
         legs = {pb.name for leg in self.legs for pb in leg.bones}
-        return legs | set(ROAR_BONES) | set(TAIL) | set(SPINE)
+        return legs | set(ROAR_BONES) | set(TAIL) | set(SPINE) | set(COLLARS.values())
 
 
 # ------------------------------------------------------------------ look

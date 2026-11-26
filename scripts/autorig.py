@@ -16,6 +16,10 @@ def bake_world(meshes):
         mw = o.matrix_world.copy()
         o.data = o.data.copy()
         o.data.transform(mw)
+        if o.data.shape_keys:   # transform() skips shape keys, and the evaluated mesh reads the Basis key
+            for kb in o.data.shape_keys.key_blocks:
+                for p in kb.data:
+                    p.co = mw @ p.co
         o.parent = None
         o.matrix_world = type(mw).Identity(4)
 

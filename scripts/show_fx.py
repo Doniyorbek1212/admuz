@@ -167,3 +167,21 @@ def shock_ring(sc, name, location, frames, r_end, rgb, strength, width=0.12):
         for kp in fc.keyframe_points:
             kp.interpolation, kp.easing = "EXPO", "EASE_OUT"
     return ob
+
+
+def pop(sc, root, appear=None, vanish=None, rgb=(1.0, 0.85, 0.6), size=1.0):
+    """Magic entrance and exit for a gift that cannot walk on or off in its length: the root scales up from nothing
+    (with a small overshoot) over `appear` = (first, last frame) and back to nothing over `vanish`, each with a puff of
+    sparkles that follows the root (location only, so the shrinking root does not shrink the puff)."""
+    keys = [(appear[0], 0.0), (appear[0] + (appear[1] - appear[0]) * 0.6, 1.08), (appear[1], 1.0)] if appear else []
+    if vanish:
+        keys += [(vanish[0], 1.0), (vanish[0] + (vanish[1] - vanish[0]) * 0.3, 1.06), (vanish[1], 0.0)]
+    for f, s in keys:
+        root.scale = (s, s, s)
+        root.keyframe_insert("scale", frame=f)
+    mat = fade_material("PopSpark", rgb, 8.0)
+    for i, span in enumerate(x for x in (appear, vanish) if x):
+        em = particle_burst(sc, f"Pop{i}", point_mesh(f"PopSrc{i}", 0.6 * size), mat, 160,
+                            (span[0], span[0] + (span[1] - span[0]) // 2 + 1), 18, 0.025, 1.0 * size, rand=1.0,
+                            align=(0.0, 0.0, 0.8), damping=0.3, gravity=-0.08)
+        em.constraints.new("COPY_LOCATION").target = root
