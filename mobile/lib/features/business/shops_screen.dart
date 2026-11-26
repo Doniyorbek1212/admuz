@@ -9,8 +9,8 @@ import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
+import '../market/market_widgets.dart';
 import 'business_widgets.dart';
-import 'product_screen.dart';
 
 /// "Online shops" of a region: approved shops, searchable by name.
 class ShopsScreen extends ConsumerStatefulWidget {
@@ -139,7 +139,7 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
     final s = context.s;
     return Scaffold(
       backgroundColor: groupedBackground(context),
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(title: Text(widget.title), actions: const [CartButton()]),
       body: FutureBuilder<Shop>(
         future: _shop,
         builder: (context, snapshot) {
@@ -179,12 +179,9 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                   sliver: SliverGrid.builder(
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 240, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 0.62),
+                    gridDelegate: marketGrid,
                     itemCount: products.length,
-                    itemBuilder: (context, i) => _ProductCard(
-                      product: products[i],
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ProductScreen(product: products[i], shop: shop))),
-                    ),
+                    itemBuilder: (context, i) => MarketProductCard(product: products[i], shop: shop, showShop: false),
                   ),
                 ),
             ],
@@ -234,70 +231,6 @@ class _ShopScreenState extends ConsumerState<ShopScreen> {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ProductCard extends StatelessWidget {
-  const _ProductCard({required this.product, required this.onTap});
-
-  final Product product;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = context.s;
-    final theme = Theme.of(context);
-    final out = product.stock == 0;
-    return Material(
-      color: groupCardColor(context),
-      borderRadius: BorderRadius.circular(18),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  NetImage(product.coverUrl, icon: Icons.shopping_bag_outlined),
-                  if (product.discountPercent > 0) Positioned(left: 8, top: 8, child: DiscountBadge(percent: product.discountPercent)),
-                  if (product.media.any((m) => m.isVideo))
-                    const Positioned(right: 8, top: 8, child: CircleAvatar(radius: 14, backgroundColor: Colors.black54, child: Icon(Icons.play_arrow_rounded, size: 18, color: Colors.white))),
-                  if (out)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        color: Colors.black54,
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Text(s.t('out_of_stock'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  PriceLine(product: product),
-                  const SizedBox(height: 4),
-                  Text(product.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.2)),
-                  if (!out) ...[
-                    const SizedBox(height: 4),
-                    Text(s.t('in_stock', {'n': '${product.stock}'}), style: TextStyle(fontSize: 12, color: theme.hintColor)),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

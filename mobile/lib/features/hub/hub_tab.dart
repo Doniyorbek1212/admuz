@@ -14,13 +14,13 @@ import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
 import '../business/ads_screen.dart';
 import '../business/business_screen.dart';
-import '../business/shops_screen.dart';
 import '../gifts/gifts_screen.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_screen.dart';
 import 'hub_banners.dart';
 import '../ai/uzaro_ai_screen.dart';
 import '../games/games_lobby_screen.dart';
+import '../market/market_screen.dart';
 import 'hub_catalog.dart';
 import 'hub_results_screen.dart';
 import 'hub_quick_links.dart';
@@ -239,7 +239,7 @@ Future<void> openHubItem(BuildContext context, WidgetRef ref, HubItem item) asyn
     case HubAction.ads:
       push(const AdsScreen());
     case HubAction.shops:
-      push(ShopsScreen(region: ref.read(hubRegionProvider)));
+      push(const MarketScreen());
     case HubAction.support:
       final account = ref.read(accountProvider);
       final chat = await guard(context, () async {

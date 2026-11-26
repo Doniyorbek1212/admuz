@@ -239,6 +239,36 @@ class SadoApi {
 
   Future<Shop> shop(String id) async => Shop.fromJson(await _get('/v1/market/shops/$id') as Map<String, dynamic>);
 
+  /// Products on sale in a region's shops (search, category, sort: new | cheap | expensive | discount), or the
+  /// given [ids] wherever they are (favourites, the cart).
+  Future<List<Product>> marketFeed({String? region, String query = '', String category = '', String sort = 'new', List<String>? ids, int offset = 0}) async => [
+        for (final p in await _get('/v1/market/feed', query: {
+          'region': ?region,
+          if (query.isNotEmpty) 'q': query,
+          if (category.isNotEmpty) 'category': category,
+          'sort': sort,
+          'ids': ?ids,
+          if (offset > 0) 'offset': offset,
+        }) as List)
+          Product.fromJson(p as Map<String, dynamic>),
+      ];
+
+  Future<Order> placeOrder(OrderDraft draft) async => Order.fromJson(await _post('/v1/market/orders', data: draft.toJson()) as Map<String, dynamic>);
+
+  Future<List<Order>> myOrders() async => [for (final o in await _get('/v1/market/orders') as List) Order.fromJson(o as Map<String, dynamic>)];
+
+  Future<Order> cancelOrder(String id, String reason) async =>
+      Order.fromJson(await _post('/v1/market/orders/$id/cancel', data: {'reason': reason}) as Map<String, dynamic>);
+
+  /// The seller's orders: [done] false = new, accepted and shipped; true = delivered and cancelled.
+  Future<List<Order>> shopOrders(String shopId, {bool done = false}) async => [
+        for (final o in await _get('/v1/market/me/shops/$shopId/orders', query: {'state': done ? 'done' : 'active'}) as List)
+          Order.fromJson(o as Map<String, dynamic>),
+      ];
+
+  Future<Order> setOrderStatus(String id, OrderStatus status, {String reason = ''}) async => Order.fromJson(
+      await _post('/v1/market/me/orders/$id/status', data: {'status': orderStatusName(status), 'reason': reason}) as Map<String, dynamic>);
+
   Future<MyShops> myShops() async => MyShops.fromJson(await _get('/v1/market/me/shops') as Map<String, dynamic>);
 
   Future<Shop> myShop(String id) async => Shop.fromJson(await _get('/v1/market/me/shops/$id') as Map<String, dynamic>);

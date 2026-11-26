@@ -221,9 +221,6 @@ class _GamesLobbyScreenState extends ConsumerState<GamesLobbyScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(s.t('g_title')),
-          actions: [
-            if (_profile != null) IconButton(tooltip: s.t('g_name'), icon: const Icon(Icons.badge_outlined), onPressed: _rename),
-          ],
           bottom: _linked == true
               ? TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [
                   Tab(text: s.t('g_tab_play')),
@@ -279,6 +276,8 @@ class _GamesLobbyScreenState extends ConsumerState<GamesLobbyScreen> {
     if (profile == null) return const Center(child: CircularProgressIndicator());
     final seeking = _seeking;
     final active = _active.where((g) => g.kind == _kind).toList();
+    final controls = profile.timeControls;
+    final usual = controls.where((t) => t.speed == 'blitz').firstOrNull ?? controls.firstOrNull;
     return ListView(padding: const EdgeInsets.fromLTRB(12, 8, 12, 24), children: [
       if (!_live.connected.value)
         Padding(
@@ -291,84 +290,270 @@ class _GamesLobbyScreenState extends ConsumerState<GamesLobbyScreen> {
         ),
       if (profile.banned)
         Card(color: theme.colorScheme.errorContainer, child: ListTile(leading: const Icon(Icons.block), title: Text(s.t('api_PLAYER_BANNED')))),
-      Row(children: [
-        for (final speed in const ['bullet', 'blitz', 'rapid'])
-          Expanded(child: _RatingTile(speed: speed, info: profile.rating(_kind, speed))),
-      ]),
+      _ProfileCard(
+        name: profile.name,
+        telegramUserId: _me,
+        ratings: [for (final speed in _speeds) (speed, profile.rating(_kind, speed))],
+        onRename: _rename,
+      ),
       for (final g in active)
         Card(
+          color: theme.colorScheme.secondaryContainer,
           child: ListTile(
-            leading: const Icon(Icons.play_circle_fill_rounded, color: Colors.green, size: 32),
-            title: Text(s.t('g_resume')),
+            leading: const Icon(Icons.play_circle_fill_rounded, color: Colors.green, size: 36),
+            title: Text(s.t('g_resume'), style: const TextStyle(fontWeight: FontWeight.w700)),
             subtitle: Text('${g.white.name} — ${g.black.name} · ${g.timeControl}'),
+            trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => _play(g),
           ),
         ),
-      const SizedBox(height: 8),
-      Text(s.t('g_quick_play'), style: theme.textTheme.titleMedium),
-      const SizedBox(height: 8),
+      const SizedBox(height: 12),
       if (seeking != null)
-        Card(
-          color: theme.colorScheme.primaryContainer,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(children: [
-              const SizedBox.square(dimension: 28, child: CircularProgressIndicator(strokeWidth: 3)),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(s.t('g_seeking'), style: theme.textTheme.titleMedium),
-                  Text('${seeking.label} · ${s.t('g_speed_${seeking.speed}')} · ${DateTime.now().difference(_seekSince ?? DateTime.now()).inSeconds} s'),
-                ]),
-              ),
-              TextButton(onPressed: _stopSeeking, child: Text(s.t('cancel'))),
-            ]),
-          ),
+        _SeekingCard(
+          control: seeking,
+          seconds: DateTime.now().difference(_seekSince ?? DateTime.now()).inSeconds,
+          onCancel: _stopSeeking,
         )
-      else
-        GridView.count(
-          crossAxisCount: 3,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 1.35,
-          children: [
-            for (final tc in profile.timeControls)
-              Material(
-                color: theme.colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(14),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: profile.banned ? null : () => _seek(tc),
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Text(tc.label, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                    Text(s.t('g_speed_${tc.speed}'), style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-                  ]),
-                ),
-              ),
-          ],
-        ),
-      const SizedBox(height: 16),
-      Card(
-        child: Column(children: [
-          ListTile(
-            leading: const Icon(Icons.person_add_alt_1_rounded),
-            title: Text(s.t('g_play_friend')),
-            subtitle: Text(s.t('g_play_friend_hint')),
+      else ...[
+        if (usual != null)
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(60),
+              textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            onPressed: profile.banned ? null : () => _seek(usual),
+            icon: const Icon(Icons.play_arrow_rounded, size: 30),
+            label: Text(s.t('g_play_now', {'time': _timeLabel(context, usual)})),
+          ),
+        const SizedBox(height: 4),
+        Text(s.t('g_play_now_hint'), textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
+        const SizedBox(height: 18),
+        Text(s.t('g_pick_time'), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        Text(s.t('g_pick_time_hint'), style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
+        const SizedBox(height: 10),
+        for (final speed in _speeds)
+          if (controls.any((t) => t.speed == speed))
+            _SpeedRow(
+              speed: speed,
+              controls: [for (final t in controls) if (t.speed == speed) t],
+              onPick: profile.banned ? null : _seek,
+            ),
+      ],
+      const SizedBox(height: 8),
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: _BigTile(
+            icon: Icons.person_add_alt_1_rounded,
+            color: const Color(0xFF3D8BFF),
+            title: s.t('g_play_friend'),
+            subtitle: s.t('g_play_friend_hint'),
             onTap: _challenge,
           ),
-          if (hasWebView) const Divider(height: 1),
-          if (hasWebView)
-            ListTile(
-            leading: const Icon(Icons.smart_toy_outlined),
-            title: Text(s.t('g_offline_games')),
-            subtitle: Text(s.t('g_offline_games_hint')),
-            onTap: _offline,
+        ),
+        if (hasWebView) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            child: _BigTile(
+              icon: Icons.smart_toy_outlined,
+              color: const Color(0xFF8E5CF7),
+              title: s.t('g_vs_computer'),
+              subtitle: s.t('g_offline_games_hint'),
+              onTap: _offline,
+            ),
+          ),
+        ],
+      ]),
+    ]);
+  }
+}
+
+const _speeds = ['bullet', 'blitz', 'rapid'];
+
+IconData _speedIcon(String speed) => switch (speed) {
+      'bullet' => Icons.bolt_rounded,
+      'blitz' => Icons.local_fire_department_rounded,
+      _ => Icons.timer_rounded,
+    };
+
+/// "5 min" or "3 min + 2 s", the way people say it, instead of "3+2".
+String _timeLabel(BuildContext context, TimeControl tc) {
+  final minutes = context.s.t('g_minutes', {'n': '${tc.initial ~/ 60}'});
+  return tc.increment > 0 ? '$minutes ${context.s.t('g_plus_seconds', {'n': '${tc.increment}'})}' : minutes;
+}
+
+/// One speed (bullet, blitz, rapid): its name, what it means, and its time controls as buttons.
+class _SpeedRow extends StatelessWidget {
+  const _SpeedRow({required this.speed, required this.controls, required this.onPick});
+
+  final String speed;
+  final List<TimeControl> controls;
+  final void Function(TimeControl)? onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    final pick = onPick;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(_speedIcon(speed), size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 6),
+          Text(s.t('g_speed_$speed'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text('· ${s.t('g_speed_${speed}_hint')}', style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
           ),
         ]),
+        const SizedBox(height: 6),
+        Row(children: [
+          for (final tc in controls)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Material(
+                  color: theme.colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: pick == null ? null : () => pick(tc),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Column(children: [
+                        Text(s.t('g_minutes', {'n': '${tc.initial ~/ 60}'}), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                        Text(
+                          tc.increment > 0 ? s.t('g_plus_seconds', {'n': '${tc.increment}'}) : s.t('g_no_bonus'),
+                          style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 12),
+                        ),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ]),
+      ]),
+    );
+  }
+}
+
+/// The player: avatar, game name (tap the pencil to change it) and the three ratings of the chosen game.
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.name, required this.telegramUserId, required this.ratings, required this.onRename});
+
+  final String name;
+  final int telegramUserId;
+  final List<(String, GameRatingInfo?)> ratings;
+  final VoidCallback onRename;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+        child: Column(children: [
+          Row(children: [
+            GameAvatar(name: name, telegramUserId: telegramUserId, size: 46),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                Text(s.t('g_rating_about'), style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 12.5)),
+              ]),
+            ),
+            IconButton(tooltip: s.t('g_name'), icon: const Icon(Icons.edit_outlined), onPressed: onRename),
+          ]),
+          const SizedBox(height: 10),
+          Row(children: [
+            for (final (speed, info) in ratings)
+              Expanded(
+                child: Column(children: [
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(_speedIcon(speed), size: 16, color: theme.colorScheme.primary),
+                    const SizedBox(width: 3),
+                    Text('${info?.rating ?? 1500}', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                  ]),
+                  Text(
+                    (info?.provisional ?? true) ? '${s.t('g_speed_$speed')} · ${s.t('g_rating_new')}' : s.t('g_speed_$speed'),
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 12),
+                  ),
+                ]),
+              ),
+          ]),
+        ]),
       ),
-    ]);
+    );
+  }
+}
+
+/// Looking for an opponent: what is being looked for, for how long, and a way out.
+class _SeekingCard extends StatelessWidget {
+  const _SeekingCard({required this.control, required this.seconds, required this.onCancel});
+
+  final TimeControl control;
+  final int seconds;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = context.s;
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 22, 16, 12),
+        child: Column(children: [
+          const SizedBox.square(dimension: 44, child: CircularProgressIndicator(strokeWidth: 4)),
+          const SizedBox(height: 14),
+          Text(s.t('g_seeking'), style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text('${_timeLabel(context, control)} · ${s.t('g_speed_${control.speed}')}'),
+          Text(
+            '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
+            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700, fontFeatures: const [FontFeature.tabularFigures()]),
+          ),
+          const SizedBox(height: 4),
+          Text(s.t('g_seeking_hint'), textAlign: TextAlign.center, style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
+          const SizedBox(height: 8),
+          OutlinedButton(onPressed: onCancel, child: Text(s.t('cancel'))),
+        ]),
+      ),
+    );
+  }
+}
+
+class _BigTile extends StatelessWidget {
+  const _BigTile({required this.icon, required this.color, required this.title, required this.subtitle, required this.onTap});
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(radius: 20, backgroundColor: color.withValues(alpha: 0.15), child: Icon(icon, color: color)),
+            const SizedBox(height: 10),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(subtitle, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 12.5)),
+          ]),
+        ),
+      ),
+    );
   }
 }
 
@@ -379,34 +564,11 @@ Future<TimeControl?> _pickTimeControl(BuildContext context, List<TimeControl> co
           padding: const EdgeInsets.all(16),
           child: Wrap(spacing: 8, runSpacing: 8, children: [
             for (final tc in controls)
-              ActionChip(label: Text('${tc.label} · ${context.s.t('g_speed_${tc.speed}')}'), onPressed: () => Navigator.of(context).pop(tc)),
+              ActionChip(label: Text('${_timeLabel(context, tc)} · ${context.s.t('g_speed_${tc.speed}')}'), onPressed: () => Navigator.of(context).pop(tc)),
           ]),
         ),
       ),
     );
-
-class _RatingTile extends StatelessWidget {
-  const _RatingTile({required this.speed, required this.info});
-
-  final String speed;
-  final GameRatingInfo? info;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final icon = switch (speed) { 'bullet' => Icons.bolt_rounded, 'blitz' => Icons.local_fire_department_rounded, _ => Icons.timer_rounded };
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Column(children: [
-          Icon(icon, color: theme.colorScheme.primary),
-          Text(info?.label ?? '1500?', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-          Text(context.s.t('g_speed_$speed'), style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontSize: 12)),
-        ]),
-      ),
-    );
-  }
-}
 
 // ---- tournaments ----
 

@@ -8,6 +8,7 @@ import '../../core/api/sado_api.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/settings_group.dart';
+import '../market/orders_screen.dart';
 import 'business_widgets.dart';
 import 'product_edit_screen.dart';
 import 'shop_edit_screen.dart';
@@ -131,6 +132,16 @@ class _MyShopScreenState extends ConsumerState<MyShopScreen> {
                 _statsCard(context, stats),
                 _productsCard(context, shop),
                 SettingsGroup(children: [
+                  ListTile(
+                    leading: const TileIcon(Icons.receipt_long_rounded, Color(0xFFF5A623)),
+                    title: Text(s.t('shop_orders')),
+                    subtitle: Text(s.t('shop_orders_hint')),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (shop.newOrders > 0) Badge(label: Text('${shop.newOrders}'), largeSize: 22),
+                      const Icon(Icons.chevron_right_rounded),
+                    ]),
+                    onTap: () => _open(SellerOrdersScreen(shop: shop)),
+                  ),
                   ListTile(
                     leading: const TileIcon(Icons.warehouse_rounded, Color(0xFF13B88A)),
                     title: Text(s.t('warehouse')),

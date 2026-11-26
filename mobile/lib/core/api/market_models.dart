@@ -98,6 +98,7 @@ class Shop {
     this.hasReceipt = false,
     this.closeRequested = false,
     this.closeReason,
+    this.newOrders = 0,
     this.owner,
     this.products = const [],
   });
@@ -117,6 +118,7 @@ class Shop {
         hasReceipt: json['has_receipt'] as bool? ?? false,
         closeRequested: json['close_requested'] as bool? ?? false,
         closeReason: json['close_reason'] as String?,
+        newOrders: json['new_orders'] as int? ?? 0,
         owner: json['owner'] is Map<String, dynamic> ? Profile.fromJson(json['owner'] as Map<String, dynamic>) : null,
         products: [for (final p in json['products'] as List? ?? const []) Product.fromJson(p as Map<String, dynamic>)],
       );
@@ -137,6 +139,11 @@ class Shop {
   final bool hasReceipt;
   final bool closeRequested;
   final String? closeReason;
+
+  /// The owner's shop list: orders waiting to be accepted.
+  final int newOrders;
+
+  ShopBrief get brief => ShopBrief(id: id, name: name, logoUrl: logoUrl, region: region);
 
   /// Admin lists: the owner's shared profile, if any.
   final Profile? owner;
@@ -197,6 +204,8 @@ class Product {
     this.oldPriceUzs,
     this.media = const [],
     this.stock = 0,
+    this.shopId = '',
+    this.shop,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
@@ -210,9 +219,33 @@ class Product {
         oldPriceUzs: json['old_price_uzs'] as int?,
         media: [for (final m in json['media'] as List? ?? const []) MediaItem.fromJson(m as Map<String, dynamic>)],
         stock: json['stock'] as int? ?? 0,
+        shopId: json['shop_id'] as String? ?? '',
+        shop: json['shop'] is Map<String, dynamic> ? ShopBrief.fromJson(json['shop'] as Map<String, dynamic>) : null,
       );
 
+  /// This product tagged with the shop selling it (a shop page's products come without one).
+  Product withShop(ShopBrief shop) => Product.fromJson({...toJson(), 'shop': shop.toJson()});
+
+  /// The product as the server sent it, for the cart kept on the device.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'shop_id': shopId,
+        'title': title,
+        'description': description,
+        'category': category,
+        'price_uzs': priceUzs,
+        'old_price_uzs': oldPriceUzs,
+        'media': [for (final m in media) m.toJson()],
+        'stock': stock,
+        'active': active,
+        if (shop case final shop?) 'shop': shop.toJson(),
+      };
+
   final String id;
+  final String shopId;
+
+  /// Feed products only: the shop selling it.
+  final ShopBrief? shop;
   final String title;
   final String description;
   final int priceUzs;
@@ -232,6 +265,152 @@ class Product {
     if (old == null || old <= priceUzs || old == 0) return 0;
     return ((old - priceUzs) * 100 / old).round();
   }
+}
+
+/// The shop a feed product comes from: enough for its card and to open the shop.
+class ShopBrief {
+  const ShopBrief({required this.id, required this.name, required this.logoUrl, required this.region});
+
+  factory ShopBrief.fromJson(Map<String, dynamic> json) => ShopBrief(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        logoUrl: json['logo_url'] as String? ?? '',
+        region: json['region'] as String? ?? '',
+      );
+
+  final String id;
+  final String name;
+  final String logoUrl;
+  final String region;
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'logo_url': logoUrl, 'region': region};
+}
+
+enum OrderStatus { placed, accepted, shipped, delivered, cancelled }
+
+OrderStatus _orderStatus(Object? raw) => switch (raw) {
+      'accepted' => OrderStatus.accepted,
+      'shipped' => OrderStatus.shipped,
+      'delivered' => OrderStatus.delivered,
+      'cancelled' => OrderStatus.cancelled,
+      _ => OrderStatus.placed,
+    };
+
+/// The server's name of [status] ("new" for a placed order).
+String orderStatusName(OrderStatus status) => status == OrderStatus.placed ? 'new' : status.name;
+
+class OrderLine {
+  const OrderLine({required this.productId, required this.title, required this.priceUzs, required this.quantity, required this.imageUrl});
+
+  factory OrderLine.fromJson(Map<String, dynamic> json) => OrderLine(
+        productId: json['product_id'] as String,
+        title: json['title'] as String? ?? '',
+        priceUzs: json['price_uzs'] as int? ?? 0,
+        quantity: json['quantity'] as int? ?? 1,
+        imageUrl: json['image_url'] as String? ?? '',
+      );
+
+  final String productId;
+  final String title;
+  final int priceUzs;
+  final int quantity;
+  final String imageUrl;
+}
+
+/// An order from one shop (server/app/routers/market_orders.py).
+class Order {
+  const Order({
+    required this.id,
+    required this.number,
+    required this.status,
+    required this.items,
+    required this.totalUzs,
+    required this.pickup,
+    required this.name,
+    required this.phone,
+    required this.address,
+    required this.comment,
+    required this.shop,
+    required this.shopPhone,
+    required this.shopTelegram,
+    this.cancelReason,
+    this.createdAt,
+    this.next = const [],
+  });
+
+  factory Order.fromJson(Map<String, dynamic> json) {
+    final shop = json['shop'] as Map<String, dynamic>;
+    return Order(
+      id: json['id'] as String,
+      number: json['number'] as String? ?? '',
+      status: _orderStatus(json['status']),
+      items: [for (final i in json['items'] as List? ?? const []) OrderLine.fromJson(i as Map<String, dynamic>)],
+      totalUzs: json['total_uzs'] as int? ?? 0,
+      pickup: json['delivery'] == 'pickup',
+      name: json['name'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      comment: json['comment'] as String? ?? '',
+      shop: ShopBrief.fromJson(shop),
+      shopPhone: shop['phone'] as String? ?? '',
+      shopTelegram: shop['telegram'] as String? ?? '',
+      cancelReason: json['cancel_reason'] as String?,
+      createdAt: _date(json['created_at']),
+      next: [for (final s in json['next'] as List? ?? const []) _orderStatus(s)],
+    );
+  }
+
+  final String id;
+  final String number;
+  final OrderStatus status;
+  final List<OrderLine> items;
+  final int totalUzs;
+  final bool pickup;
+  final String name;
+  final String phone;
+  final String address;
+  final String comment;
+  final ShopBrief shop;
+  final String shopPhone;
+  final String shopTelegram;
+  final String? cancelReason;
+  final DateTime? createdAt;
+
+  /// Seller lists only: the states the seller may move it to.
+  final List<OrderStatus> next;
+}
+
+/// What the buyer fills in at checkout for one shop's part of the cart.
+class OrderDraft {
+  const OrderDraft({
+    required this.shopId,
+    required this.quantities,
+    required this.pickup,
+    required this.name,
+    required this.phone,
+    required this.address,
+    required this.comment,
+  });
+
+  final String shopId;
+
+  /// Product id → quantity.
+  final Map<String, int> quantities;
+  final bool pickup;
+  final String name;
+  final String phone;
+  final String address;
+  final String comment;
+
+  Map<String, dynamic> toJson() => {
+        'shop_id': shopId,
+        'items': [for (final MapEntry(:key, :value) in quantities.entries) {'product_id': key, 'quantity': value}],
+        'delivery': pickup ? 'pickup' : 'delivery',
+        'name': name,
+        'phone': phone,
+        'address': pickup ? '' : address,
+        'comment': comment,
+      };
 }
 
 class ProductDraft {

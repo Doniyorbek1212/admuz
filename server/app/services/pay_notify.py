@@ -33,9 +33,14 @@ async def credited(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int, me
 
 async def credited_later(db: AsyncSession, customer_id: uuid.UUID, amount_uzs: int, method: str) -> None:
     """Like [credited], but the message is sent in the background (the caller must answer quickly)."""
+    await send_later(db, customer_id, f"✅ Hamyoningizga {som(amount_uzs)} tushdi ({method}).")
+
+
+async def send_later(db: AsyncSession, customer_id: uuid.UUID, text: str) -> None:
+    """[text] to the customer's proven Telegram account, sent in the background; nothing without one."""
     if (chat := await _chat_of(db, customer_id)) is None:
         return
-    task = asyncio.create_task(telegram_api.send_text(chat, f"✅ Hamyoningizga {som(amount_uzs)} tushdi ({method})."))
+    task = asyncio.create_task(telegram_api.send_text(chat, text))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
 

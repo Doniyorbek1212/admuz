@@ -415,6 +415,42 @@ class StockMovement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class OrderStatus(StrEnum):
+    NEW = "new"  # placed by the buyer, waiting for the seller
+    ACCEPTED = "accepted"  # the seller confirmed it
+    SHIPPED = "shipped"  # on its way (or ready for pickup)
+    DELIVERED = "delivered"  # handed over and paid
+    CANCELLED = "cancelled"  # by the buyer while new, or by the seller before delivery
+
+
+class Order(Base):
+    """A buyer's order from one shop. The goods leave the warehouse when it is placed (a sale in the ledger) and come
+    back if it is cancelled; the buyer pays the seller on delivery or pickup."""
+
+    __tablename__ = "orders"
+    __table_args__ = (
+        Index("ix_orders_shop_created", "shop_id", "created_at"),
+        Index("ix_orders_buyer_created", "buyer_id", "created_at"),
+        CheckConstraint("total_uzs >= 0", name="ck_orders_total_non_negative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"))
+    buyer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"))
+    status: Mapped[OrderStatus] = mapped_column(_enum(OrderStatus, "order_status"), default=OrderStatus.NEW)
+    # [{"product_id", "title", "price_uzs", "quantity", "image_url"}]: what was bought, at the price of that moment
+    items: Mapped[list] = mapped_column(JSONB, default=list)
+    total_uzs: Mapped[int] = mapped_column(BigInteger)
+    delivery: Mapped[str] = mapped_column(String(16))  # delivery | pickup
+    name: Mapped[str] = mapped_column(String(80))
+    phone: Mapped[str] = mapped_column(String(20))
+    address: Mapped[str] = mapped_column(String(300), default="")
+    comment: Mapped[str] = mapped_column(String(500), default="")
+    cancel_reason: Mapped[str | None] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AdCampaign(Base):
     """A paid banner in the app's hub, shown only in the regions the advertiser picked."""
 

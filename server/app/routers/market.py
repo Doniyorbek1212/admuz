@@ -15,6 +15,7 @@ from app.deps import CustomerDep, DbDep, rate_limit
 from app.errors import bad_request, conflict, not_found
 from app.market import Category, MediaItem, OptionalUploadUrl, Phone, Region, Telegram, movement_out, product_out, shop_out
 from app.models import ListingStatus, MediaUpload, Product, Shop, StockKind, StockMovement
+from app.routers.market_orders import new_order_counts
 from app.services.market_settings import load_market_settings
 from app.uploads import save_receipt
 
@@ -136,6 +137,51 @@ async def list_shops(
     return [shop_out(shop, product_count=n) for shop, n in rows.all()]
 
 
+FEED_PAGE = 30
+MAX_FEED_IDS = 100
+FeedSort = Literal["new", "cheap", "expensive", "discount"]
+
+
+@router.get("/feed")
+async def product_feed(
+    current: CustomerDep,
+    db: DbDep,
+    region: Region | None = None,
+    q: Annotated[str, StringConstraints(strip_whitespace=True, max_length=60)] = "",
+    category: Category = "",
+    sort: FeedSort = "new",
+    ids: Annotated[list[uuid.UUID] | None, Query(max_length=MAX_FEED_IDS)] = None,
+    offset: Annotated[int, Query(ge=0, le=10_000)] = 0,
+) -> list[dict[str, Any]]:
+    """Products on sale in approved shops, each with its shop: the market's home feed, search and categories for a
+    [region], or the given [ids] (the app's favourites and cart) wherever they are."""
+    if ids is None and region is None:
+        raise bad_request("REGION_REQUIRED")
+    stmt = select(Product, Shop).join(Shop, Shop.id == Product.shop_id).where(Shop.status == ListingStatus.APPROVED, Product.active.is_(True))
+    if ids is not None:
+        stmt = stmt.where(Product.id.in_(ids))
+    else:
+        stmt = stmt.where(Shop.region == region)
+    if q:
+        stmt = stmt.where(Product.title.ilike(like_pattern(q)) | Product.description.ilike(like_pattern(q)))
+    if category:
+        stmt = stmt.where(Product.category == category)
+    in_stock_first = (Product.stock > 0).desc()
+    order = {
+        "new": (in_stock_first, Product.created_at.desc()),
+        "cheap": (in_stock_first, Product.price_uzs, Product.created_at.desc()),
+        "expensive": (in_stock_first, Product.price_uzs.desc(), Product.created_at.desc()),
+        # Biggest share off the crossed-out price first; products without a discount after them.
+        "discount": (
+            in_stock_first,
+            ((Product.old_price_uzs - Product.price_uzs) * 1.0 / func.nullif(Product.old_price_uzs, 0)).desc().nulls_last(),
+            Product.created_at.desc(),
+        ),
+    }[sort]
+    rows = await db.execute(stmt.order_by(*order, Product.id).offset(offset).limit(MAX_FEED_IDS if ids is not None else FEED_PAGE))
+    return [product_out(p) | {"shop": {"id": str(s.id), "name": s.name, "logo_url": s.logo_url, "region": s.region}} for p, s in rows.all()]
+
+
 @router.get("/shops/{shop_id}")
 async def shop_detail(shop_id: uuid.UUID, current: CustomerDep, db: DbDep) -> dict[str, Any]:
     shop = await db.get(Shop, shop_id)
@@ -159,7 +205,9 @@ async def my_shops(current: CustomerDep, db: DbDep) -> dict[str, Any]:
         .where(Shop.owner_id == current.id, Shop.status != ListingStatus.CLOSED)
         .order_by(Shop.created_at)
     )
-    shops = [shop_out(shop, product_count=n, private=True) for shop, n in rows.all()]
+    found = rows.all()
+    new_orders = await new_order_counts(db, [shop.id for shop, _ in found])
+    shops = [shop_out(shop, product_count=n, private=True) | {"new_orders": new_orders.get(shop.id, 0)} for shop, n in found]
     settings = await load_market_settings(db)
     next_price = settings.extra_shop_price_uzs if len(shops) >= settings.shop_free_limit else 0
     return {"shops": shops, "free_limit": settings.shop_free_limit, "next_shop_price_uzs": next_price}
@@ -190,7 +238,11 @@ async def create_shop(body: ShopIn, current: CustomerDep, db: DbDep) -> dict[str
 async def my_shop(shop_id: uuid.UUID, current: CustomerDep, db: DbDep) -> dict[str, Any]:
     shop = await _own_shop(db, current.id, shop_id)
     products = list(await db.scalars(select(Product).where(Product.shop_id == shop.id).order_by(Product.created_at.desc())))
-    return shop_out(shop, product_count=len(products), private=True) | {"products": [product_out(p, private=True) for p in products]}
+    new_orders = await new_order_counts(db, [shop.id])
+    return shop_out(shop, product_count=len(products), private=True) | {
+        "products": [product_out(p, private=True) for p in products],
+        "new_orders": new_orders.get(shop.id, 0),
+    }
 
 
 @router.put("/me/shops/{shop_id}")
