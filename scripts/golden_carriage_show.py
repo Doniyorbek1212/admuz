@@ -5,8 +5,8 @@ wheels as they come. The team sweeps toward the camera in a 3/4 front view, the 
 cover, then curves away and leaves frame right in a wake of gold dust and sparkles.
 
 Carriage: "Royal carriage" by akiprensky (CC BY); its state emblems are deleted (they are separate relief islands) and
-it is re-skinned in gold from its own texture masks. Horses: the batch 1 horse with a pearl-white coat, mane and tail
-hair.
+it is re-skinned in gold from its own texture masks. Horses: the batch 1 horse with a pearl-white coat and a gold mane and
+tail.
 
     blender -b --factory-startup -P golden_carriage_show.py -- <show|icon> [f=1,60,100] [s=16]
 """
@@ -29,7 +29,7 @@ from stage import R, env, interp  # noqa: E402
 
 ID = "golden_carriage"
 TOTAL = 168
-K = 0.6                      # whole team scale (horse joints are measured at horse size 6)
+K = 0.8                      # whole team scale (horse joints are measured at horse size 6)
 HORSE = 6.0
 CARRIAGE = 6.6
 STRIDE = 1.45                # gallop strides run a little faster than the ground (reads as speed, slip hidden by blur)
@@ -38,8 +38,9 @@ GROUND_Z = -2.6
 TEX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "textures", "golden_carriage")
 X, Z = animal.X, animal.Z
 GOLD = (1.0, 0.7, 0.28)
+HAIR_GOLD = (1.0, 0.74, 0.34)     # gold mane and tail: they read against the white coat
 # team path on the ground (world x, y): out of the distance on the right, sweeping toward the camera, out frame left
-PATH = [(12.5, 20.0), (6.5, 13.5), (1.8, 8.6), (-1.8, 5.0), (-5.8, 1.8), (-13.0, -2.0)]
+PATH = [(12.0, 17.0), (6.2, 10.5), (1.8, 5.6), (-1.8, 2.2), (-5.8, -0.6), (-13.0, -3.6)]
 PACE = [(1, 0.02), (56, 0.36), (112, 0.6), (TOTAL, 1.0)]   # share of the path: lingers through the middle
 EMBLEM_VERTS = 379           # the emblem fill island; its relief walls are the small islands inside its box
 # carriage file space (import world): wheel axles at (x, z) with radius, front is +X
@@ -198,7 +199,7 @@ def gold_material(mat):
     L(w2.outputs["Fac"], eng.inputs[1])
     col = N("ShaderNodeMix")
     col.data_type = "RGBA"
-    col.inputs["A"].default_value = (0.7, 0.38, 0.07, 1)        # satin body gold
+    col.inputs["A"].default_value = (0.86, 0.5, 0.1, 1)         # satin body gold
     col.inputs["B"].default_value = (1.0, 0.72, 0.26, 1)        # polished trim gold
     L(trim, col.inputs["Factor"])
     col2 = N("ShaderNodeMix")
@@ -222,7 +223,7 @@ def gold_material(mat):
     L(nonmetal.outputs[0], metal.inputs[1])
     L(metal.outputs[0], b.inputs["Metallic"])
     rough = N("ShaderNodeMapRange")
-    rough.inputs["To Min"].default_value, rough.inputs["To Max"].default_value = 0.34, 0.18
+    rough.inputs["To Min"].default_value, rough.inputs["To Max"].default_value = 0.46, 0.2   # broad sheen: a mirror panel caught the sun
     L(trim, rough.inputs["Value"])
     rough2 = N("ShaderNodeMath")
     rough2.operation = "ADD"
@@ -253,7 +254,7 @@ def gold_material(mat):
     b.inputs["Emission Color"].default_value = (1.0, 0.55, 0.2, 1)
     lamp = N("ShaderNodeMath")                    # windows glow warm from inside instead of mirroring the sky
     lamp.operation = "MULTIPLY"
-    lamp.inputs[1].default_value = 2.5
+    lamp.inputs[1].default_value = 0.35
     L(glass, lamp.inputs[0])
     L(lamp.outputs[0], b.inputs["Emission Strength"])
     b.inputs["Specular IOR Level"].default_value = 0.3
@@ -338,8 +339,8 @@ def whiten(mat):
         bw = nt.nodes.new("ShaderNodeRGBToBW")
         nt.links.new(src, bw.inputs[0])
         rng = nt.nodes.new("ShaderNodeMapRange")
-        rng.inputs["From Min"].default_value, rng.inputs["From Max"].default_value = 0.0, 0.5
-        rng.inputs["To Min"].default_value, rng.inputs["To Max"].default_value = 0.62, 0.9
+        rng.inputs["From Min"].default_value, rng.inputs["From Max"].default_value = 0.02, 0.24    # eyes, nostrils, hooves stay dark
+        rng.inputs["To Min"].default_value, rng.inputs["To Max"].default_value = 0.06, 0.95
         nt.links.new(bw.outputs[0], rng.inputs["Value"])
         mix = nt.nodes.new("ShaderNodeMix")
         mix.data_type, mix.blend_type = "RGBA", "MULTIPLY"
@@ -361,7 +362,7 @@ def tail_dist(co):
 
 
 def mane_and_tail(m, seed):
-    """White hair: a mane along the crest of the neck and a long tail, each combed back and down (horse size 6,
+    """Gold hair: a mane along the crest of the neck and a long tail, each combed back and down (horse size 6,
     crest positions from pegasus_show). On 4.2 a strand is 4x its start velocity long, so the comb is the velocity."""
     mane, tail = m.vertex_groups.new(name="Mane"), m.vertex_groups.new(name="Tail")
     a, c = Vector((-1.0, 1.05)), Vector((-2.3, 2.3))
@@ -375,10 +376,10 @@ def mane_and_tail(m, seed):
         mane.add([v.index], 1.0 if crest else 0.0, "REPLACE")
         tail.add([v.index], 1.0 if on_tail else 0.0, "REPLACE")
     out = []
-    for vg, length, comb, count, sd in (("Mane", 0.38, (0.0, 0.7, -0.5), 260, seed),
+    for vg, length, comb, count, sd in (("Mane", 0.55, (0.0, 0.7, -0.5), 420, seed),
                                         ("Tail", 1.5, (0.0, 0.4, -0.92), 160, seed + 1)):
         ps = animal.fur(m, length, count=count, children=12, radius=0.0022, density_vg=vg, length_vg=vg, clump=0.85,
-                        multiply=(1.0, 0.98, 0.94), gamma=0.7, seed=sd)
+                        multiply=HAIR_GOLD, gamma=0.7, seed=sd)
         st = ps.settings
         d = Vector(comb).normalized() * length / 4.0
         st.normal_factor = 0.08 * length / 4.0
@@ -611,8 +612,8 @@ def all_meshes(horses, cmeshes, wheels):
 
 def build_show(sc, opts):
     team, horses, croot, cmeshes, wheels = load(sc)
-    cam = stage.setup(sc, TOTAL, opts["samples"], world=0.6, hdri="sunset.exr", follow=None, lights=0.5, fog=(2.2, 6),
-                      streak=9.0, shutter=0.45)
+    cam = stage.setup(sc, TOTAL, opts["samples"], world=0.6, hdri="sunset.exr", follow=None, lights=0.5, fog=(4.0, 6),
+                      streak=12.0, shutter=0.3)     # high glare thresholds: the gold panels caught the sun and bloomed white
     e = R(9)
     cam.location, cam.rotation_euler = (0.0, -gc.CAM_DIST * math.cos(e), gc.CAM_DIST * math.sin(e)), (R(90) - e, 0, 0)
     sh.shadow_catcher(sc, GROUND_Z, 80)

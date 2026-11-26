@@ -1,7 +1,7 @@
 """UZARO v2 show: wolf (tier 2, 120 f = 5 s).
 
-A grey wolf trots in, stops, lifts its head and howls; a pale moon blooms behind it and breath vapour curls from its
-muzzle; then wolf and moon fade into the night. The file's single take holds a trot (61-93) and a stand (100-111): they are cut out and cross-faded on the
+A grey wolf trots in, stops, lifts its head to the sky and howls while a pale moon blooms behind it; then wolf and
+moon fade into the night. The file's single take holds a trot (61-93) and a stand (100-111): they are cut out and cross-faded on the
 NLA, the trot speed read off the forefoot's stance (TROT_V). The howl (neck and head up, jaw open) is hand keys combined on top.
 Fur is the model's own texture (no hair sim).
 """
@@ -14,13 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clipshow as cs  # noqa: E402
 import gift_common as gc  # noqa: E402
 import show_common as sh  # noqa: E402
-import show_fx as fx  # noqa: E402
 import stage  # noqa: E402
 from stage import R  # noqa: E402
 
 ID = "wolf"
 TOTAL = 120
-SIZE = 4.4
+SIZE = 5.4
 GROUND_Z = -3.2
 YAW = R(66)                                    # nose (-Y after load) turned to trot right and a little toward the lens
 TAKE = "Wolf"
@@ -32,13 +31,14 @@ NECK, HEAD, SNOUT, JAW = (f"{n}_Wolf_Armature" for n in ("Neck_Bone", "Head", "B
 MOON = (0.85, 0.9, 1.0)
 TROT_V = 0.09        # the stance forefoot sweeps ~1.4 units back in ~16 frames; foot_speed's 10 % floor band caught 2 samples
 FADE = (104, TOTAL - 1)
+MOON_AT = (0.9, 9.0, 1.7)        # behind and above the raised head, so the howl reads against it
 
 
 def howl_keys(a, b):
     """Neck and head lift (+X raises the tip on this rig), jaw drops; held, then eased back."""
     ramp = lambda deg: [(a, "X", 0.0), (a + 10, "X", deg), (b - 8, "X", deg), (b, "X", 0.0)]
-    return {NECK: ramp(28.0), HEAD: ramp(30.0), SNOUT: ramp(8.0), JAW: [(a + 4, "X", 0.0), (a + 12, "X", -24.0),
-                                                                        (b - 10, "X", -24.0), (b - 2, "X", 0.0)]}
+    return {NECK: ramp(42.0), HEAD: ramp(36.0), SNOUT: ramp(10.0), JAW: [(a + 4, "X", 0.0), (a + 12, "X", -18.0),
+                                                                        (b - 10, "X", -18.0), (b - 2, "X", 0.0)]}
 
 
 def moon_material(vis_keys):
@@ -92,15 +92,39 @@ def halo_material():
 def moon(sc):
     """A moon face behind the wolf with a soft halo, blooming in with the howl and fading out at the end."""
     vis = [(HOWL[0], 0.0), (HOWL[0] + 14, 1.0), (FADE[0], 1.0), (FADE[1], 0.0)]
-    disc = stage.link(sc, "Moon", gc.ico_mesh("Moon", 1.0, 4), moon_material(vis), loc=(1.2, 9.0, 2.6), shadow=False)
+    disc = stage.link(sc, "Moon", gc.ico_mesh("Moon", 1.0, 4), moon_material(vis), loc=MOON_AT, shadow=False)
     disc.data.polygons.foreach_set("use_smooth", [True] * len(disc.data.polygons))
-    disc.scale = (1.7, 0.05, 1.7)
+    disc.scale = (2.1, 0.05, 2.1)
     halo_m = halo_material()
-    halo = stage.link(sc, "MoonHalo", gc.ico_mesh("MoonHalo", 1.0, 3), halo_m, loc=(1.2, 9.3, 2.6), shadow=False)
-    for f, s in ((HOWL[0], 0.0), (HOWL[0] + 16, 2.2), (FADE[0], 2.3), (FADE[1], 0.0)):
+    halo = stage.link(sc, "MoonHalo", gc.ico_mesh("MoonHalo", 1.0, 3), halo_m, loc=(MOON_AT[0], MOON_AT[1] + 0.3, MOON_AT[2]), shadow=False)
+    for f, s in ((HOWL[0], 0.0), (HOWL[0] + 16, 2.7), (FADE[0], 2.8), (FADE[1], 0.0)):
         halo.scale = (s, 0.02, s)       # flat disc behind the moon; a sphere this big would fog over its face
         halo.keyframe_insert("scale", frame=f)
     return disc
+
+
+def grey_coat(meshes):
+    """The texture reads tan-pink under the night light: take the colour out so the coat is a cool grey."""
+    done = set()
+    for o in meshes:
+        for mat in o.data.materials:
+            if not mat or not mat.use_nodes or mat.name in done:
+                continue
+            done.add(mat.name)
+            b = next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+            if b is None or not b.inputs["Base Color"].links:
+                continue
+            nt = mat.node_tree
+            src = b.inputs["Base Color"].links[0].from_socket
+            hsv = nt.nodes.new("ShaderNodeHueSaturation")
+            hsv.inputs["Saturation"].default_value, hsv.inputs["Value"].default_value = 0.06, 1.1
+            tint = nt.nodes.new("ShaderNodeMix")
+            tint.data_type, tint.blend_type = "RGBA", "MULTIPLY"
+            tint.inputs["Factor"].default_value = 1.0
+            tint.inputs["B"].default_value = (0.93, 0.97, 1.0, 1.0)
+            nt.links.new(src, hsv.inputs["Color"])
+            nt.links.new(hsv.outputs[0], tint.inputs["A"])
+            nt.links.new(tint.outputs["Result"], b.inputs["Base Color"])
 
 
 def fade_out(meshes):
@@ -121,15 +145,6 @@ def fade_out(meshes):
             done.add(mat.name)
 
 
-def breath(sc, arm):
-    mat = fx.fade_material("Breath", (0.9, 0.93, 1.0), 0.6, 0.3, 1.2)
-    em = fx.particle_burst(sc, "Breath", fx.point_mesh("BreathSrc", 0.05), mat, 90, (HOWL[0] + 8, HOWL[1] - 8), 30, 0.18, 0.25,
-                           rand=0.6, align=(0.0, 0.0, 0.6), damping=0.2, gravity=-0.03)
-    c = em.constraints.new("COPY_LOCATION")
-    c.target, c.subtarget, c.head_tail = arm, SNOUT, 1.0
-    return em
-
-
 def build_show(sc, opts):
     root, arm, meshes = cs.load(ID, SIZE, rot=(0.0, 0.0, R(90)))
     v = TROT_V
@@ -142,7 +157,7 @@ def build_show(sc, opts):
     cam = stage.setup(sc, TOTAL, opts["samples"], world=0.6, hdri="night.exr", lights=0.8, fog=(1.8, 7), streak=8.0)
     sh.shadow_catcher(sc, GROUND_Z, 40)
     moon(sc)
-    breath(sc, arm)
+    grey_coat(meshes)
     fade_out(meshes)
     sh.screen_extent(sc, cam, meshes, (1, 24, STOP + 8, 80, FADE[0]))
     stage.bake_all(sc)
@@ -153,6 +168,7 @@ def build_icon(sc, opts):
     root, arm, meshes = cs.load(ID, SIZE, rot=(0.0, 0.0, R(90)))
     cam = stage.setup_icon(sc, opts["samples"], world=0.6, hdri="night.exr", lights=0.8, fog=(1.8, 7), streak=8.0)
     root.rotation_euler = (0.0, 0.0, R(40))
+    grey_coat(meshes)
     n = stage.ICON_N
     cs.sequence(arm, [cs.Take(TAKE, 0, (104, 105), blend=0, repeat=n)])
     cs.overlay(arm, "IconHowl", howl_keys(0, n))

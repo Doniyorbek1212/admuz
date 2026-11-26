@@ -31,7 +31,10 @@ X, Y, Z = animal.X, animal.Y, animal.Z
 GOLD = (1.0, 0.68, 0.24)
 LAND_F = 130
 TAKEOFF_F = 152
-ARC = [(9.5, 3.5, 4.8), (2.0, 4.0, 4.2), (-3.0, 2.0, 2.0), (-2.2, -2.0, -0.6), (2.0, -2.0, -0.2), (2.6, 0.6, 1.0), (0.0, 0.0, GROUND_Z + FOOT * K)]
+# mostly side-on so the horse and wings read in profile: in from the right, across, a turn toward the lens at the left, back to land
+ARC = [(8.5, 2.0, 3.4), (3.0, 1.6, 3.0), (-1.4, 1.2, 2.2), (-1.9, -0.4, 1.0), (-0.4, -1.0, 0.3), (1.4, -0.4, -0.6), (0.0, 0.0, GROUND_Z + FOOT * K)]
+FEATHER_W = 1.6         # vanes wide enough to overlap their neighbours: a closed wing, not a comb
+BEAT = 18.0                # frames per wingbeat: slow enough that the feathers do not smear
 WING_POINTS = [(0.28, -0.55, 1.15), (1.5, -0.35, 1.7), (2.9, 0.0, 2.15), (4.5, 0.5, 2.3)]
 SIDES = (("L", 1.0), ("R", -1.0))
 
@@ -87,7 +90,7 @@ def wing_mesh(sc, arm, side, s, mat):
             t = t0 + (t1 - t0) * u
             ang = R(a0 + (a1 - a0) * u + rnd.uniform(-2.0, 2.0))
             d = Vector((math.cos(ang) * s, math.sin(ang), -0.06)).normalized()
-            feather(verts, faces, weights, point_on_wing(t, s) + up * lift, d, up, (l0 + (l1 - l0) * u) * rnd.uniform(0.96, 1.04), width, t)
+            feather(verts, faces, weights, point_on_wing(t, s) + up * lift, d, up, (l0 + (l1 - l0) * u) * rnd.uniform(0.96, 1.04), width * FEATHER_W, t)
     me = bpy.data.meshes.new(f"Wing{side}")
     me.from_pydata(verts, [], faces)
     me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
@@ -208,13 +211,13 @@ def animate(root, wrap, mover):
         land = env(f, LAND_F - 7, LAND_F) * (1 - env(f, TAKEOFF_F, TAKEOFF_F + 7))
         fly = 1 - land
         p = path(f)
-        beat = math.sin(f * 2 * math.pi / 14.0)
+        beat = math.sin(f * 2 * math.pi / BEAT)
         flap = beat * fly + 0.12 * math.sin(f / 5.0) * land
         d = path(f + 1) - path(f - 1)
         if d.length > 1e-4:
             pitch, yaw = stage.aim(d)
             prev = stage.aim(path(f + 3) - path(f + 1))[1] if f < LAND_F - 3 else yaw
-            bank = max(-30.0, min(30.0, math.degrees(_wrap(prev - yaw)) * 6.0))
+            bank = max(-22.0, min(22.0, math.degrees(_wrap(prev - yaw)) * 6.0))
         else:
             pitch, yaw, bank = 0.0, R(-18), 0.0
         if f >= LAND_F - 8:
@@ -244,7 +247,7 @@ def animate(root, wrap, mover):
             "tail1": (X, -20.0 * fly + 8.0 * math.sin(f / 3.4 - 0.9)),
             "tail2": (X, 9.0 * math.sin(f / 3.4 - 1.8)),
         }
-        spec.update(wing_spec(flap, land))
+        spec.update(wing_spec(0.75 * flap, min(1.0, land + 0.4 * fly)))   # in the air the wings ride high, clear of the body
         mover.body(f, spec)
         _ = ground
 
@@ -284,7 +287,8 @@ def burst(sc):
 
 def build_show(sc, opts):
     root, wrap, arm, meshes = load(sc)
-    cam = stage.setup(sc, TOTAL, opts["samples"], world=0.7, hdri="studio.exr", follow=root, lights=0.6, fog=(2.2, 7), streak=7.0)
+    cam = stage.setup(sc, TOTAL, opts["samples"], world=0.7, hdri="studio.exr", follow=root, lights=0.6, fog=(2.2, 7), streak=7.0,
+                      shutter=0.25)
     gas_like = sc.view_settings
     gas_like.view_transform, gas_like.look = "Filmic", "Medium High Contrast"
     sh.shadow_catcher(sc, GROUND_Z, 50)
