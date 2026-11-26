@@ -73,89 +73,114 @@ class _AuthScaffold extends ConsumerWidget {
           if (canCancelAdding) TextButton(onPressed: () => ref.read(accountSlotsProvider.notifier).removeSlot(slots.active), child: Text(context.t('cancel'))),
         ],
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          children: [
-            // Smaller header while the keyboard is up so the form, not the logo, stays on screen (small iPhones).
-            Center(
-              child: logo
-                  ? BrandLogoBadge(size: keyboardOpen ? 72 : 132)
-                  : GoldRing(
-                      width: 2.5,
-                      child: Container(
-                        width: keyboardOpen ? 64 : 88,
-                        height: keyboardOpen ? 64 : 88,
-                        decoration: BoxDecoration(gradient: brandGradient(accent, vertical: true), shape: BoxShape.circle),
-                        child: Icon(icon, color: Colors.white, size: keyboardOpen ? 30 : 40),
+      // A tap outside the fields or a drag puts the keyboard away.
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: SafeArea(
+          child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+            children: [
+              // Smaller header while the keyboard is up so the form, not the logo, stays on screen (small iPhones);
+              // animated, so the page glides instead of jumping when the keyboard opens.
+              AnimatedSize(
+                duration: _headerMotion,
+                curve: Curves.easeOutCubic,
+                child: Column(
+                  children: [
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(end: keyboardOpen ? 0 : 1),
+                      duration: _headerMotion,
+                      curve: Curves.easeOutCubic,
+                      builder: (context, t, _) => Center(
+                        child: logo
+                            ? BrandLogoBadge(size: 72 + 60 * t)
+                            : GoldRing(
+                                width: 2.5,
+                                child: Container(
+                                  width: 64 + 24 * t,
+                                  height: 64 + 24 * t,
+                                  decoration: BoxDecoration(gradient: brandGradient(accent, vertical: true), shape: BoxShape.circle),
+                                  child: Icon(icon, color: Colors.white, size: 30 + 10 * t),
+                                ),
+                              ),
                       ),
                     ),
-            ),
-            if (logo && !keyboardOpen) ...[
-              const SizedBox(height: 14),
-              Center(child: BrandWordmark(size: 34, onDark: dark)),
-              const SizedBox(height: 4),
-              Text(
-                context.t('app_tagline'),
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
-              ),
-            ],
-            SizedBox(height: keyboardOpen ? 12 : 24),
-            // Form card lifted off the tinted page, gold hairline like the rest of the brand.
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: brandGold.withValues(alpha: dark ? 0.25 : 0.35)),
-                boxShadow: [
-                  BoxShadow(
-                    color: accent.withValues(alpha: dark ? 0.15 : 0.1),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    subtitle,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor),
-                  ),
-                  const SizedBox(height: 24),
-                  ...children,
-                  // In-card button instead of a FAB: a floating button covered the input above the keyboard.
-                  if (onSubmit != null) ...[
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: busy ? null : onSubmit,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    if (logo && !keyboardOpen) ...[
+                      const SizedBox(height: 14),
+                      Center(child: BrandWordmark(size: 34, onDark: dark)),
+                      const SizedBox(height: 4),
+                      Text(
+                        context.t('app_tagline'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
                       ),
-                      child: busy
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                          : Text(context.t('next'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    ],
+                    SizedBox(height: keyboardOpen ? 12 : 24),
+                  ],
+                ),
+              ),
+              // Form card lifted off the tinted page, gold hairline like the rest of the brand.
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: brandGold.withValues(alpha: dark ? 0.25 : 0.35)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: dark ? 0.15 : 0.1),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
                     ),
                   ],
-                ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: theme.hintColor),
+                    ),
+                    const SizedBox(height: 24),
+                    ...children,
+                    // In-card button instead of a FAB: a floating button covered the input above the keyboard.
+                    if (onSubmit != null) ...[
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        onPressed: busy ? null : onSubmit,
+                        style: FilledButton.styleFrom(
+                          // White label: the theme's dark one on the teal button read as a disabled button.
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        child: busy
+                            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                            : Text(context.t('next'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
+
+/// How long the login header takes to shrink or grow with the keyboard.
+const _headerMotion = Duration(milliseconds: 260);
 
 mixin _Submitting<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   bool busy = false;
@@ -357,9 +382,9 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> with _Submitting {
             ),
           ),
         ),
+        // No autofocus: the keyboard jumping up over the welcome screen the moment it opens felt abrupt.
         TextField(
           controller: _phone,
-          autofocus: true,
           keyboardType: TextInputType.phone,
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d+ \-()]')), PhoneNumberFormatter()],
           onChanged: (_) => _updateCountry(),
@@ -734,7 +759,10 @@ class _EmailScreenState extends ConsumerState<EmailScreen> with _Submitting {
             ),
           )
         else if (widget.resetState case td.EmailAddressResetStatePending(:final resetIn))
-          Text(context.t('email_reset_in', {'n': formatDuration(Duration(seconds: resetIn))}), style: TextStyle(color: Theme.of(context).hintColor)),
+          Text(
+            context.t('email_reset_in', {'n': formatDuration(Duration(seconds: resetIn))}),
+            style: TextStyle(color: Theme.of(context).hintColor),
+          ),
       ],
     );
   }
